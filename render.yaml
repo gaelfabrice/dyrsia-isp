@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: wifizone
+    name: dyrsia-isp
     runtime: docker
     plan: starter
     autoDeploy: true
