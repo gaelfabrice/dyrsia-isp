@@ -1,0 +1,1225 @@
+<?php
+
+/**
+ *  PHP Mikrotik Billing (https://github.com/hotspotbilling/phpwifizones/)
+ *  by https://t.me/ibnux
+ **/
+
+_admin();
+$ui->assign('_title', Lang::T('Customer'));
+$ui->assign('_system_menu', 'customers');
+
+$action = $routes['1'] ?? '';
+$ui->assign('_admin', $admin);
+
+if ($action == 'disable') {
+
+    $id_customer = $routes['2'];
+
+    $c = User::_info($id_customer);
+    if ($admin['user_type'] != 'SuperAdmin' && $c['created_by'] != $admin['id']) {
+    r2(getUrl('customers/list'), 'e', 'Access Denied');
+}
+
+    if (!$c) {
+        r2(getUrl('customers/list'), 'e', 'Customer not found');
+    }
+
+    // সব active plan বের করো
+    $bs = ORM::for_table('tbl_user_recharges')
+        ->where('customer_id', $id_customer)
+        ->where('status', 'on')
+        ->findMany();
+
+    if ($bs) {
+
+        foreach ($bs as $b) {
+
+            $p = ORM::for_table('tbl_plans')
+                ->where('id', $b['plan_id'])
+                ->find_one();
+
+            if ($p) {
+
+                $dvc = Package::getDevice($p);
+
+                if ($_app_stage != 'demo' && file_exists($dvc)) {
+
+                    require_once $dvc;
+
+                    // 🔥 MAIN: REMOVE USER FROM MIKROTIK
+                    (new $p['device'])->remove_customer($c, $p);
+                }
+
+                // শুধু status change (date change না)
+                $b->status = 'off';
+                $b->save();
+            }
+        }
+
+        // customer status
+        $cu = ORM::for_table('tbl_customers')->find_one($id_customer);
+        $cu->status = 'Disabled';
+        $cu->save();
+
+        r2(getUrl('customers/view/') . $id_customer, 's', 'User Disabled');
+    }
+
+    r2(getUrl('customers/view/') . $id_customer, 'e', 'No Active Plan Found');
+}
+
+/* =========================
+   ENABLE USER + MIKROTIK SYNC
+========================= */
+elseif ($action == 'enable') {
+
+    $id_customer = $routes['2'];
+
+    $c = User::_info($id_customer);
+    if ($admin['user_type'] != 'SuperAdmin' && $c['created_by'] != $admin['id']) {
+    r2(getUrl('customers/list'), 'e', 'Access Denied');
+}
+
+    if (!$c) {
+        r2(getUrl('customers/list'), 'e', 'Customer not found');
+    }
+
+    $bs = ORM::for_table('tbl_user_recharges')
+        ->where('customer_id', $id_customer)
+        ->findMany();
+
+    if ($bs) {
+
+        foreach ($bs as $b) {
+
+            $p = ORM::for_table('tbl_plans')
+                ->where('id', $b['plan_id'])
+                ->find_one();
+
+            if ($p) {
+
+                $dvc = Package::getDevice($p);
+
+                if ($_app_stage != 'demo' && file_exists($dvc)) {
+
+                    require_once $dvc;
+
+                    $device = new $p['device'];
+
+                    // 🔥 FIX 1: REMOVE ACTIVE SESSION FIRST
+                    if (method_exists($device, 'remove_customer')) {
+                        $device->remove_customer($c, $p);
+                    }
+
+                    // 🔥 FIX 2: FORCE DISCONNECT (if supported)
+                    if (method_exists($device, 'disconnect')) {
+                        $device->disconnect($c, $p);
+                    }
+
+                    // 🔥 FIX 3: ADD AGAIN (fresh login required)
+                    $device->add_customer($c, $p);
+                }
+
+                $b->status = 'on';
+                $b->save();
+            }
+        }
+
+        $cu = ORM::for_table('tbl_customers')->find_one($id_customer);
+        $cu->status = 'Active';
+        $cu->save();
+
+        r2(getUrl('customers/view/') . $id_customer, 's', 'User Enabled');
+    }
+
+    r2(getUrl('customers/view/') . $id_customer, 'e', 'No Plan Found');
+}
+
+$leafletpickerHeader = <<<EOT
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css">
+EOT;
+
+switch ($action) {
+    case 'csv':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $csrf_token = _req('token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers'), 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+
+        $cs = ORM::for_table('tbl_customers')
+            ->select('tbl_customers.id', 'id')
+            ->select('tbl_customers.username', 'username')
+            ->select('fullname')
+            ->select('address')
+            ->select('phonenumber')
+            ->select('email')
+            ->select('balance')
+            ->select('service_type')
+            ->order_by_asc('tbl_customers.id')
+            ->find_array();
+
+        $h = false;
+        set_time_limit(-1);
+        header('Pragma: public');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+        header("Content-type: text/csv");
+        header('Content-Disposition: attachment;filename="phpwifizones_customers_' . date('Y-m-d_H_i') . '.csv"');
+        header('Content-Transfer-Encoding: binary');
+
+        $headers = [
+            'id',
+            'username',
+            'fullname',
+            'address',
+            'phonenumber',
+            'email',
+            'balance',
+            'service_type',
+        ];
+
+        if (!$h) {
+            echo '"' . implode('","', $headers) . "\"\n";
+            $h = true;
+        }
+
+        foreach ($cs as $c) {
+            $row = [
+                $c['id'],
+                $c['username'],
+                $c['fullname'],
+                $c['address'],
+                $c['phonenumber'],
+                $c['email'],
+                $c['balance'],
+                $c['service_type'],
+            ];
+            echo '"' . implode('","', $row) . "\"\n";
+        }
+        break;
+        //case csv-prepaid can be moved later to (plan.php)  php file dealing with prepaid users
+    case 'csv-prepaid':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+
+        $cs = ORM::for_table('tbl_customers')
+            ->select('tbl_customers.id', 'id')
+            ->select('tbl_customers.username', 'username')
+            ->select('fullname')
+            ->select('address')
+            ->select('phonenumber')
+            ->select('email')
+            ->select('balance')
+            ->select('service_type')
+            ->select('namebp')
+            ->select('routers')
+            ->select('status')
+            ->select('method', 'Payment')
+            ->left_outer_join('tbl_user_recharges', array('tbl_customers.id', '=', 'tbl_user_recharges.customer_id'))
+            ->order_by_asc('tbl_customers.id')
+            ->find_array();
+
+        $h = false;
+        set_time_limit(-1);
+        header('Pragma: public');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+        header("Content-type: text/csv");
+        header('Content-Disposition: attachment;filename="phpwifizones_prepaid_users' . date('Y-m-d_H_i') . '.csv"');
+        header('Content-Transfer-Encoding: binary');
+
+        $headers = [
+            'id',
+            'username',
+            'fullname',
+            'address',
+            'phonenumber',
+            'email',
+            'balance',
+            'service_type',
+            'namebp',
+            'routers',
+            'status',
+            'Payment'
+        ];
+
+        if (!$h) {
+            echo '"' . implode('","', $headers) . "\"\n";
+            $h = true;
+        }
+
+        foreach ($cs as $c) {
+            $row = [
+                $c['id'],
+                $c['username'],
+                $c['fullname'],
+                $c['address'],
+                $c['phonenumber'],
+                $c['email'],
+                $c['balance'],
+                $c['service_type'],
+                $c['namebp'],
+                $c['routers'],
+                $c['status'],
+                $c['Payment']
+            ];
+            echo '"' . implode('","', $row) . "\"\n";
+        }
+        break;
+    case 'add':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Agent', 'Sales'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $ui->assign('xheader', $leafletpickerHeader);
+        run_hook('view_add_customer'); #HOOK
+        $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
+        $ui->display('admin/customers/add.tpl');
+        break;
+    case 'recharge':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Agent', 'Sales'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $id_customer = $routes['2'];
+        $plan_id = $routes['3'];
+        $csrf_token = _req('token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/view/') . $id_customer, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        $b = ORM::for_table('tbl_user_recharges')->where('customer_id', $id_customer)->where('plan_id', $plan_id)->find_one();
+        if ($b) {
+            $gateway = 'Recharge';
+            $channel = $admin['fullname'];
+            $cust = User::_info($id_customer);
+            $plan = ORM::for_table('tbl_plans')->find_one($b['plan_id']);
+			$add_inv = User::getAttribute("Invoice", $id_customer);
+			if (!empty($add_inv)) {
+				$plan['price'] = $add_inv;
+			}
+            $tax_enable = isset($config['enable_tax']) ? $config['enable_tax'] : 'no';
+            $tax_rate_setting = isset($config['tax_rate']) ? $config['tax_rate'] : null;
+            $custom_tax_rate = isset($config['custom_tax_rate']) ? (float)$config['custom_tax_rate'] : null;
+            if ($tax_rate_setting === 'custom') {
+                $tax_rate = $custom_tax_rate;
+            } else {
+                $tax_rate = $tax_rate_setting;
+            }
+            if ($tax_enable === 'yes') {
+                $tax = Package::tax($plan['price'], $tax_rate);
+            } else {
+                $tax = 0;
+            }
+            list($bills, $add_cost) = User::getBills($id_customer);
+            if ($using == 'balance' && $config['enable_balance'] == 'yes') {
+                if (!$cust) {
+                    r2(getUrl('plan/recharge'), 'e', Lang::T('Customer not found'));
+                }
+                if (!$plan) {
+                    r2(getUrl('plan/recharge'), 'e', Lang::T('Plan not found'));
+                }
+                if ($cust['balance'] < ($plan['price'] + $add_cost + $tax)) {
+                    r2(getUrl('plan/recharge'), 'e', Lang::T('insufficient balance'));
+                }
+                $gateway = 'Recharge Balance';
+            }
+            if ($using == 'zero') {
+                $zero = 1;
+                $gateway = 'Recharge Zero';
+            }
+            $usings = explode(',', $config['payment_usings']);
+            $usings = array_filter(array_unique($usings));
+            if (count($usings) == 0) {
+                $usings[] = Lang::T('Cash');
+            }
+            $abills = User::getAttributes("Bill");
+            if ($tax_enable === 'yes') {
+                $ui->assign('tax', $tax);
+            }
+            $ui->assign('usings', $usings);
+            $ui->assign('abills', $abills);
+            $ui->assign('bills', $bills);
+            $ui->assign('add_cost', $add_cost);
+            $ui->assign('cust', $cust);
+            $ui->assign('gateway', $gateway);
+            $ui->assign('channel', $channel);
+            $ui->assign('server', $b['routers']);
+            $ui->assign('plan', $plan);
+			$ui->assign('add_inv', $add_inv);
+			// এখানে লজিকটি দিন (confirm পেজ দেখানোর ঠিক আগে)
+if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডমিনের ব্যালেন্স কাটার দরকার না থাকলে
+    $admin_wallet = ORM::for_table('admin_wallet')->where('admin_id', $admin['id'])->find_one();
+    if ($admin_wallet) {
+        if ($admin_wallet->balance < $plan['price']) {
+            // ব্যালেন্স কম থাকলে রিচার্জ পেজেই আটকে দিবে, কনফার্ম করতে দিবে না
+            r2(getUrl('customers/view/') . $id_customer, 'e', 'Admin Wallet Insufficient Balance. Current: ' . $admin_wallet->balance);
+        }
+        // টাকা কাটার আসল কোডটি রিচার্জ সাকসেসফুল হওয়ার ফাংশনে থাকা উচিত
+    } else {
+        r2(getUrl('customers/view/') . $id_customer, 'e', 'Admin Wallet not found!');
+    }
+}
+            $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
+            $ui->display('admin/plan/recharge-confirm.tpl');
+        } else {
+            r2(getUrl('customers/view/') . $id_customer, 'e', 'Cannot find active plan');
+        }
+        break;
+    case 'deactivate':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $id_customer = $routes['2'];
+        $plan_id = $routes['3'];
+        $csrf_token = _req('token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/view/') . $id_customer, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        $b = ORM::for_table('tbl_user_recharges')->where('customer_id', $id_customer)->where('plan_id', $plan_id)->find_one();
+        if ($b) {
+            $p = ORM::for_table('tbl_plans')->where('id', $b['plan_id'])->find_one();
+            if ($p) {
+                $p = ORM::for_table('tbl_plans')->where('id', $b['plan_id'])->find_one();
+                $c = User::_info($id_customer);
+                $dvc = Package::getDevice($p);
+                if ($_app_stage != 'demo') {
+                    if (file_exists($dvc)) {
+                        require_once $dvc;
+                        (new $p['device'])->remove_customer($c, $p);
+                    } else {
+                        throw new Exception(Lang::T("Devices Not Found"));
+                    }
+                }
+                $b->status = 'off';
+                $b->expiration = date('Y-m-d');
+                $b->time = date('H:i:s');
+                $b->save();
+                _log('Admin ' . $admin['username'] . ' Deactivate ' . $b['namebp'] . ' for ' . $b['username'], 'User', $b['customer_id']);
+                Message::sendTelegram('Admin ' . $admin['username'] . ' Deactivate ' . $b['namebp'] . ' for u' . $b['username']);
+                r2(getUrl('customers/view/') . $id_customer, 's', 'Success deactivate customer to Mikrotik');
+            }
+        }
+        r2(getUrl('customers/view/') . $id_customer, 'e', 'Cannot find active plan');
+        break;
+    case 'sync':
+        $id_customer = $routes['2'];
+        $csrf_token = _req('token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/view/') . $id_customer, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        $bs = ORM::for_table('tbl_user_recharges')->where('customer_id', $id_customer)->where('status', 'on')->findMany();
+        if ($bs) {
+            $routers = [];
+            $errors = [];
+            foreach ($bs as $b) {
+                $c = ORM::for_table('tbl_customers')->find_one($id_customer);
+                $p = ORM::for_table('tbl_plans')->where('id', $b['plan_id'])->find_one();
+                if ($p) {
+                    $dvc = Package::getDevice($p);
+                    if ($_app_stage != 'demo') {
+                        if (file_exists($dvc)) {
+                            require_once $dvc;
+                            try {
+                                if (method_exists($dvc, 'sync_customer')) {
+                                    (new $p['device'])->sync_customer($c, $p);
+                                } else {
+                                    (new $p['device'])->add_customer($c, $p);
+                                }
+                                $routers[] = $b['routers'];
+                            } catch (Throwable $e) {
+                                $errors[] = $b['routers'] . ': ' . $e->getMessage();
+                            } catch (Exception $e) {
+                                $errors[] = $b['routers'] . ': ' . $e->getMessage();
+                            }
+                        } else {
+                            $errors[] = $b['routers'] . ': ' . Lang::T('Devices Not Found');
+                        }
+                    } else {
+                        $routers[] = $b['routers'];
+                    }
+                }
+            }
+            if ($errors && $routers) {
+                r2(getUrl('customers/view/') . $id_customer, 'w', 'Sync partiel: ' . implode(', ', $routers) . '. Erreurs: ' . implode(' | ', $errors));
+            }
+            if ($errors) {
+                r2(getUrl('customers/view/') . $id_customer, 'e', implode(' | ', $errors));
+            }
+            r2(getUrl('customers/view/') . $id_customer, 's', 'Sync success to ' . implode(", ", $routers));
+        }
+        r2(getUrl('customers/view/') . $id_customer, 'e', 'Cannot find active plan');
+        break;
+    case 'login':
+        if ($admin['user_type'] !== 'SuperAdmin') {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $id = (int) ($routes['2'] ?? 0);
+        $csrf_token = _req('token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/view/') . $id, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        try {
+            Impersonate::startAsCustomer($admin, $id);
+            _alert(
+                Lang::T('You are logged in as this customer') . '. ' . Lang::T('Use Exit impersonation when finished.'),
+                'info',
+                'home',
+                10
+            );
+        } catch (RuntimeException $e) {
+            _alert($e->getMessage(), 'danger', 'customers/view/' . $id);
+        }
+        break;
+    case 'viewu':
+        $customer = ORM::for_table('tbl_customers')->where('username', $routes['2'])->find_one();
+    case 'view':
+        $id = $routes['2'];
+        run_hook('view_customer'); #HOOK
+        if ($admin['user_type'] == 'SuperAdmin') {
+
+    $customer = ORM::for_table('tbl_customers')
+        ->find_one($id);
+
+} else {
+
+    $customer = ORM::for_table('tbl_customers')
+        ->where('id', $id)
+        ->where('created_by', $admin['id'])
+        ->find_one();
+}
+        if ($customer) {
+            // Fetch the Customers Attributes values from the tbl_customer_custom_fields table
+            $customFields = ORM::for_table('tbl_customers_fields')
+                ->where('customer_id', $customer['id'])
+                ->find_many();
+            $v = $routes['3'];
+            if (empty($v)) {
+                $v = 'activation';
+            }
+            switch ($v) {
+                case 'order':
+                    $v = 'order';
+                    $query = ORM::for_table('tbl_payment_gateway')->where('user_id', $customer['id'])->order_by_desc('id');
+                    $order = Paginator::findMany($query);
+
+                    if (empty($order) || $order < 5) {
+                        $query = ORM::for_table('tbl_payment_gateway')->where('username', $customer['username'])->order_by_desc('id');
+                        $order = Paginator::findMany($query);
+                    }
+
+                    $ui->assign('order', $order);
+                    break;
+                case 'activation':
+                    $query = ORM::for_table('tbl_transactions')->where('user_id', $customer['id'])->order_by_desc('id');
+                    $activation = Paginator::findMany($query);
+
+                    if (empty($activation) || $activation < 5) {
+                        $query = ORM::for_table('tbl_transactions')->where('username', $customer['username'])->order_by_desc('id');
+                        $activation = Paginator::findMany($query);
+                    }
+
+                    $ui->assign('activation', $activation);
+                    break;
+            }
+            $ui->assign('packages', User::_billing($customer['id']));
+            $ui->assign('v', $v);
+            $ui->assign('d', $customer);
+            $ui->assign('customFields', $customFields);
+            $ui->assign('xheader', $leafletpickerHeader);
+            $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
+            $ui->display('admin/customers/view.tpl');
+        } else {
+            r2(getUrl('customers/list'), 'e', Lang::T('Account Not Found'));
+        }
+        break;
+    case 'edit':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $id = $routes['2'];
+        run_hook('edit_customer'); #HOOK
+        if ($admin['user_type'] == 'SuperAdmin') {
+
+    $d = ORM::for_table('tbl_customers')
+        ->find_one($id);
+
+} else {
+
+    $d = ORM::for_table('tbl_customers')
+        ->where('id', $id)
+        ->where('created_by', $admin['id'])
+        ->find_one();
+}
+        // Fetch the Customers Attributes values from the tbl_customers_fields table
+        $customFields = ORM::for_table('tbl_customers_fields')
+            ->where('customer_id', $id)
+            ->find_many();
+        if ($d) {
+            if (isset($routes['3']) && $routes['3'] == 'deletePhoto') {
+                if ($d['photo'] != '' && strpos($d['photo'], 'default') === false) {
+                    if (file_exists($UPLOAD_PATH . $d['photo']) && strpos($d['photo'], 'default') === false) {
+                        unlink($UPLOAD_PATH . $d['photo']);
+                        if (file_exists($UPLOAD_PATH . $d['photo'] . '.thumb.jpg')) {
+                            unlink($UPLOAD_PATH . $d['photo'] . '.thumb.jpg');
+                        }
+                    }
+                    $d->photo = '/user.default.jpg';
+                    $d->save();
+                    $ui->assign('notify_t', 's');
+                    $ui->assign('notify', 'You have successfully deleted the photo');
+                } else {
+                    $ui->assign('notify_t', 'e');
+                    $ui->assign('notify', 'No photo found to delete');
+                }
+            }
+            $ui->assign('d', $d);
+            $ui->assign('statuses', ORM::for_table('tbl_customers')->getEnum("status"));
+            $ui->assign('customFields', $customFields);
+            $ui->assign('xheader', $leafletpickerHeader);
+            $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
+            $ui->display('admin/customers/edit.tpl');
+        } else {
+            r2(getUrl('customers/list'), 'e', Lang::T('Account Not Found'));
+        }
+        break;
+        case 'delete-selected':
+
+    _admin();
+    $ids = $_POST['customer_ids'] ?? [];
+
+    if (empty($ids)) {
+        r2(U . 'customers/list', 'e', 'No customer selected');
+    }
+
+    foreach ($ids as $id) {
+        if ($admin['user_type'] == 'SuperAdmin') {
+
+    $customer = ORM::for_table('tbl_customers')
+        ->find_one($id);
+
+} else {
+
+    $customer = ORM::for_table('tbl_customers')
+        ->where('id', $id)
+        ->where('created_by', $admin['id'])
+        ->find_one();
+}
+
+if ($customer) {
+    $customer->delete();
+}
+    }
+
+    echo json_encode(['status' => 'success']);
+    exit;
+
+    case 'delete':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
+        }
+        $id = $routes['2'];
+        $csrf_token = _req('token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/view/') . $id, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        run_hook('delete_customer'); #HOOK
+        if ($admin['user_type'] == 'SuperAdmin') {
+
+    $c = ORM::for_table('tbl_customers')
+        ->find_one($id);
+
+} else {
+
+    $c = ORM::for_table('tbl_customers')
+        ->where('id', $id)
+        ->where('created_by', $admin['id'])
+        ->find_one();
+}
+        if ($c) {
+            // Delete the associated Customers Attributes records from tbl_customer_custom_fields table
+            ORM::for_table('tbl_customers_fields')->where('customer_id', $id)->delete_many();
+            //Delete active package
+            $turs = ORM::for_table('tbl_user_recharges')->where('username', $c['username'])->find_many();
+            foreach ($turs as $tur) {
+                $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
+                if ($p) {
+                    $dvc = Package::getDevice($p);
+                    if ($_app_stage != 'demo') {
+                        if (file_exists($dvc)) {
+                            require_once $dvc;
+                            $p['plan_expired'] = 0;
+                            (new $p['device'])->remove_customer($c, $p);
+                        } else {
+                            throw new Exception(Lang::T("Devices Not Found"));
+                        }
+                    }
+                }
+                try {
+                    $tur->delete();
+                } catch (Exception $e) {
+                }
+            }
+            try {
+                $c->delete();
+            } catch (Exception $e) {
+            }
+            r2(getUrl('customers/list'), 's', Lang::T('User deleted Successfully'));
+        }
+        break;
+
+    case 'add-post':
+
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/add'), 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        $username = alphanumeric(_post('username'), ":+_.@-");
+        $fullname = _post('fullname');
+        $password = trim(_post('password'));
+        $pppoe_username = trim(_post('pppoe_username'));
+        $pppoe_password = trim(_post('pppoe_password'));
+        $pppoe_ip = trim(_post('pppoe_ip'));
+        $email = _post('email');
+        $address = _post('address');
+        $phonenumber = _post('phonenumber');
+        $service_type = _post('service_type');
+        $account_type = _post('account_type');
+        $coordinates = _post('coordinates');
+        //post Customers Attributes
+        $custom_field_names = (array) $_POST['custom_field_name'];
+        $custom_field_values = (array) $_POST['custom_field_value'];
+        //additional information
+        $city = _post('city');
+        $district = _post('district');
+        $state = _post('state');
+        $zip = _post('zip');
+
+        run_hook('add_customer'); #HOOK
+        $msg = '';
+        if (Validator::Length($username, 55, 2) == false) {
+            $msg .= 'Username should be between 3 to 54 characters' . '<br>';
+        }
+        if (Validator::Length($fullname, 36, 1) == false) {
+            $msg .= 'Full Name should be between 2 to 25 characters' . '<br>';
+        }
+        if (!Validator::Length($password, 36, 2)) {
+            $msg .= 'Password should be between 3 to 35 characters' . '<br>';
+        }
+
+        $d = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
+        if ($d) {
+            $msg .= Lang::T('Account already axist') . '<br>';
+        }
+        if ($msg == '') {
+            $d = ORM::for_table('tbl_customers')->create();
+            $d->username = $username;
+            $d->password = Password::_crypt($password);
+            $d->pppoe_username = $pppoe_username;
+            $d->pppoe_password = $pppoe_password;
+            $d->pppoe_ip = $pppoe_ip;
+            $d->email = $email;
+            $d->account_type = $account_type;
+            $d->fullname = $fullname;
+            $d->address = $address;
+            $d->created_by = $admin['id'];
+            $d->phonenumber = Lang::phoneFormat($phonenumber);
+            $d->service_type = $service_type;
+            $d->coordinates = $coordinates;
+            $d->city = $city;
+            $d->district = $district;
+            $d->state = $state;
+            $d->zip = $zip;
+            $d->save();
+
+            // ================= WALLET DEDUCTION START =================
+            // প্যাকেজ ক্রিয়েট করার সময় যদি কোনো নির্দিষ্ট ফি থাকে তবে এখানে $deduct_amount সেট করুন
+            // উদাহরণস্বরূপ: ইউজার ক্রিয়েট ফি যদি ২০ টাকা হয়
+            $deduct_amount = 0; // যদি শুধু ইউজার ক্রিয়েটে টাকা কাটতে চান তবে এখানে সংখ্যা লিখুন (যেমন: 20)
+            
+            if ($deduct_amount > 0) {
+                $wallet = ORM::for_table('admin_wallet')->where('admin_id', $admin['id'])->find_one();
+                if ($wallet) {
+                    if ($wallet->balance >= $deduct_amount) {
+                        $wallet->balance -= $deduct_amount;
+                        $wallet->save();
+                    } else {
+                        // ব্যালেন্স না থাকলে ইউজার ডিলিট করে এরর দিবে
+                        $d->delete();
+                        r2(getUrl('customers/add'), 'e', 'Insufficient Admin Wallet Balance!');
+                    }
+                }
+            }
+            // ================= WALLET DEDUCTION END =================
+
+            // Retrieve the customer ID of the newly created customer
+            $customerId = $d->id();
+
+            // Retrieve the customer ID of the newly created customer
+            $customerId = $d->id();
+            // Save Customers Attributes details
+            if (!empty($custom_field_names) && !empty($custom_field_values)) {
+                $totalFields = min(count($custom_field_names), count($custom_field_values));
+                for ($i = 0; $i < $totalFields; $i++) {
+                    $name = $custom_field_names[$i];
+                    $value = $custom_field_values[$i];
+
+                    if (!empty($name)) {
+                        $customField = ORM::for_table('tbl_customers_fields')->create();
+                        $customField->customer_id = $customerId;
+                        $customField->field_name = $name;
+                        $customField->field_value = $value;
+                        $customField->save();
+                    }
+                }
+            }
+
+            // Send welcome message
+            if (isset($_POST['send_welcome_message']) && $_POST['send_welcome_message'] == true) {
+                $welcomeMessage = Lang::getNotifText('welcome_message');
+                $welcomeMessage = str_replace('[[company]]', $config['CompanyName'], $welcomeMessage);
+                $welcomeMessage = str_replace('[[name]]', $d['fullname'], $welcomeMessage);
+                $welcomeMessage = str_replace('[[username]]', $d['username'], $welcomeMessage);
+                $welcomeMessage = str_replace('[[password]]', $password, $welcomeMessage);
+                $welcomeMessage = str_replace('[[url]]', APP_URL . '/?_route=login', $welcomeMessage);
+
+                $emailSubject = "Welcome to " . $config['CompanyName'];
+
+                $channels = [
+                    'sms' => [
+                        'enabled' => isset($_POST['sms']),
+                        'method' => 'sendSMS',
+                        'args' => [$d['phonenumber'], $welcomeMessage]
+                    ],
+                    'whatsapp' => [
+                        'enabled' => isset($_POST['wa']),
+                        'method' => 'sendWhatsapp',
+                        'args' => [$d['phonenumber'], $welcomeMessage]
+                    ],
+                    'email' => [
+                        'enabled' => isset($_POST['mail']),
+                        'method' => 'Message::sendEmail',
+                        'args' => [$d['email'], $emailSubject, $welcomeMessage, $d['email']]
+                    ]
+                ];
+
+                foreach ($channels as $channel => $message) {
+                    if ($message['enabled']) {
+                        try {
+                            call_user_func_array($message['method'], $message['args']);
+                        } catch (Exception $e) {
+                            // Log the error and handle the failure
+                            _log("Failed to send welcome message via $channel: " . $e->getMessage());
+                        }
+                    }
+                }
+            }
+            r2(getUrl('customers/list'), 's', Lang::T('Account Created Successfully'));
+        } else {
+            r2(getUrl('customers/add'), 'e', $msg);
+        }
+        break;
+
+    case 'edit-post':
+        $id = _post('id');
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers/edit/') . $id, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        $username = alphanumeric(_post('username'), ":+_.@-");
+        $fullname = _post('fullname');
+        $account_type = _post('account_type');
+        $password = trim(_post('password'));
+        $pppoe_username = trim(_post('pppoe_username'));
+        $pppoe_password = trim(_post('pppoe_password'));
+        $pppoe_ip = trim(_post('pppoe_ip'));
+        $email = _post('email');
+        $address = _post('address');
+        $phonenumber = Lang::phoneFormat(_post('phonenumber'));
+        $service_type = _post('service_type');
+        $coordinates = _post('coordinates');
+        $status = _post('status');
+        //additional information
+        $city = _post('city');
+        $district = _post('district');
+        $state = _post('state');
+        $zip = _post('zip');
+        run_hook('edit_customer'); #HOOK
+        $msg = '';
+        if (Validator::Length($username, 55, 2) == false) {
+            $msg .= 'Username should be between 3 to 54 characters' . '<br>';
+        }
+        if (Validator::Length($fullname, 36, 1) == false) {
+            $msg .= 'Full Name should be between 2 to 25 characters' . '<br>';
+        }
+
+        if ($admin['user_type'] == 'SuperAdmin') {
+
+    $c = ORM::for_table('tbl_customers')
+        ->find_one($id);
+
+} else {
+
+    $c = ORM::for_table('tbl_customers')
+        ->where('id', $id)
+        ->where('created_by', $admin['id'])
+        ->find_one();
+}
+
+        if (!$c) {
+            $msg .= Lang::T('Data Not Found') . '<br>';
+        }
+
+        //lets find user Customers Attributes using id
+        $customFields = ORM::for_table('tbl_customers_fields')
+            ->where('customer_id', $id)
+            ->find_many();
+
+        $oldusername = $c['username'];
+        $oldPppoeUsername = $c['pppoe_username'];
+        $oldPppoePassword = $c['pppoe_password'];
+        $oldPppoeIp = $c['pppoe_ip'];
+        $oldPassPassword = $c['password'];
+        $userDiff = false;
+        $pppoeDiff = false;
+        $passDiff = false;
+        $pppoeIpDiff = false;
+        if ($oldusername != $username) {
+            if (ORM::for_table('tbl_customers')->where('username', $username)->find_one()) {
+                $msg .= Lang::T('Username already used by another customer') . '<br>';
+            }
+            if (ORM::for_table('tbl_customers')->where('pppoe_username', $username)->find_one()) {
+                $msg .= Lang::T('Username already used by another pppoe username customer') . '<br>';
+            }
+            $userDiff = true;
+        }
+        if ($oldPppoeUsername != $pppoe_username) {
+            // if(!empty($pppoe_username)){
+            //     if(ORM::for_table('tbl_customers')->where('pppoe_username', $pppoe_username)->find_one()){
+            //         $msg.= Lang::T('PPPoE Username already used by another customer') . '<br>';
+            //     }
+            //     if(ORM::for_table('tbl_customers')->where('username', $pppoe_username)->find_one()){
+            //         $msg.= Lang::T('PPPoE Username already used by another customer') . '<br>';
+            //     }
+            // }
+            $pppoeDiff = true;
+        }
+
+        if ($oldPppoeIp != $pppoe_ip) {
+            $pppoeIpDiff = true;
+        }
+        if ($password != '' && $oldPassPassword != $password) {
+            $passDiff = true;
+        }
+
+        if ($msg == '') {
+            if (!empty($_FILES['photo']['name']) && file_exists($_FILES['photo']['tmp_name'])) {
+                if (function_exists('imagecreatetruecolor')) {
+                    $hash = md5_file($_FILES['photo']['tmp_name']);
+                    $subfolder = substr($hash, 0, 2);
+                    $folder = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'photos' . DIRECTORY_SEPARATOR;
+                    if (!file_exists($folder)) {
+                        mkdir($folder);
+                    }
+                    $folder = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'photos' . DIRECTORY_SEPARATOR . $subfolder . DIRECTORY_SEPARATOR;
+                    if (!file_exists($folder)) {
+                        mkdir($folder);
+                    }
+                    $imgPath = $folder . $hash . '.jpg';
+                    if (!file_exists($imgPath)) {
+                        File::resizeCropImage($_FILES['photo']['tmp_name'], $imgPath, 1600, 1600, 100);
+                    }
+                    if (!file_exists($imgPath . '.thumb.jpg')) {
+                        if (_post('faceDetect') == 'yes') {
+                            try {
+                                $detector = new svay\FaceDetector();
+                                $detector->setTimeout(5000);
+                                $detector->faceDetect($imgPath);
+                                $detector->cropFaceToJpeg($imgPath . '.thumb.jpg', false);
+                            } catch (Exception $e) {
+                                File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
+                            } catch (Throwable $e) {
+                                File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
+                            }
+                        } else {
+                            File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
+                        }
+                    }
+                    if (file_exists($imgPath)) {
+                        if ($c['photo'] != '' && strpos($c['photo'], 'default') === false) {
+                            if (file_exists($UPLOAD_PATH . $c['photo'])) {
+                                unlink($UPLOAD_PATH . $c['photo']);
+                                if (file_exists($UPLOAD_PATH . $c['photo'] . '.thumb.jpg')) {
+                                    unlink($UPLOAD_PATH . $c['photo'] . '.thumb.jpg');
+                                }
+                            }
+                        }
+                        $c->photo = '/photos/' . $subfolder . '/' . $hash . '.jpg';
+                    }
+                    if (file_exists($_FILES['photo']['tmp_name'])) unlink($_FILES['photo']['tmp_name']);
+                } else {
+                    r2(getUrl('settings/app'), 'e', 'PHP GD is not installed');
+                }
+            }
+            if ($userDiff) {
+                $c->username = $username;
+            }
+            if ($password != '') {
+                $c->password = Password::_crypt($password);
+            }
+            $c->pppoe_username = $pppoe_username;
+            $c->pppoe_password = $pppoe_password;
+            $c->pppoe_ip = $pppoe_ip;
+            $c->fullname = $fullname;
+            $c->email = $email;
+            $c->account_type = $account_type;
+            $c->address = $address;
+            $c->status = $status;
+            $c->phonenumber = $phonenumber;
+            $c->service_type = $service_type;
+            $c->coordinates = $coordinates;
+            $c->city = $city;
+            $c->district = $district;
+            $c->state = $state;
+            $c->zip = $zip;
+            $c->save();
+
+
+            // Update Customers Attributes values in tbl_customers_fields table
+            foreach ($customFields as $customField) {
+                $fieldName = $customField['field_name'];
+                if (isset($_POST['custom_fields'][$fieldName])) {
+                    $customFieldValue = $_POST['custom_fields'][$fieldName];
+                    $customField->set('field_value', $customFieldValue);
+                    $customField->save();
+                }
+            }
+
+            // Add new Customers Attributess
+            if (isset($_POST['custom_field_name']) && isset($_POST['custom_field_value'])) {
+                $newCustomFieldNames = $_POST['custom_field_name'];
+                $newCustomFieldValues = $_POST['custom_field_value'];
+
+                // Check if the number of field names and values match
+                if (count($newCustomFieldNames) == count($newCustomFieldValues)) {
+                    $numNewFields = count($newCustomFieldNames);
+
+                    for ($i = 0; $i < $numNewFields; $i++) {
+                        $fieldName = $newCustomFieldNames[$i];
+                        $fieldValue = $newCustomFieldValues[$i];
+
+                        // Insert the new Customers Attributes
+                        $newCustomField = ORM::for_table('tbl_customers_fields')->create();
+                        $newCustomField->set('customer_id', $id);
+                        $newCustomField->set('field_name', $fieldName);
+                        $newCustomField->set('field_value', $fieldValue);
+                        $newCustomField->save();
+                    }
+                }
+            }
+
+            // Delete Customers Attributess
+            if (isset($_POST['delete_custom_fields'])) {
+                $fieldsToDelete = $_POST['delete_custom_fields'];
+                foreach ($fieldsToDelete as $fieldName) {
+                    // Delete the Customers Attributes with the given field name
+                    ORM::for_table('tbl_customers_fields')
+                        ->where('field_name', $fieldName)
+                        ->where('customer_id', $id)
+                        ->delete_many();
+                }
+            }
+
+            if ($userDiff || $pppoeDiff || $pppoeIpDiff || $passDiff) {
+                $turs = ORM::for_table('tbl_user_recharges')->where('customer_id', $c['id'])->findMany();
+                foreach ($turs as $tur) {
+                    $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
+                    $dvc = Package::getDevice($p);
+                    if ($_app_stage != 'demo') {
+                        // if has active package
+                        if ($tur['status'] == 'on') {
+                            if (file_exists($dvc)) {
+                                require_once $dvc;
+                                if ($userDiff) {
+                                    (new $p['device'])->change_username($p, $oldusername, $username);
+                                }
+                                if ($pppoeDiff && $tur['type'] == 'PPPOE') {
+                                    if (empty($oldPppoeUsername) && !empty($pppoe_username)) {
+                                        // admin just add pppoe username
+                                        (new $p['device'])->change_username($p, $username, $pppoe_username);
+                                    } else if (empty($pppoe_username) && !empty($oldPppoeUsername)) {
+                                        // admin want to use customer username
+                                        (new $p['device'])->change_username($p, $oldPppoeUsername, $username);
+                                    } else {
+                                        // regular change pppoe username
+                                        (new $p['device'])->change_username($p, $oldPppoeUsername, $pppoe_username);
+                                    }
+                                }
+                                (new $p['device'])->add_customer($c, $p);
+                            } else {
+                                throw new Exception(Lang::T("Devices Not Found"));
+                            }
+                        }
+                    }
+                    $tur->username = $username;
+                    $tur->save();
+                }
+            }
+            r2(getUrl('customers/view/') . $id, 's', 'User Updated Successfully');
+        } else {
+            r2(getUrl('customers/edit/') . $id, 'e', $msg);
+        }
+        break;
+
+    default:
+    run_hook('list_customers'); #HOOK
+    $search = _req('search');
+    $order = _req('order', 'username');
+    
+    // ড্যাশবোর্ড থেকে আসা সঠিক প্যারামিটার রিসিভ করা
+    $f_status = _req('filter_status', 'All'); 
+    $f_type = _req('filter_type', ''); 
+    $orderby = _req('orderby', 'asc');
+    
+    $order_pos = [
+        'username' => 0,
+        'created_at' => 8,
+        'balance' => 3,
+        'status' => 7
+    ];
+
+    // পেজিনেশনের জন্য URL তৈরি
+    $append_url = "&order=" . urlencode($order) . "&filter_status=" . urlencode($f_status) . "&filter_type=" . urlencode($f_type) . "&orderby=" . urlencode($orderby);
+
+    $query = ORM::for_table('tbl_customers');
+    
+    if ($admin['user_type'] != 'SuperAdmin') {
+    $query->where('created_by', $admin['id']);
+}
+
+    // লজিক ১: সার্ভিস টাইপ ফিল্টার (PPPoE বা Hotspot আলাদা করা)
+    // TYPE FILTER (Recharge table থেকে)
+if ($f_type != '') {
+
+    $type_ids = ORM::for_table('tbl_user_recharges')
+        ->where('type', $f_type) // Hotspot বা PPPoE
+        ->select('customer_id')
+        ->find_array();
+
+    $ids = array_column($type_ids, 'customer_id');
+
+    if (!empty($ids)) {
+        $query->where_in('id', $ids);
+    } else {
+        $query->where('id', 0);
+    }
+}
+
+    // লজিক ২: স্ট্যাটাস ফিল্টার (FIXED)
+if ($f_status == 'Active') {
+
+    // Active = যাদের valid recharge আছে
+    $active_ids = ORM::for_table('tbl_user_recharges')
+        ->where('status', 'on')
+        ->where_raw("expiration >= NOW()")
+        ->select('customer_id')
+        ->find_array();
+
+    $ids = array_column($active_ids, 'customer_id');
+
+    if (!empty($ids)) {
+        $query->where_in('id', $ids);
+    } else {
+        $query->where('id', 0);
+    }
+
+} elseif ($f_status == 'Expired') {
+
+    // Expired = যাদের recharge আছে কিন্তু date শেষ
+    $expired_ids = ORM::for_table('tbl_user_recharges')
+        ->where_raw("expiration < NOW()")
+        ->select('customer_id')
+        ->find_array();
+
+    $ids = array_column($expired_ids, 'customer_id');
+
+    if (!empty($ids)) {
+        $query->where_in('id', $ids);
+    } else {
+        $query->where('id', 0);
+    }
+}
+
+    // লজিক ৩: সার্চ বক্স লজিক
+    if ($search != '') {
+        $like = '%' . $search . '%';
+        $query->where_raw('(username LIKE ? OR fullname LIKE ? OR address LIKE ? OR phonenumber LIKE ? OR email LIKE ?)', [$like, $like, $like, $like, $like]);
+    }
+
+    // অর্ডার বা সর্টিং
+    if ($order == 'lastname') {
+        $query->order_by_expr("SUBSTR(fullname, INSTR(fullname, ' ')) $orderby");
+    } else {
+        if ($orderby == 'asc') {
+            $query->order_by_asc($order);
+        } else {
+            $query->order_by_desc($order);
+        }
+    }
+
+    // CSV এক্সপোর্ট
+    if (_post('export', '') == 'csv') {
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('customers'), 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
+        $d = $query->findMany();
+        set_time_limit(-1);
+        header('Content-type: text/csv');
+        header('Content-Disposition: attachment;filename="customers_list_' . date('Y-m-d') . '.csv"');
+        $fp = fopen('php://output', 'wb');
+        $customDefs = [];
+        global $UPLOAD_PATH;
+        $fieldPath = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'customer_field.json';
+        if (file_exists($fieldPath)) {
+            $customDefs = json_decode(file_get_contents($fieldPath), true) ?: [];
+        }
+        $header = ['id', 'username', 'fullname', 'address', 'phonenumber', 'email', 'balance', 'service_type'];
+        foreach ($customDefs as $cf) {
+            if (!empty($cf['name'])) {
+                $header[] = 'cf_' . $cf['name'];
+            }
+        }
+        fputcsv($fp, $header, ';');
+        foreach ($d as $c) {
+            $row = [$c['id'], $c['username'], $c['fullname'], str_replace("\n", ' ', $c['address']), $c['phonenumber'], $c['email'], $c['balance'], $c['service_type']];
+            $cfJson = [];
+            if (!empty($c['custom_fields'])) {
+                $cfJson = json_decode($c['custom_fields'], true) ?: [];
+            }
+            foreach ($customDefs as $cf) {
+                $name = $cf['name'] ?? '';
+                $row[] = $cfJson[$name] ?? '';
+            }
+            fputcsv($fp, $row, ';');
+        }
+        fclose($fp);
+        die();
+    }
+
+    // ডাটা রেন্ডার করা
+    $d = Paginator::findMany($query, ['search' => $search], 30, $append_url);
+    
+    $ui->assign('d', $d);
+    $ui->assign('filter', $f_status); 
+    $ui->assign('filter_type', $f_type);
+    $ui->assign('search', $search);
+    $ui->assign('order', $order);
+    $ui->assign('order_pos', $order_pos[$order]);
+    $ui->assign('orderby', $orderby);
+    $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
+    
+    $ui->display('admin/customers/list.tpl');
+    break;
+}

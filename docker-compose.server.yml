@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:80"
+    env_file:
+      - .env
+    volumes:
+      - wifizone_uploads:/var/www/html/system/uploads
+      - wifizone_cache:/var/www/html/system/cache
+      - wifizone_smarty_compiled:/var/www/html/ui/compiled
+      - wifizone_smarty_cache:/var/www/html/ui/cache
+
+volumes:
+  wifizone_uploads:
+  wifizone_cache:
+  wifizone_smarty_compiled:
+  wifizone_smarty_cache:

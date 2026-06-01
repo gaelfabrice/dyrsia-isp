@@ -1,0 +1,13 @@
+{
+    "name": "wifizones/billing",
+    "type": "project",
+    "description": "wifizones — Hotspot & MikroTik billing platform.",
+    "keywords": ["wifizones", "Mikrotik", "Hotspot", "Billing"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "wifizones",
+            "role": "Developer"
+        }
+    ]
+}
