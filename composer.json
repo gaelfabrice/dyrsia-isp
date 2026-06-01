@@ -1,12 +1,12 @@
 {
     "name": "wifizones/billing",
     "type": "project",
-    "description": "wifizones — Hotspot & MikroTik billing platform.",
-    "keywords": ["wifizones", "Mikrotik", "Hotspot", "Billing"],
+    "description": "DYRSIA — Hotspot & MikroTik billing platform.",
+    "keywords": ["DYRSIA", "Mikrotik", "Hotspot", "Billing"],
     "license": "MIT",
     "authors": [
         {
-            "name": "wifizones",
+            "name": "DYRSIA",
             "role": "Developer"
         }
     ]

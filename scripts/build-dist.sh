@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-PACKAGE_NAME="wifizone-server-$(date +%Y%m%d%H%M%S).tar.gz"
+PACKAGE_NAME="dyrsia-server-$(date +%Y%m%d%H%M%S).tar.gz"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
