@@ -2,6 +2,8 @@ config.php
 .env
 .env.*
 !.env.example
+render-env-vars.txt
+secrets/
 .DS_Store
 .vscode/
 ui/ui/compiled

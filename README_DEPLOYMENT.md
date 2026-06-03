@@ -112,8 +112,10 @@ Si vous ne voulez pas utiliser Blueprint :
 6. Health Check Path :
 
 ```text
-/health.php
+/healthz.php
 ```
+
+(`/health.php` reste disponible pour un diagnostic complet avec `HEALTH_TOKEN`.)
 
 7. Ajouter les variables d'environnement
 8. Cliquer sur **Deploy Web Service**
@@ -156,10 +158,16 @@ Puis redéployer si nécessaire.
 Tester :
 
 ```text
-https://votre-service.onrender.com/health.php
+https://votre-service.onrender.com/healthz.php
 ```
 
-Si tout fonctionne, la page doit répondre sans erreur serveur.
+Réponse attendue : `{"status":"ok",...}`
+
+Pour un diagnostic base de données et permissions :
+
+```text
+https://votre-service.onrender.com/health.php?token=VOTRE_HEALTH_TOKEN
+```
 
 ## 9. Déploiement cPanel avec archive dist
 

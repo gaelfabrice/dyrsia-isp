@@ -4,10 +4,12 @@ services:
     runtime: docker
     plan: starter
     autoDeploy: true
-    healthCheckPath: /health.php
+    healthCheckPath: /healthz.php
     envVars:
       - key: APP_STAGE
         value: Live
+      - key: APP_KEY
+        generateValue: true
       - key: APP_URL
         sync: false
       - key: DB_HOST

@@ -19,10 +19,17 @@ COPY . /var/www/html
 
 RUN if [ ! -f /var/www/html/config.php ]; then cp /var/www/html/config.sample.php /var/www/html/config.php; fi \
     && a2enmod rewrite headers \
+    && mkdir -p /var/www/html/system/uploads /var/www/html/system/cache /var/www/html/ui/compiled /var/www/html/ui/cache \
     && chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html \
     && chmod -R 775 /var/www/html/system/uploads /var/www/html/system/cache /var/www/html/ui/compiled /var/www/html/ui/cache
 
 WORKDIR /var/www/html
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 80
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["apache2-foreground"]
