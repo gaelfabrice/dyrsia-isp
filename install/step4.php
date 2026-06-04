@@ -12,6 +12,9 @@ $db_user = $_POST['dbuser'];
 $db_pass = $_POST['dbpass'];
 $db_name = $_POST['dbname'];
 $cn = '0';
+$configError = false;
+$configContent = '';
+
 try {
     $dbh = new pdo(
         "mysql:host=$db_host;dbname=$db_name",
@@ -26,7 +29,7 @@ try {
 
 if ($cn == '1') {
     if (isset($_POST['radius']) && $_POST['radius'] == 'yes') {
-        $input = '<?php
+        $configContent = '<?php
 
 $protocol = (!empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off" || $_SERVER["SERVER_PORT"] == 443) ? "https://" : "http://";
 $host = $_SERVER["HTTP_HOST"];
@@ -58,7 +61,7 @@ if($_app_stage!="Live"){
     ini_set("display_startup_errors", 0);
 }';
     } else {
-        $input = '<?php
+        $configContent = '<?php
 $protocol = (!empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off" || $_SERVER["SERVER_PORT"] == 443) ? "https://" : "http://";
 $host = $_SERVER["HTTP_HOST"];
 $baseDir = rtrim(dirname($_SERVER["SCRIPT_NAME"]), "/\\\\");
@@ -83,11 +86,43 @@ if($_app_stage!="Live"){
     ini_set("display_startup_errors", 0);
 }';
     }
-    $wConfig = "../config.php";
-    $fh = fopen($wConfig, 'w') or die("Can't create config file, your server does not support 'fopen' function,
-	please create a file named - config.php with following contents- <br/>$input");
-    fwrite($fh, $input);
-    fclose($fh);
+    
+    $wConfig = dirname(__DIR__) . '/config.php';
+    
+    // Try multiple methods to create the config file
+    $configWritten = false;
+    
+    // Method 1: Standard fopen
+    if (!$configWritten) {
+        $fh = @fopen($wConfig, 'w');
+        if ($fh) {
+            fwrite($fh, $configContent);
+            fclose($fh);
+            $configWritten = true;
+        }
+    }
+    
+    // Method 2: file_put_contents
+    if (!$configWritten) {
+        if (@file_put_contents($wConfig, $configContent) !== false) {
+            $configWritten = true;
+        }
+    }
+    
+    // Method 3: Try creating with different permissions
+    if (!$configWritten) {
+        @touch($wConfig);
+        @chmod($wConfig, 0666);
+        if (@file_put_contents($wConfig, $configContent) !== false) {
+            $configWritten = true;
+        }
+    }
+    
+    if (!$configWritten) {
+        $configError = true;
+    }
+    
+    // Import database regardless of config file status
     $sql = file_get_contents('phpnuxbill.sql');
     $qr = $dbh->exec($sql);
     if (isset($_POST['radius']) && $_POST['radius'] == 'yes') {
@@ -114,6 +149,15 @@ if($_app_stage!="Live"){
 
     <link type='text/css' href='css/style.css' rel='stylesheet' />
     <link type='text/css' href="css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .config-box { background: #f5f5f5; border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin: 15px 0; }
+        .config-code { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 6px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+        .alert-warning { background: #fcf8e3; border: 1px solid #faebcc; color: #8a6d3b; padding: 15px; border-radius: 6px; margin: 15px 0; }
+        .alert-success { background: #dff0d8; border: 1px solid #d6e9c6; color: #3c763d; padding: 15px; border-radius: 6px; margin: 15px 0; }
+        .btn-copy { background: #5bc0de; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
+        .btn-copy:hover { background: #46b8da; }
+        .step-info { background: #e7f3fe; border-left: 4px solid #2196F3; padding: 12px; margin: 10px 0; }
+    </style>
 </head>
 
 <body style='background-color: #FBFBFB;'>
@@ -124,9 +168,11 @@ if($_app_stage!="Live"){
         <div class="span12">
             <h4> PHPNuxBill Installer </h4>
             <?php
-            if ($cn == '1') {
+            if ($cn == '1' && !$configError) {
             ?>
-                <p><strong>Config File Created and Database Imported.</strong><br></p>
+                <div class="alert-success">
+                    <strong>✅ Config File Created and Database Imported Successfully!</strong>
+                </div>
                 <form action="step5.php" method="post">
                     <fieldset>
                         <legend>Click Continue</legend>
@@ -134,15 +180,70 @@ if($_app_stage!="Live"){
                     </fieldset>
                 </form>
             <?php
+            } elseif ($cn == '1' && $configError) {
+            ?>
+                <div class="alert-warning">
+                    <strong>⚠️ Database imported successfully, but config.php could not be created automatically.</strong>
+                    <p>This is usually due to file permissions. Please create the file manually.</p>
+                </div>
+                
+                <div class="config-box">
+                    <h5>📄 Create the file <code>config.php</code> in the root directory with this content:</h5>
+                    
+                    <div class="step-info">
+                        <strong>Option 1 - Via SSH:</strong><br>
+                        <code>nano <?php echo dirname(__DIR__); ?>/config.php</code><br>
+                        Then paste the content below and save (Ctrl+X, Y, Enter)
+                    </div>
+                    
+                    <div class="step-info">
+                        <strong>Option 2 - Via File Manager (aaPanel):</strong><br>
+                        Create a new file named <code>config.php</code> in <code><?php echo dirname(__DIR__); ?></code>
+                    </div>
+                    
+                    <button class="btn-copy" onclick="copyConfig()">📋 Copy Content</button>
+                    <div class="config-code" id="configContent"><?php echo htmlspecialchars($configContent); ?></div>
+                </div>
+                
+                <form action="step5.php" method="post" style="margin-top: 20px;">
+                    <fieldset>
+                        <legend>After creating config.php manually, click Continue</legend>
+                        <button type='submit' class='btn btn-primary btn-lg'>Continue Installation →</button>
+                    </fieldset>
+                </form>
+                
+                <script>
+                function copyConfig() {
+                    var content = document.getElementById('configContent').innerText;
+                    navigator.clipboard.writeText(content).then(function() {
+                        alert('Config content copied to clipboard!');
+                    }).catch(function() {
+                        // Fallback for older browsers
+                        var textarea = document.createElement('textarea');
+                        textarea.value = content;
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                        alert('Config content copied to clipboard!');
+                    });
+                }
+                </script>
+            <?php
             } elseif ($cn == '2') {
             ?>
-                <p> MySQL Connection was successfull. An error occured while adding data on MySQL. Unsuccessfull
-                    Installation. Please refer manual installation in the website github.com/ibnux/phpnuxbill/wiki or Contact Telegram @ibnux  for
-                    helping on installation</p>
+                <div class="alert-warning">
+                    <p><strong>MySQL Connection was successful.</strong> An error occurred while importing the database.</p>
+                    <p>Please refer to manual installation in the website github.com/ibnux/phpnuxbill/wiki or Contact Telegram @ibnux for help.</p>
+                </div>
             <?php
             } else {
             ?>
-                <p> MySQL Connection Failed.</p>
+                <div class="alert-warning">
+                    <p><strong>❌ MySQL Connection Failed.</strong></p>
+                    <p>Please go back and check your database credentials.</p>
+                    <a href="step3.php" class="btn btn-default">← Back to Step 3</a>
+                </div>
             <?php
             }
             ?>
