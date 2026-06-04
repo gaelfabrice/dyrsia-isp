@@ -31,6 +31,7 @@ system/uploads/**
 !system/uploads/*.default.png
 !system/uploads/notifications.default.json
 !system/uploads/index.html
+!system/uploads/.htaccess
 system/uploads/sms/**
 !system/uploads/sms/index.html
 system/uploads/system/**
