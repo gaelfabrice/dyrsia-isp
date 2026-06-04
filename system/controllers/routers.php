@@ -32,19 +32,37 @@ $leafletpickerHeader = <<<EOT
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css">
 EOT;
 
-function router_check_status($ip_address, $username, $password)
+function router_check_status($ip_address, $username, $password, &$errorDetail = null)
 {
     $oldTimeout = ini_get('default_socket_timeout');
     ini_set('default_socket_timeout', 5);
+    $errorDetail = null;
+    
     try {
         (new MikrotikHotspot())->getClient($ip_address, $username, $password);
         ini_set('default_socket_timeout', $oldTimeout);
         return 'Online';
     } catch (Throwable $e) {
         ini_set('default_socket_timeout', $oldTimeout);
+        $errorDetail = [
+            'message' => $e->getMessage(),
+            'code' => $e->getCode(),
+            'file' => basename($e->getFile()),
+            'line' => $e->getLine(),
+            'class' => get_class($e),
+        ];
+        _log('[Router Connection Error] IP: ' . $ip_address . ' | User: ' . $username . ' | Error: ' . $e->getMessage(), 'Router', 0);
         return 'Offline';
     } catch (Exception $e) {
         ini_set('default_socket_timeout', $oldTimeout);
+        $errorDetail = [
+            'message' => $e->getMessage(),
+            'code' => $e->getCode(),
+            'file' => basename($e->getFile()),
+            'line' => $e->getLine(),
+            'class' => get_class($e),
+        ];
+        _log('[Router Connection Error] IP: ' . $ip_address . ' | User: ' . $username . ' | Error: ' . $e->getMessage(), 'Router', 0);
         return 'Offline';
     }
 }
@@ -95,13 +113,27 @@ switch ($action) {
             ]);
             exit;
         }
-        $routerStatus = router_check_status($ip_address, $username, $password);
-        echo json_encode([
+        $errorDetail = null;
+        $routerStatus = router_check_status($ip_address, $username, $password, $errorDetail);
+        
+        $response = [
             'success' => $routerStatus == 'Online',
             'status' => $routerStatus,
             'ip_address' => $ip_address,
             'message' => $routerStatus == 'Online' ? Lang::T('Connexion réussie') : Lang::T('Connexion échouée')
-        ]);
+        ];
+        
+        if ($errorDetail) {
+            $response['error'] = $errorDetail;
+            $response['message'] = $errorDetail['message'];
+            $response['debug'] = [
+                'php_version' => PHP_VERSION,
+                'server_ip' => $_SERVER['SERVER_ADDR'] ?? 'unknown',
+                'timestamp' => date('Y-m-d H:i:s'),
+            ];
+        }
+        
+        echo json_encode($response);
         exit;
 
     case 'edit':

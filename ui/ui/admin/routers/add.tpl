@@ -138,11 +138,28 @@
                         createButton.disabled = false;
                         setMessage('success', 'fa-check-circle', response.message + ' — ' + response.ip_address);
                     } else {
-                        setMessage('error', 'fa-times-circle', response.message);
+                        var errorMsg = response.message || 'Connexion échouée';
+                        var detailHtml = '';
+                        if (response.error) {
+                            detailHtml = '<br><small style="display:block;margin-top:8px;padding:10px;background:rgba(0,0,0,0.1);border-radius:6px;text-align:left;font-family:monospace;font-size:11px;">';
+                            detailHtml += '<strong>Erreur:</strong> ' + (response.error.message || 'N/A') + '<br>';
+                            detailHtml += '<strong>Type:</strong> ' + (response.error.class || 'N/A') + '<br>';
+                            detailHtml += '<strong>Fichier:</strong> ' + (response.error.file || 'N/A') + ':' + (response.error.line || '?') + '<br>';
+                            if (response.debug) {
+                                detailHtml += '<strong>Serveur:</strong> ' + (response.debug.server_ip || 'N/A') + '<br>';
+                                detailHtml += '<strong>PHP:</strong> ' + (response.debug.php_version || 'N/A');
+                            }
+                            detailHtml += '</small>';
+                        }
+                        message.classList.remove('success');
+                        message.classList.add('error');
+                        message.innerHTML = '<i class="fa fa-times-circle"></i><span>' + errorMsg + detailHtml + '</span>';
                     }
                 })
-                .catch(function () {
-                    setMessage('error', 'fa-times-circle', 'Erreur pendant le test de connexion.');
+                .catch(function (err) {
+                    message.classList.remove('success');
+                    message.classList.add('error');
+                    message.innerHTML = '<i class="fa fa-times-circle"></i><span>Erreur pendant le test de connexion.<br><small style="display:block;margin-top:8px;font-family:monospace;font-size:11px;">' + (err.message || err) + '</small></span>';
                 })
                 .finally(function () {
                     testButton.disabled = false;
