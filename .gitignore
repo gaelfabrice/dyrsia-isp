@@ -20,7 +20,14 @@ system/paymentgateway/ui/**
 system/paymentgateway/**
 !system/paymentgateway/ui/
 !system/paymentgateway/ui/index.html
+!system/paymentgateway/ui/bkash.tpl
+!system/paymentgateway/ui/paystack.tpl
+!system/paymentgateway/ui/campay.tpl
 !system/paymentgateway/index.html
+!system/paymentgateway/.gitignore
+!system/paymentgateway/bkash.php
+!system/paymentgateway/paystack.php
+!system/paymentgateway/campay.php
 !system/plugin/ui/
 system/plugin/ui/*
 !system/plugin/ui/index.html
