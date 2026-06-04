@@ -201,6 +201,9 @@ document.querySelectorAll('.toggle-container').forEach(function (el) {
     {$xfooter}
 {/if}
 
+<script>
+var CSRF_TOKEN = '{$csrf_token|escape:'javascript'}';
+</script>
 {literal}
 <script>
 var listAttApi;
@@ -307,7 +310,7 @@ $(function () {
 
 /* Auto-inject CSRF token into admin POST forms */
 (function () {
-    var token = '{$csrf_token|escape:'javascript'}';
+    var token = (typeof CSRF_TOKEN !== 'undefined') ? CSRF_TOKEN : '';
     if (!token) {
         return;
     }
