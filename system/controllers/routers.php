@@ -102,38 +102,126 @@ switch ($action) {
         break;
 
     case 'test-connection':
+        // Capture all errors including fatal errors
+        error_reporting(E_ALL);
+        ini_set('display_errors', 0);
+        
+        // Register shutdown function to catch fatal errors
+        register_shutdown_function(function() {
+            $error = error_get_last();
+            if ($error && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+                if (!headers_sent()) {
+                    header('Content-Type: application/json');
+                }
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Fatal Error: ' . $error['message'],
+                    'error' => [
+                        'message' => $error['message'],
+                        'file' => basename($error['file']),
+                        'line' => $error['line'],
+                        'type' => 'FATAL_ERROR'
+                    ],
+                    'debug' => [
+                        'php_version' => PHP_VERSION,
+                        'timestamp' => date('Y-m-d H:i:s'),
+                    ]
+                ]);
+            }
+        });
+        
         header('Content-Type: application/json');
-        $ip_address = router_normalize_ip_port(_post('ip_address'), _post('api_port'));
-        $username = _post('username');
-        $password = _post('password');
-        if ($ip_address == '' || $username == '') {
-            echo json_encode([
-                'success' => false,
-                'message' => Lang::T('IP address and username are required')
-            ]);
-            exit;
-        }
-        $errorDetail = null;
-        $routerStatus = router_check_status($ip_address, $username, $password, $errorDetail);
         
-        $response = [
-            'success' => $routerStatus == 'Online',
-            'status' => $routerStatus,
-            'ip_address' => $ip_address,
-            'message' => $routerStatus == 'Online' ? Lang::T('Connexion réussie') : Lang::T('Connexion échouée')
-        ];
-        
-        if ($errorDetail) {
-            $response['error'] = $errorDetail;
-            $response['message'] = $errorDetail['message'];
+        try {
+            $ip_address = router_normalize_ip_port(_post('ip_address'), _post('api_port'));
+            $username = _post('username');
+            $password = _post('password');
+            
+            if ($ip_address == '' || $username == '') {
+                echo json_encode([
+                    'success' => false,
+                    'message' => Lang::T('IP address and username are required')
+                ]);
+                exit;
+            }
+            
+            // Check if PEAR2 library exists
+            $pear2Path = $DEVICE_PATH . '/../autoload/PEAR2/Autoload.php';
+            if (!file_exists($pear2Path)) {
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'PEAR2 RouterOS library not found',
+                    'error' => [
+                        'message' => 'Missing file: ' . $pear2Path,
+                        'file' => 'PEAR2/Autoload.php',
+                        'line' => 0,
+                        'type' => 'FILE_NOT_FOUND'
+                    ],
+                    'debug' => [
+                        'device_path' => $DEVICE_PATH,
+                        'expected_path' => $pear2Path,
+                        'php_version' => PHP_VERSION,
+                        'timestamp' => date('Y-m-d H:i:s'),
+                    ]
+                ]);
+                exit;
+            }
+            
+            $errorDetail = null;
+            $routerStatus = router_check_status($ip_address, $username, $password, $errorDetail);
+            
+            $response = [
+                'success' => $routerStatus == 'Online',
+                'status' => $routerStatus,
+                'ip_address' => $ip_address,
+                'message' => $routerStatus == 'Online' ? Lang::T('Connexion réussie') : Lang::T('Connexion échouée')
+            ];
+            
+            if ($errorDetail) {
+                $response['error'] = $errorDetail;
+                $response['message'] = $errorDetail['message'];
+            }
+            
             $response['debug'] = [
                 'php_version' => PHP_VERSION,
                 'server_ip' => $_SERVER['SERVER_ADDR'] ?? 'unknown',
                 'timestamp' => date('Y-m-d H:i:s'),
+                'pear2_exists' => file_exists($pear2Path),
             ];
+            
+            echo json_encode($response);
+            
+        } catch (Throwable $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error' => [
+                    'message' => $e->getMessage(),
+                    'file' => basename($e->getFile()),
+                    'line' => $e->getLine(),
+                    'class' => get_class($e),
+                ],
+                'debug' => [
+                    'php_version' => PHP_VERSION,
+                    'timestamp' => date('Y-m-d H:i:s'),
+                ]
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error' => [
+                    'message' => $e->getMessage(),
+                    'file' => basename($e->getFile()),
+                    'line' => $e->getLine(),
+                    'class' => get_class($e),
+                ],
+                'debug' => [
+                    'php_version' => PHP_VERSION,
+                    'timestamp' => date('Y-m-d H:i:s'),
+                ]
+            ]);
         }
-        
-        echo json_encode($response);
         exit;
 
     case 'edit':
