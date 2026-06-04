@@ -1,0 +1,7 @@
+<?php
+/**
+ * Configuration file placeholder
+ * This file will be overwritten during installation
+ * If installation fails, copy config.sample.php to config.php and edit manually
+ */
+die('Installation not completed. Please run /install/ first or configure this file manually.');

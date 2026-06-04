@@ -88,9 +88,22 @@ if($_app_stage!="Live"){
     }
     
     $wConfig = dirname(__DIR__) . '/config.php';
+    $wConfigDist = dirname(__DIR__) . '/config.php.dist';
+    $wConfigSample = dirname(__DIR__) . '/config.sample.php';
     
     // Try multiple methods to create the config file
     $configWritten = false;
+    
+    // Method 0: If config.php.dist exists, copy it first (helps with permissions)
+    if (!$configWritten && !file_exists($wConfig)) {
+        if (file_exists($wConfigDist)) {
+            @copy($wConfigDist, $wConfig);
+            @chmod($wConfig, 0666);
+        } elseif (file_exists($wConfigSample)) {
+            @copy($wConfigSample, $wConfig);
+            @chmod($wConfig, 0666);
+        }
+    }
     
     // Method 1: Standard fopen
     if (!$configWritten) {
@@ -114,6 +127,15 @@ if($_app_stage!="Live"){
         @touch($wConfig);
         @chmod($wConfig, 0666);
         if (@file_put_contents($wConfig, $configContent) !== false) {
+            $configWritten = true;
+        }
+    }
+    
+    // Method 4: Try using shell command
+    if (!$configWritten) {
+        $escaped = escapeshellarg($configContent);
+        @exec("echo $escaped > " . escapeshellarg($wConfig) . " 2>&1", $output, $returnCode);
+        if ($returnCode === 0 && file_exists($wConfig)) {
             $configWritten = true;
         }
     }
