@@ -185,11 +185,17 @@ dist/dyrsia-server-YYYYMMDDHHMMSS.tar.gz
 
 Sur cPanel :
 
-1. Uploader l'archive dans `public_html` ou le dossier du domaine
-2. Extraire l'archive
-3. Copier `config.sample.php` vers `config.php`
-4. Modifier `config.php` avec les informations MySQL cPanel
-5. Vérifier les permissions des dossiers cache/uploads
+1. Créer le sous-domaine (`isp` ou `app`) et noter son dossier racine (ex. `public_html/isp`)
+2. Uploader l'archive `dist` dans ce dossier et extraire (vous devez voir `index.php`, `system/`, `install/` à la racine)
+3. Copier `.htaccess.example` vers `.htaccess` à la racine du site
+4. Ouvrir `https://votre-sous-domaine.dyrsia.com/install/` (le dossier `install/` est obligatoire)
+5. À l'étape base de données : hôte **`127.0.0.1`**, base `dyrsi1328310_1bqyyb`, utilisateur LWS
+6. Connexion admin : `https://isp.dyrsia.com/?_route=admin` — utilisateur **`admin`**, mot de passe **`admin`**
+7. Changer le mot de passe : `?_route=settings/change-password`
+8. Après installation : **supprimer** le dossier `install/`, puis optionnellement utiliser `.htaccess_firewall` renommé en `.htaccess`
+9. Vérifier les permissions des dossiers cache/uploads (775)
+
+Si `tbl_users` est vide après install, exécuter `scripts/seed-superadmin.sql` dans phpMyAdmin.
 
 ## 10. Permissions recommandées cPanel
 

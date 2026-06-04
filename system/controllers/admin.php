@@ -99,16 +99,20 @@ switch ($do) {
                     _alert(Lang::T('This account status') . ' : ' . Lang::T($d['status']), 'danger', "admin");
                 }
                 if (Password::_verify($password, $d_pass) == true) {
+                    $adminId = (int) $d['id'];
+                    if ($adminId <= 0) {
+                        _alert(Lang::T('Invalid Username or Password') . '.', 'danger', "admin");
+                    }
                     $newHash = Password::upgradeStoredHash($password, $d_pass);
                     if ($newHash !== null) {
                         $d->password = $newHash;
                     }
-                    $_SESSION['aid'] = $d['id'];
+                    $_SESSION['aid'] = $adminId;
                     $_SESSION['user_type'] = $d['user_type'];
-                    $token = Admin::setCookie($d['id']);
+                    $token = Admin::setCookie($adminId);
                     $d->last_login = date('Y-m-d H:i:s');
                     $d->save();
-                    _log($username . ' ' . Lang::T('Login Successful'), $d['user_type'], $d['id']);
+                    _log($username . ' ' . Lang::T('Login Successful'), $d['user_type'], $adminId);
                     if ($isApi) {
                         if ($token) {
                             showResult(true, Lang::T('Login Successful'), ['token' => "a." . $token]);

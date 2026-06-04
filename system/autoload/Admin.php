@@ -77,10 +77,14 @@ class Admin
     public static function setCookie($aid)
     {
         global $db_pass, $config;
-        $enable_session_timeout = $config['enable_session_timeout'];
-        $session_timeout_duration = intval($config['session_timeout_duration']) * 60; // Convert minutes to seconds
+        $aid = (int) $aid;
+        if ($aid <= 0) {
+            return '';
+        }
+        $enable_session_timeout = !empty($config['enable_session_timeout']) && (int) $config['enable_session_timeout'] === 1;
+        $session_timeout_duration = (int) ($config['session_timeout_duration'] ?? 60) * 60;
 
-        if (isset($aid)) {
+        if ($aid > 0) {
             $time = time();
             $token = $aid . '.' . $time . '.' . WifiZoneSecurity::signCookiePayload("$aid.$time");
 
@@ -144,7 +148,14 @@ class Admin
 
     public static function upsertToken($aid, $token)
     {
-        $query = ORM::for_table('tbl_users')->findOne($aid);
+        $aid = (int) $aid;
+        if ($aid <= 0) {
+            return;
+        }
+        $query = ORM::for_table('tbl_users')->find_one($aid);
+        if (!$query) {
+            return;
+        }
         $query->login_token = sha1($token);
         $query->save();
     }

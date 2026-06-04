@@ -1,0 +1,9 @@
+# Copier ce fichier vers .htaccess sur cPanel (Gestionnaire de fichiers).
+# Utiliser cette version pendant l'installation ; après install, vous pouvez
+# passer à .htaccess_firewall renommé en .htaccess pour durcir la sécurité.
+
+RewriteEngine On
+RewriteBase /
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]
