@@ -152,19 +152,23 @@ class Admin
         if ($aid <= 0) {
             return;
         }
-        $query = ORM::for_table('tbl_users')->find_one($aid);
-        if (!$query) {
-            return;
+        try {
+            $query = ORM::for_table('tbl_users')->find_one($aid);
+            if (!$query) {
+                return;
+            }
+            $query->login_token = sha1($token);
+            $query->save();
+        } catch (Throwable $e) {
+            error_log('wifizone upsertToken failed: ' . $e->getMessage());
         }
-        $query->login_token = sha1($token);
-        $query->save();
     }
 
     public static function validateToken($aid, $cookieToken)
     {
         global $config;
-        $query =  ORM::for_table('tbl_users')->select('login_token')->findOne($aid);
-        if ($config['single_session'] != 'yes') {
+        $query = ORM::for_table('tbl_users')->select('login_token')->find_one((int) $aid);
+        if (($config['single_session'] ?? 'no') !== 'yes') {
             return true; // For multi-session, any token is valid
         }
         if (empty($query)) {

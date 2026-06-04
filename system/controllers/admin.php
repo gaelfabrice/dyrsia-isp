@@ -109,10 +109,15 @@ switch ($do) {
                     }
                     $_SESSION['aid'] = $adminId;
                     $_SESSION['user_type'] = $d['user_type'];
-                    $token = Admin::setCookie($adminId);
-                    $d->last_login = date('Y-m-d H:i:s');
-                    $d->save();
-                    _log($username . ' ' . Lang::T('Login Successful'), $d['user_type'], $adminId);
+                    try {
+                        $token = Admin::setCookie($adminId);
+                        $d->last_login = date('Y-m-d H:i:s');
+                        $d->save();
+                        _log($username . ' ' . Lang::T('Login Successful'), $d['user_type'], $adminId);
+                    } catch (Throwable $e) {
+                        error_log('wifizone admin login post-save: ' . $e->getMessage());
+                        $token = '';
+                    }
                     if ($isApi) {
                         if ($token) {
                             showResult(true, Lang::T('Login Successful'), ['token' => "a." . $token]);

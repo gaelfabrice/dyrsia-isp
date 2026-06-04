@@ -201,13 +201,19 @@ try {
 } catch (Throwable $e) {
     file_put_contents(__DIR__ . '/../system/uploads/runtime_error.log', date('c') . ' ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n---\n", FILE_APPEND);
     if (function_exists('_log')) {
-        _log('[Crash] ' . $e->getMessage() . "\n" . $e->getTraceAsString(), 'Error');
+        try {
+            _log('[Crash] ' . $e->getMessage() . "\n" . $e->getTraceAsString(), 'Error');
+        } catch (Throwable $ignored) {
+        }
     }
-    Message::sendTelegram(
-        "Sistem Error.\n" .
-            $e->getMessage() . "\n" .
-            $e->getTraceAsString()
-    );
+    try {
+        Message::sendTelegram(
+            "Sistem Error.\n" .
+                $e->getMessage() . "\n" .
+                $e->getTraceAsString()
+        );
+    } catch (Throwable $ignored) {
+    }
     if (empty($_SESSION['aid'])) {
         $ui->display('customer/error.tpl');
         die();
@@ -219,13 +225,19 @@ try {
 } catch (Exception $e) {
     file_put_contents(__DIR__ . '/../system/uploads/runtime_error.log', date('c') . ' ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n---\n", FILE_APPEND);
     if (function_exists('_log')) {
-        _log('[Crash] ' . $e->getMessage() . "\n" . $e->getTraceAsString(), 'Error');
+        try {
+            _log('[Crash] ' . $e->getMessage() . "\n" . $e->getTraceAsString(), 'Error');
+        } catch (Throwable $ignored) {
+        }
     }
-    Message::sendTelegram(
-        "Sistem Error.\n" .
-            $e->getMessage() . "\n" .
-            $e->getTraceAsString()
-    );
+    try {
+        Message::sendTelegram(
+            "Sistem Error.\n" .
+                $e->getMessage() . "\n" .
+                $e->getTraceAsString()
+        );
+    } catch (Throwable $ignored) {
+    }
     if (empty($_SESSION['aid'])) {
         $ui->display('customer/error.tpl');
         die();

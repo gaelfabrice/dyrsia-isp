@@ -547,6 +547,15 @@ function wifizone_normalize_log_userid($userid)
 
 function _log($description, $type = '', $userid = '')
 {
+    try {
+        wifizone_write_log_row($description, $type, $userid);
+    } catch (Throwable $e) {
+        error_log('wifizone _log failed: ' . $e->getMessage());
+    }
+}
+
+function wifizone_write_log_row($description, $type = '', $userid = '')
+{
     $userid = wifizone_normalize_log_userid($userid);
     $sessionId = session_id();
     $prefix = '';

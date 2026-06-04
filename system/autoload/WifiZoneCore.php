@@ -8,9 +8,26 @@ class WifiZoneCore
     public static function boot()
     {
         self::installSchema();
+        self::ensureUsersLoginTokenColumn();
         self::ensureConfig();
         self::applyLocaleDefaults();
         self::applyBrandDefaults();
+    }
+
+    public static function ensureUsersLoginTokenColumn()
+    {
+        try {
+            global $db;
+            if (!isset($db)) {
+                return;
+            }
+            $cols = $db->query("SHOW COLUMNS FROM tbl_users LIKE 'login_token'")->fetchAll(PDO::FETCH_ASSOC);
+            if (count($cols) === 0) {
+                ORM::raw_execute('ALTER TABLE tbl_users ADD COLUMN login_token VARCHAR(40) NULL DEFAULT NULL');
+            }
+        } catch (Throwable $e) {
+            error_log('wifizone ensureUsersLoginTokenColumn: ' . $e->getMessage());
+        }
     }
 
     /**
