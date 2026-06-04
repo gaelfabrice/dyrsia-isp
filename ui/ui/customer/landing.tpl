@@ -237,11 +237,115 @@
             font-size: 13px; border-top: 1px solid var(--line);
         }
         .btn-block { width: 100%; }
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 24px;
+            align-items: stretch;
+        }
+        .pricing-card {
+            position: relative;
+            padding: 28px 24px;
+            border-radius: 22px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            display: flex;
+            flex-direction: column;
+        }
+        .pricing-card.pricing-featured {
+            border: 2px solid var(--brand);
+            background: linear-gradient(180deg, rgba(34, 197, 94, 0.08) 0%, var(--card) 100%);
+            transform: scale(1.02);
+        }
+        .pricing-badge {
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 6px 16px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            background: linear-gradient(135deg, var(--brand), var(--brand2));
+            color: #021014;
+            white-space: nowrap;
+        }
+        .pricing-header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--line);
+        }
+        .pricing-header h3 {
+            margin: 0 0 12px;
+            font-size: 20px;
+            font-weight: 800;
+        }
+        .pricing-price {
+            display: flex;
+            align-items: baseline;
+            justify-content: center;
+            gap: 6px;
+        }
+        .pricing-price .amount {
+            font-size: 32px;
+            font-weight: 900;
+            color: var(--brand);
+            line-height: 1;
+        }
+        .pricing-price .period {
+            font-size: 14px;
+            color: var(--muted);
+        }
+        .pricing-note {
+            margin: 10px 0 0;
+            font-size: 12px;
+            color: var(--muted);
+            font-style: italic;
+        }
+        .pricing-features {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 24px;
+            flex: 1;
+        }
+        .pricing-features li {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 0;
+            font-size: 14px;
+            color: #cbd5e1;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+        }
+        .pricing-features li:last-child {
+            border-bottom: 0;
+        }
+        .pricing-features li .fa {
+            color: var(--brand);
+            margin-top: 3px;
+            flex-shrink: 0;
+        }
+        .pricing-card .btn {
+            margin-top: auto;
+        }
         @media (min-width: 768px) {
             .nav-links { flex-wrap: nowrap; }
         }
+        @media (max-width: 991px) {
+            .pricing-grid {
+                grid-template-columns: 1fr;
+                max-width: 420px;
+                margin: 0 auto;
+            }
+            .pricing-card.pricing-featured {
+                transform: none;
+                order: -1;
+            }
+        }
         @media (max-width: 767px) {
-            .pricing-wrap { grid-template-columns: 1fr; }
             .nav { flex-wrap: wrap; justify-content: center; }
             .brand { width: 100%; justify-content: center; }
             .nav-links { width: 100%; justify-content: center; flex-wrap: wrap; }
@@ -372,54 +476,73 @@
 
         <section class="section container" id="pricing">
             <div class="section-head">
-                <h2>Fair, Transparent Pricing</h2>
-                <p>No hidden fees. No limit on routers. Calculate your estimated monthly platform cost.</p>
+                <h2>Tarification Simple et Transparente</h2>
+                <p>Choisissez l'offre adaptée à votre activité. Aucun frais caché.</p>
             </div>
-            <div class="pricing-wrap">
-                <div class="calc-card">
-                    <h3>Interactive Calculator</h3>
-                    <p class="sub">Estimate your monthly platform fee</p>
-                    <div class="field">
-                        <label>Estimated Monthly Revenue (XAF)</label>
-                        <div class="range-wrap">
-                            <input type="range" id="calc-revenue" min="10000" max="500000" step="5000" value="50000">
-                            <div class="range-val"><span>10K</span><span id="calc-revenue-label">50,000</span><span>500K</span></div>
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <div class="pricing-header">
+                        <h3>Mode Démo</h3>
+                        <div class="pricing-price">
+                            <span class="amount">0 F CFA</span>
+                            <span class="period">/ 14 jours</span>
                         </div>
                     </div>
-                    <div class="field">
-                        <label>Active PPPoE Clients</label>
-                        <div class="range-wrap">
-                            <input type="range" id="calc-pppoe" min="0" max="500" step="5" value="50">
-                            <div class="range-val"><span>0</span><span id="calc-pppoe-label">50 users</span><span>500</span></div>
-                        </div>
-                    </div>
-                    <div class="fee-box">
-                        <div class="amount" id="calc-total">XAF 4,000</div>
-                        <div class="per">per month</div>
-                        <div class="fee-breakdown" id="calc-breakdown">Hotspot (8%) XAF 4,000<br>PPPoE (XAF 20/ea) XAF 0</div>
-                    </div>
-                    <a class="btn btn-primary btn-block" href="#deploy" style="margin-top:18px;">Deploy Now</a>
-                    <p style="text-align:center;margin-top:14px;font-size:13px;color:var(--muted);">Self-hosted license? <a href="#deploy">Contact Sales</a></p>
+                    <ul class="pricing-features">
+                        <li><i class="fa fa-check"></i> Exploration complète du tableau de bord</li>
+                        <li><i class="fa fa-check"></i> Aucun routeur réel connectable (mode simulation)</li>
+                        <li><i class="fa fa-check"></i> Idéal pour tester l'interface avant de se lancer</li>
+                    </ul>
+                    <a class="btn btn-block" href="{Text::url('provision')}"><i class="fa fa-play-circle"></i> Essai Gratuit</a>
                 </div>
 
-                <div class="provision-card" id="deploy">
-                    <h3>Provision Your Instance</h3>
-                    <p class="sub">Create your dedicated database and admin panel in under 60 seconds.</p>
-                    <p style="margin:0 0 16px;color:var(--muted);font-size:14px;">ISP name, subdomain and admin email — we generate your isolated admin space automatically.</p>
-                    <a class="btn btn-primary btn-block" href="{Text::url('provision')}"><i class="fa fa-plus-circle"></i> Create Environment →</a>
+                <div class="pricing-card pricing-featured">
+                    <span class="pricing-badge">Le plus populaire</span>
+                    <div class="pricing-header">
+                        <h3>Mode Business</h3>
+                        <div class="pricing-price">
+                            <span class="amount">2 500 F CFA</span>
+                            <span class="period">/ mois</span>
+                        </div>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fa fa-check"></i> Jusqu'à 3 routeurs inclus</li>
+                        <li><i class="fa fa-check"></i> Commission de 10% sur vos ventes Hotspot et PPPoE</li>
+                        <li><i class="fa fa-check"></i> Configuration simplifiée (nous gérons les encaissements)</li>
+                        <li><i class="fa fa-check"></i> Idéal pour les petites installations de quartier</li>
+                    </ul>
+                    <a class="btn btn-primary btn-block" href="{Text::url('order/package')}"><i class="fa fa-rocket"></i> Souscrire</a>
+                </div>
+
+                <div class="pricing-card">
+                    <div class="pricing-header">
+                        <h3>Mode Pro</h3>
+                        <div class="pricing-price">
+                            <span class="amount">10 000 F CFA</span>
+                            <span class="period">/ mois</span>
+                        </div>
+                        <p class="pricing-note">Puis 8 000 F CFA / mois pour le 2ème routeur</p>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fa fa-check"></i> 0% de commission sur toutes vos ventes</li>
+                        <li><i class="fa fa-check"></i> Intégration de votre propre API de paiement (CamPay, MyCoolPay, etc.)</li>
+                        <li><i class="fa fa-check"></i> Reversement direct et automatique sur votre compte</li>
+                        <li><i class="fa fa-check"></i> Conçu pour les FAI locaux et les techniciens à fort volume</li>
+                    </ul>
+                    <a class="btn btn-block" href="{Text::url('order/package')}"><i class="fa fa-bolt"></i> Choisir Pro</a>
                 </div>
             </div>
 
             <div class="admin-card" id="admin-login">
-                <h3><i class="fa fa-lock"></i> Admin Login</h3>
-                <p>Enter your subdomain to access your dashboard.</p>
+                <h3><i class="fa fa-lock"></i> Accès Admin</h3>
+                <p>Entrez votre sous-domaine pour accéder à votre tableau de bord.</p>
                 <div class="field">
                     <div class="subdomain-row">
-                        <input type="text" id="admin-subdomain" placeholder="myisp" pattern="[a-z0-9-]+">
-                        <span class="subdomain-suffix" id="admin-subdomain-suffix">.local</span>
+                        <input type="text" id="admin-subdomain" placeholder="monisp" pattern="[a-z0-9-]+">
+                        <span class="subdomain-suffix" id="admin-subdomain-suffix">.dyrsia.com</span>
                     </div>
                 </div>
-                <a class="btn btn-primary btn-block" href="{Text::url('admin')}" id="admin-access-btn" data-tenant-base="{Text::url('dashboard_tenant=')}"><i class="fa fa-sign-in"></i> Access Dashboard</a>
+                <a class="btn btn-primary btn-block" href="{Text::url('admin')}" id="admin-access-btn" data-tenant-base="{Text::url('dashboard_tenant=')}"><i class="fa fa-sign-in"></i> Accéder au Dashboard</a>
             </div>
         </section>
     </main>
@@ -433,36 +556,6 @@
     <script>
     {literal}
     (function () {
-        var revenue = document.getElementById('calc-revenue');
-        var pppoe = document.getElementById('calc-pppoe');
-        var revenueLabel = document.getElementById('calc-revenue-label');
-        var pppoeLabel = document.getElementById('calc-pppoe-label');
-        var totalEl = document.getElementById('calc-total');
-        var breakdownEl = document.getElementById('calc-breakdown');
-
-        function formatXaf(n) {
-            return 'XAF ' + n.toLocaleString('fr-FR');
-        }
-
-        function updateCalc() {
-            if (!revenue || !pppoe) return;
-            var rev = parseInt(revenue.value, 10);
-            var users = parseInt(pppoe.value, 10);
-            var hotspotFee = Math.round(rev * 0.08);
-            var pppoeFee = users * 20;
-            var total = hotspotFee + pppoeFee;
-            if (revenueLabel) revenueLabel.textContent = rev.toLocaleString('fr-FR');
-            if (pppoeLabel) pppoeLabel.textContent = users + ' users';
-            if (totalEl) totalEl.textContent = formatXaf(total);
-            if (breakdownEl) {
-                breakdownEl.innerHTML = 'Hotspot (8%) ' + formatXaf(hotspotFee) + '<br>PPPoE (XAF 20/ea) ' + formatXaf(pppoeFee);
-            }
-        }
-
-        if (revenue) revenue.addEventListener('input', updateCalc);
-        if (pppoe) pppoe.addEventListener('input', updateCalc);
-        updateCalc();
-
         var adminBtn = document.getElementById('admin-access-btn');
         var adminSub = document.getElementById('admin-subdomain');
         if (adminBtn && adminSub) {
