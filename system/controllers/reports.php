@@ -95,7 +95,7 @@ switch ($action) {
                            c.fullname,
                            c.phonenumber
                     FROM api_data_usage u
-                    LEFT JOIN tbl_customers c ON u.username = c.username
+                    LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci
                     WHERE u.log_date >= DATE_SUB(NOW(), INTERVAL 1 DAY)";
             reports_data_usage_apply_scope($sql, $params, $admin, 'u');
             $sql .= " GROUP BY u.username, c.fullname, c.phonenumber ORDER BY total_dl_bytes DESC LIMIT 10";

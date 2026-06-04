@@ -4,6 +4,11 @@
 
 RewriteEngine On
 RewriteBase /
+
+# Exclure le dossier install de la réécriture
+RewriteRule ^install/ - [L]
+
+# Ne pas réécrire les fichiers et dossiers existants
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^(.*)$ index.php [QSA,L]

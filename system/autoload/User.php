@@ -267,21 +267,19 @@ class User
         }
         $d = ORM::for_table('tbl_user_recharges')
             ->select('tbl_user_recharges.id', 'id')
-            ->selects([
-                ['tbl_user_recharges.customer_id', 'customer_id'],
-                ['tbl_user_recharges.username', 'username'],
-                ['tbl_user_recharges.plan_id', 'plan_id'],
-                ['tbl_user_recharges.namebp', 'namebp'],
-                ['tbl_user_recharges.recharged_on', 'recharged_on'],
-                ['tbl_user_recharges.recharged_time', 'recharged_time'],
-                ['tbl_user_recharges.expiration', 'expiration'],
-                ['tbl_user_recharges.time', 'time'],
-                ['tbl_user_recharges.status', 'status'],
-                ['tbl_user_recharges.method', 'method'],
-                ['tbl_user_recharges.routers', 'routers'],
-                ['tbl_user_recharges.type', 'type'],
-                ['tbl_user_recharges.admin_id', 'admin_id'],
-            ])
+            ->select('tbl_user_recharges.customer_id', 'customer_id')
+            ->select('tbl_user_recharges.username', 'username')
+            ->select('tbl_user_recharges.plan_id', 'plan_id')
+            ->select('tbl_user_recharges.namebp', 'namebp')
+            ->select('tbl_user_recharges.recharged_on', 'recharged_on')
+            ->select('tbl_user_recharges.recharged_time', 'recharged_time')
+            ->select('tbl_user_recharges.expiration', 'expiration')
+            ->select('tbl_user_recharges.time', 'time')
+            ->select('tbl_user_recharges.status', 'status')
+            ->select('tbl_user_recharges.method', 'method')
+            ->select('tbl_user_recharges.routers', 'routers')
+            ->select('tbl_user_recharges.type', 'type')
+            ->select('tbl_user_recharges.admin_id', 'admin_id')
             ->left_outer_join('tbl_plans', ['tbl_plans.id', '=', 'tbl_user_recharges.plan_id'])
             ->left_outer_join('tbl_bandwidth', ['tbl_bandwidth.id', '=', 'tbl_plans.id_bw'])
             ->select('tbl_plans.prepaid', 'prepaid')

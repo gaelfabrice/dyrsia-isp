@@ -363,10 +363,10 @@
                 </a>
                 <div class="nav-links">
                     <a class="btn btn-ghost" href="#features">Features</a>
-                    <a class="btn btn-ghost" href="#pricing">Pricing</a>
-                    <a class="btn" href="{Text::url('provision')}"><i class="fa fa-rocket"></i> Deploy Instance</a>
-                    <a class="btn btn-primary" href="{Text::url('portal')}"><i class="fa fa-user"></i> Customer Portal</a>
-                    <a class="btn btn-primary" href="{Text::url('admin/')}"><i class="fa fa-lock"></i> Admin Portal</a>
+                    <a class="btn btn-ghost" href="#pricing">Tarifs</a>
+                    <a class="btn btn-ghost" href="{Text::url('faq')}"><i class="fa fa-question-circle"></i> FAQ</a>
+                    <a class="btn" href="{Text::url('provision')}"><i class="fa fa-rocket"></i> Essai Gratuit</a>
+                    <a class="btn btn-primary" href="{Text::url('admin/')}"><i class="fa fa-lock"></i> Admin</a>
                 </div>
             </nav>
         </div>
