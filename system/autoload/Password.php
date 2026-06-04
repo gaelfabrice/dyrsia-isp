@@ -62,7 +62,11 @@ class Password
 
     private static function isModernHash($hash)
     {
-        return is_string($hash) && (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$2a$') || str_starts_with($hash, '$2b$'));
+        if (!is_string($hash) || strlen($hash) < 4) {
+            return false;
+        }
+        $prefix = substr($hash, 0, 4);
+        return $prefix === '$2y$' || $prefix === '$2a$' || $prefix === '$2b$';
     }
 
     public static function _gen()

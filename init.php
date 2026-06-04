@@ -4,6 +4,23 @@
  *  wifizones — Hotspot & MikroTik billing
  **/
 
+// Polyfills for PHP < 8.0
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        return strlen($needle) === 0 || strncmp($haystack, $needle, strlen($needle)) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool {
+        return strlen($needle) === 0 || substr($haystack, -strlen($needle)) === $needle;
+    }
+}
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool {
+        return strlen($needle) === 0 || strpos($haystack, $needle) !== false;
+    }
+}
+
 if (realpath(__FILE__) == realpath($_SERVER['SCRIPT_FILENAME'])) {
     header('HTTP/1.0 403 Forbidden', TRUE, 403);
     header('location: ../');
