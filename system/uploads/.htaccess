@@ -1,0 +1,9 @@
+# Autoriser l'accès aux fichiers statiques (images, JSON, etc.)
+<FilesMatch "\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|json|txt|html)$">
+    Require all granted
+</FilesMatch>
+
+# Bloquer l'exécution de scripts PHP dans ce dossier
+<FilesMatch "\.php$">
+    Require all denied
+</FilesMatch>
