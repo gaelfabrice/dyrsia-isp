@@ -72,7 +72,7 @@
                                     class="btn btn-primary btn-sm btn-block">{Lang::T('Ask Telegram Community')}</a>
                             </div>
                             <br><br>
-                            <a href="javascript::history.back()" onclick="history.back()"
+                            <a href="javascript:history.back()" onclick="history.back()"
                                 class="btn btn-warning btn-block">{Lang::T('Back')}</a>
                         </div>
                     </div>

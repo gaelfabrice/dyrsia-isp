@@ -27,8 +27,6 @@
                         NuxPrint
                     </a>
                 </form>
-                <javascript type="text/javascript">
-                </javascript>
             </div>
         </div>
     </div>
