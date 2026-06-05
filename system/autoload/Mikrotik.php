@@ -59,7 +59,9 @@ class Mikrotik
         $pass = (string) $pass;
 
         try {
-            return new RouterOS\Client(
+            // Suppress PHP 8.x deprecation warnings from PEAR2 library
+            $prevErrorLevel = error_reporting(error_reporting() & ~E_DEPRECATED);
+            $client = new RouterOS\Client(
                 $endpoint['host'],
                 $user,
                 $pass,
@@ -67,7 +69,10 @@ class Mikrotik
                 false,
                 $timeout
             );
+            error_reporting($prevErrorLevel);
+            return $client;
         } catch (RouterOS\DataFlowException $e) {
+            error_reporting($prevErrorLevel ?? E_ALL);
             if ($e->getCode() === RouterOS\DataFlowException::CODE_INVALID_CREDENTIALS) {
                 throw new Exception(
                     Lang::T('Cannot connect to MikroTik')
@@ -83,12 +88,14 @@ class Mikrotik
                 . $e->getMessage()
             );
         } catch (Throwable $e) {
+            error_reporting($prevErrorLevel ?? E_ALL);
             throw new Exception(
                 Lang::T('Cannot connect to MikroTik')
                 . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '
                 . $e->getMessage()
             );
         } catch (Exception $e) {
+            error_reporting($prevErrorLevel ?? E_ALL);
             throw new Exception(
                 Lang::T('Cannot connect to MikroTik')
                 . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '

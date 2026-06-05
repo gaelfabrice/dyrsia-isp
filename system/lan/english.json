@@ -1609,5 +1609,7 @@
     "Invoices": "Invoices",
     "Paid": "Paid",
     "Reference": "Reference",
-    "Subscription_activated_successfully": "Subscription activated successfully"
+    "Subscription_activated_successfully": "Subscription activated successfully",
+    "Invalid_API_username_or_password": "Invalid API username or password",
+    "Create_or_verify_a_user_under_System_____Users_with_API_rights__group_full_or_api__": "Create or verify a user under System \u2192 Users with API rights (group full or api)."
 }

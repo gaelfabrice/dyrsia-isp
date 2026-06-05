@@ -102,14 +102,22 @@ switch ($action) {
         break;
 
     case 'test-connection':
-        // Capture all errors including fatal errors
-        error_reporting(E_ALL);
+        // Start output buffering to capture any stray output (deprecation warnings etc.)
+        ob_start();
+        
+        // Suppress all errors/warnings from output - we'll handle them internally
+        $originalErrorReporting = error_reporting();
+        error_reporting(E_ERROR | E_PARSE); // Only fatal errors and parse errors
         ini_set('display_errors', 0);
         
         // Register shutdown function to catch fatal errors
         register_shutdown_function(function() {
             $error = error_get_last();
             if ($error && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+                // Clean any buffered output
+                while (ob_get_level()) {
+                    ob_end_clean();
+                }
                 if (!headers_sent()) {
                     header('Content-Type: application/json');
                 }
@@ -130,6 +138,8 @@ switch ($action) {
             }
         });
         
+        // Clean any buffered output before sending JSON header
+        ob_end_clean();
         header('Content-Type: application/json');
         
         try {

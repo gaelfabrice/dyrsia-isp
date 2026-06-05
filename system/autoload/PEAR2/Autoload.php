@@ -15,8 +15,16 @@
  * @license  http://www.opensource.org/licenses/bsd-license.php New BSD License
  * @version  0.3.0
  * @link     http://pear2.php.net/PEAR2_Autoload
+ * 
+ * Modified for PHP 8.x compatibility - suppress deprecation warnings
  */
 namespace PEAR2;
+
+// Suppress PHP 8.x deprecation warnings for this library
+if (PHP_VERSION_ID >= 80000) {
+    $pear2_error_level = error_reporting();
+    error_reporting($pear2_error_level & ~E_DEPRECATED);
+}
 
 if (!class_exists('\PEAR2\Autoload', false)) {
     /**
@@ -203,7 +211,7 @@ if (!class_exists('\PEAR2\Autoload', false)) {
                 // instance so we can update it if necessary
                 self::$mapfile = $mapfile;
 
-                if (is_file($mapfile)) {
+                if ($mapfile !== null && is_file($mapfile)) {
                     $map = include $mapfile;
                     if (is_array($map)) {
                         // mapfile contains a valid map, so we'll keep it
@@ -373,4 +381,9 @@ if (!class_exists('\PEAR2\Autoload', false)) {
         }
     }
 }
+
+// Suppress deprecation warnings during PEAR2 autoload operations (PHP 8.x compatibility)
+$_pear2_prev_error = error_reporting(error_reporting() & ~E_DEPRECATED);
 Autoload::initialize(dirname(__DIR__));
+error_reporting($_pear2_prev_error);
+unset($_pear2_prev_error);

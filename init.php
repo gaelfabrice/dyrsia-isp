@@ -83,7 +83,13 @@ if (!file_exists($UPLOAD_PATH . File::pathFixer('/notifications.default.json')))
 
 require_once $root_path . 'config.php';
 require_once $root_path . File::pathFixer('system/orm.php');
+
+// Suppress PHP 8.x deprecation warnings for PEAR2 library
+$_pear2_prev_err_level = error_reporting();
+error_reporting($_pear2_prev_err_level & ~E_DEPRECATED);
 require_once $root_path . File::pathFixer('system/autoload/PEAR2/Autoload.php');
+error_reporting($_pear2_prev_err_level);
+
 include $root_path . File::pathFixer('system/autoload/Hookers.php');
 
 if ($db_password != null && ($db_pass == null || empty($db_pass))) {
