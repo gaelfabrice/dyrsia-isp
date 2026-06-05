@@ -5,11 +5,16 @@
  *  by https://t.me/ibnux
  **/
 
+$action = $routes['1'] ?? '';
+
+// JSON endpoint: reject unauthenticated before _admin() redirect returns HTML
+if ($action === 'test-connection' && $_SERVER['REQUEST_METHOD'] === 'POST' && !Admin::getID()) {
+    wifizone_json_error(Lang::T('Please sign in to access this page'), 401);
+}
+
 _admin();
 $ui->assign('_title', Lang::T('Network'));
 $ui->assign('_system_menu', 'network');
-
-$action = $routes['1'];
 $ui->assign('_admin', $admin);
 
 require_once $DEVICE_PATH . DIRECTORY_SEPARATOR . "MikrotikHotspot.php";

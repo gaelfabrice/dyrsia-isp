@@ -14,6 +14,7 @@
     </div>
     <div class="router-card">
         <form method="post" role="form" action="{Text::url('')}routers/add-post">
+            {csrf_field()}
             <div class="router-section ident">
                 <div class="router-section-title"><i class="fa fa-tag"></i> {Lang::T('Identification')}</div>
                 <div class="row">
@@ -118,8 +119,16 @@
             testButton.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Test en cours...';
             setMessage('', 'fa-spinner fa-spin', 'Connexion au routeur en cours...');
 
+            function getCsrfToken() {
+                if (typeof CSRF_TOKEN !== 'undefined' && CSRF_TOKEN) {
+                    return CSRF_TOKEN;
+                }
+                var input = document.querySelector('input[name="csrf_token"]');
+                return input ? input.value : '';
+            }
+
             var data = new FormData();
-            data.append('csrf_token', CSRF_TOKEN);
+            data.append('csrf_token', getCsrfToken());
             data.append('ip_address', document.getElementById('ip_address').value);
             data.append('api_port', document.getElementById('api_port').value);
             data.append('username', document.getElementById('username').value);
@@ -128,10 +137,31 @@
             fetch('{/literal}{Text::url('routers/test-connection')}{literal}', {
                 method: 'POST',
                 body: data,
-                credentials: 'same-origin'
+                credentials: 'same-origin',
+                redirect: 'manual',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json'
+                }
             })
                 .then(function (response) {
-                    return response.json();
+                    if (response.type === 'opaqueredirect' || response.status === 301 || response.status === 302) {
+                        throw new Error('Session expirée ou redirection serveur. Reconnectez-vous puis réessayez.');
+                    }
+                    return response.text().then(function (text) {
+                        var trimmed = (text || '').trim();
+                        if (!trimmed) {
+                            throw new Error('Réponse vide du serveur (HTTP ' + response.status + ').');
+                        }
+                        if (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[') {
+                            throw new Error('Réponse non-JSON (HTTP ' + response.status + '): ' + trimmed.substring(0, 280));
+                        }
+                        try {
+                            return JSON.parse(trimmed);
+                        } catch (parseErr) {
+                            throw new Error('JSON invalide: ' + parseErr.message);
+                        }
+                    });
                 })
                 .then(function (response) {
                     if (response.success) {

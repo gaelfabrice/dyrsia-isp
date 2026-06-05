@@ -351,13 +351,55 @@ function wifizone_verify_csrf()
     if ($handler === 'home' || $handler === 'login') {
         return;
     }
+    // AJAX router test: session auth is enough; HTML redirect breaks JSON parsing
+    if ($handler === 'routers' && $action === 'test-connection') {
+        return;
+    }
     $token = _post('csrf_token') ?: _req('csrf_token');
     if ($token === '') {
+        if (wifizone_json_response_requested()) {
+            wifizone_json_error(Lang::T('Invalid or Expired CSRF Token') . '.', 403);
+        }
         r2(getUrl('dashboard'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
     }
     if (!Csrf::check($token)) {
+        if (wifizone_json_response_requested()) {
+            wifizone_json_error(Lang::T('Token has expired. Please log in again.'), 403);
+        }
         r2(getUrl('dashboard'), 'e', Lang::T('Token has expired. Please log in again.'));
     }
+}
+
+function wifizone_json_response_requested()
+{
+    global $routes;
+    $handler = $routes[0] ?? '';
+    $action = $routes[1] ?? '';
+    if ($handler === 'routers' && $action === 'test-connection') {
+        return true;
+    }
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH'])
+        && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        return true;
+    }
+    $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+    return strpos($accept, 'application/json') !== false;
+}
+
+function wifizone_json_error($message, $httpCode = 400)
+{
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    if (!headers_sent()) {
+        http_response_code($httpCode);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode([
+        'success' => false,
+        'message' => $message,
+    ]);
+    exit;
 }
 
 function csrf_field()
