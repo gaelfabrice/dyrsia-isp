@@ -486,7 +486,7 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
         </span>
         <h3>{Lang::T('Current Subscription')}</h3>
         {if $subscription->status eq 'trial'}
-            <p><strong class="sub-hero-strong">Mode Démo — {$demo_trial_days|default:5} jours</strong> · {$subscription_days_remaining} jour(s) restant(s). Exploration sans routeur réel. Choisissez un forfait ci-dessous pour activer votre réseau.</p>
+            <p><strong class="sub-hero-strong">Mode Démo</strong> — {$subscription_days_remaining} jour(s) restant(s) sur {$demo_trial_days|default:5} jours. Exploration sans routeur réel. Choisissez un forfait ci-dessous pour activer votre réseau.</p>
         {elseif $subscription->status eq 'active'}
             <p>Abonnement <strong class="sub-hero-strong sub-hero-strong--ok">{if $subscription->plan_type eq 'pro'}Forfait Pro{else}Forfait Business{/if}</strong> actif jusqu'au <strong>{$subscription->subscription_end}</strong>.</p>
         {elseif $subscription->status eq 'grace'}

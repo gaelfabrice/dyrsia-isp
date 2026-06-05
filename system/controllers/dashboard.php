@@ -120,9 +120,11 @@ if ($admin['user_type'] == 'Admin') {
     $adminSubscriptionDate = $adminSubscription->status === 'trial' ? $adminSubscription->trial_end : $adminSubscription->subscription_end;
     $ui->assign('admin_subscription', $adminSubscription);
     $ui->assign('admin_subscription_days_remaining', AdminSubscription::daysRemaining($adminSubscriptionDate));
+    $ui->assign('admin_demo_trial_days', AdminSubscription::demoTrialDays());
 } else {
     $ui->assign('admin_subscription', null);
     $ui->assign('admin_subscription_days_remaining', 0);
+    $ui->assign('admin_demo_trial_days', AdminSubscription::demoTrialDays());
 }
 
 run_hook('view_dashboard'); #HOOK

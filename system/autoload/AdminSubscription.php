@@ -518,10 +518,36 @@ HTML;
     public static function syncStatuses()
     {
         self::ensureSchema();
-        $now = date('Y-m-d H:i:s');
+        self::normalizeTrialPeriods();
         ORM::raw_execute("UPDATE admin_subscriptions SET status = 'grace', grace_end = DATE_ADD(NOW(), INTERVAL 24 HOUR), updated_at = NOW() WHERE status = 'active' AND subscription_end IS NOT NULL AND subscription_end < NOW()");
         ORM::raw_execute("UPDATE admin_subscriptions SET status = 'expired', updated_at = NOW() WHERE status = 'grace' AND grace_end IS NOT NULL AND grace_end < NOW()");
         ORM::raw_execute("UPDATE admin_subscriptions SET status = 'expired', updated_at = NOW() WHERE status = 'trial' AND trial_end IS NOT NULL AND trial_end < NOW()");
+    }
+
+    /** Aligne les essais existants (ex. 14 jours) sur la durée Mode Démo actuelle. */
+    public static function normalizeTrialPeriods()
+    {
+        self::ensureSchema();
+        $days = (int) self::demoTrialDays();
+        ORM::raw_execute(
+            "UPDATE admin_subscriptions SET trial_end = DATE_ADD(trial_start, INTERVAL {$days} DAY), updated_at = NOW()
+             WHERE status = 'trial' AND trial_start IS NOT NULL
+             AND (trial_end IS NULL OR trial_end > DATE_ADD(trial_start, INTERVAL {$days} DAY))"
+        );
+    }
+
+    public static function trialTotalDays($sub)
+    {
+        if (!$sub || ($sub->status ?? '') !== 'trial') {
+            return self::demoTrialDays();
+        }
+        if (!empty($sub->trial_start) && !empty($sub->trial_end)) {
+            $days = (int) ceil((strtotime($sub->trial_end) - strtotime($sub->trial_start)) / 86400);
+
+            return max(1, min($days, self::demoTrialDays()));
+        }
+
+        return self::demoTrialDays();
     }
 
     public static function daysRemaining($date)

@@ -47,7 +47,7 @@
                 </span>
                 <div style="margin-top:8px">
             {if $admin_subscription->status eq 'trial'}
-                <strong>Mode Trial 7 jours</strong> — {$admin_subscription_days_remaining} jour(s) restant(s). Ajout de routeur non autorisé pendant la période d'essai.
+                <strong>Mode Démo ({$admin_demo_trial_days|default:5} jours)</strong> — {$admin_subscription_days_remaining} jour(s) restant(s). Ajout de routeur non autorisé pendant la période d'essai.
             {elseif $admin_subscription->status eq 'active'}
                 <strong>Abonnement actif</strong> — Plan {$admin_subscription->plan_type|upper}, expire le {$admin_subscription->subscription_end}.
             {elseif $admin_subscription->status eq 'grace'}
