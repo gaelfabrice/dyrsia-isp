@@ -14,7 +14,7 @@ if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $pluginFn)) {
 }
 
 $publicPlugins = [
-    'hotspot_login', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_bkash_verify',
+    'hotspot_login', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_bkash_verify', 'hotspot_pg_campay_verify',
     'wifizone_reseller_api',
 ];
 if (!in_array($pluginFn, $publicPlugins, true)) {
@@ -175,6 +175,20 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             ],
         ]);
         exit;
+    }
+}
+
+if ($pluginFn === 'hotspot_verify' && function_exists('hotspot_pg_campay_sync_transaction')) {
+    $reference = trim((string) ($_GET['reference'] ?? ''));
+    if ($reference !== '') {
+        $pendingCampay = ORM::for_table('tbl_hotspot_payments')
+            ->where('transaction_ref', $reference)
+            ->where('payment_gateway', 'campay')
+            ->where('transaction_status', 'pending')
+            ->find_one();
+        if ($pendingCampay) {
+            hotspot_pg_campay_sync_transaction($pendingCampay);
+        }
     }
 }
 

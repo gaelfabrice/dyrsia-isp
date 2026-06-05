@@ -1262,6 +1262,72 @@ switch ($action) {
                         $html
                     );
                 }
+                if (strpos($html, 'submitHotspotPaymentForm') === false && strpos($html, 'function handlePlanPayment') !== false) {
+                    $campayPaymentJs = <<<'JS'
+    function submitHotspotPaymentForm(params) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = APP_URL + '/index.php?_route=plugin/hotspot_pay';
+        form.style.display = 'none';
+        Object.keys(params).forEach(function (key) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = key;
+            input.value = params[key];
+            form.appendChild(input);
+        });
+        document.body.appendChild(form);
+        form.submit();
+    }
+    function parsePaymentUrl(paymentUrl) {
+        try {
+            const url = new URL(paymentUrl, APP_URL + '/');
+            return {
+                planid: url.searchParams.get('planid') || '',
+                routername: url.searchParams.get('routername') || '',
+                amount: url.searchParams.get('amount') || ''
+            };
+        } catch (e) {
+            return { planid: '', routername: '', amount: '' };
+        }
+    }
+    async function handlePlanPayment(planName, price, currency, validity, paymentUrl) {
+        const meta = parsePaymentUrl(paymentUrl);
+        const result = await Swal.fire({
+            title: 'Paiement Mobile Money',
+            html: '<div style="text-align:center"><div style="background:rgba(16,185,129,0.15);border-radius:20px;padding:10px;margin-bottom:12px"><strong>' + escapeHtml(planName) + '</strong><br>' + escapeHtml(String(price)) + ' ' + escapeHtml(currency || 'Fcfa') + ' — ' + escapeHtml(validity || '') + '</div><p>Entrez votre numéro MTN ou Orange (9 chiffres)</p><div style="font-size:2.5rem;">📱</div></div>',
+            input: 'tel',
+            inputPlaceholder: '6XX XXX XXX',
+            inputAttributes: { maxlength: 9, inputmode: 'numeric' },
+            showCancelButton: true,
+            confirmButtonText: 'Payer maintenant',
+            cancelButtonText: 'Annuler',
+            allowOutsideClick: false,
+            inputValidator: function (value) {
+                const phone = String(value || '').replace(/\D/g, '');
+                if (phone.length !== 9) return 'Le numéro doit contenir 9 chiffres (ex: 677123456)';
+                return undefined;
+            }
+        });
+        if (!result.isConfirmed) return;
+        const phone = String(result.value || '').replace(/\D/g, '');
+        await Swal.fire({ title: 'Demande envoyée…', html: 'Validez le paiement sur votre téléphone.<br>Redirection vers la confirmation…', icon: 'info', timer: 2500, showConfirmButton: false, allowOutsideClick: false });
+        submitHotspotPaymentForm({
+            pay: '1', type: 'gateways', payment_gateway: 'campay', phone: phone,
+            routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : ''),
+            planid: meta.planid, amount: meta.amount || price, plan_name: planName,
+            mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)',
+            fullname: 'Client Hotspot', address: 'Hotspot'
+        });
+    }
+JS;
+                    $html = preg_replace(
+                        '/\/\* ===== GESTION PAIEMENT ===== \*\/[\s\S]*?function handlePlanPayment[\s\S]*?\n    \}/',
+                        '/* ===== GESTION PAIEMENT ===== */' . "\n" . $campayPaymentJs,
+                        $html,
+                        1
+                    );
+                }
                 if (strpos($html, 'HOTSPOT_SWAL_FALLBACK') === false) {
                     $swalFallback = <<<'HTML'
 <style>.hotspot-modal-backdrop{position:fixed;inset:0;z-index:99999;background:rgba(2,6,23,.72);display:flex;align-items:center;justify-content:center;padding:18px}.hotspot-modal{width:min(92vw,380px);background:#111827;color:#f8fafc;border:1px solid rgba(16,185,129,.35);border-radius:24px;padding:22px;box-shadow:0 25px 80px rgba(0,0,0,.45);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}.hotspot-modal h3{margin:0 0 10px;font-size:20px}.hotspot-modal p{margin:0 0 14px;color:#cbd5e1;line-height:1.45}.hotspot-modal input{width:100%;box-sizing:border-box;padding:14px;border-radius:14px;border:1px solid rgba(148,163,184,.28);background:#020617;color:#fff;font-size:16px;outline:none}.hotspot-modal-error{display:none;margin-top:9px;color:#fca5a5;font-size:13px}.hotspot-modal-actions{display:flex;gap:10px;margin-top:18px}.hotspot-modal-actions button{flex:1;padding:12px;border:0;border-radius:999px;font-weight:800}.hotspot-modal-cancel{background:#374151;color:#fff}.hotspot-modal-confirm{background:linear-gradient(135deg,#10b981,#22c55e);color:#021014}</style><script>window.HOTSPOT_SWAL_FALLBACK=true;(function(){if(window.Swal&&typeof window.Swal.fire==='function')return;window.Swal={fire:function(a,b,c){return new Promise(function(resolve){var opts=typeof a==='object'?a:{title:a||'',text:b||'',icon:c||''};var backdrop=document.createElement('div');backdrop.className='hotspot-modal-backdrop';var html=String(opts.html||'').replace(/<script[\s\S]*?<\/script>/gi,'');backdrop.innerHTML='<div class="hotspot-modal"><h3></h3><p></p><div class="hotspot-modal-html"></div><input style="display:none"><div class="hotspot-modal-error"></div><div class="hotspot-modal-actions"><button type="button" class="hotspot-modal-cancel"></button><button type="button" class="hotspot-modal-confirm"></button></div></div>';var box=backdrop.firstChild,title=box.querySelector('h3'),text=box.querySelector('p'),htmlBox=box.querySelector('.hotspot-modal-html'),input=box.querySelector('input'),err=box.querySelector('.hotspot-modal-error'),cancel=box.querySelector('.hotspot-modal-cancel'),ok=box.querySelector('.hotspot-modal-confirm');title.textContent=opts.title||'';text.textContent=opts.text||opts.inputPlaceholder||'';text.style.display=text.textContent?'block':'none';htmlBox.innerHTML=html;if(opts.input){input.style.display='block';input.type=opts.input==='tel'?'tel':'text';input.placeholder=opts.inputPlaceholder||'';if(opts.inputAttributes){Object.keys(opts.inputAttributes).forEach(function(k){input.setAttribute(k,opts.inputAttributes[k]);});}}else{input.parentNode.removeChild(input);}cancel.textContent=opts.cancelButtonText||'Annuler';ok.textContent=opts.confirmButtonText||'OK';cancel.style.display=opts.showCancelButton===false?'none':'block';function close(result){document.body.removeChild(backdrop);resolve(result);}cancel.onclick=function(){close({isConfirmed:false,isDismissed:true,value:input?input.value:null});};ok.onclick=function(){var value=input?input.value:null;if(input&&typeof opts.inputValidator==='function'){var message=opts.inputValidator(value);if(message){err.textContent=message;err.style.display='block';return;}}close({isConfirmed:true,isDismissed:false,value:value});};document.body.appendChild(backdrop);setTimeout(function(){if(input)input.focus();},50);if(opts.timer){setTimeout(function(){if(document.body.contains(backdrop))close({isConfirmed:true,isDismissed:false,value:null});},opts.timer);}});}};})();</script>
