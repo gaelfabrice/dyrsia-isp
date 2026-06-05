@@ -63,8 +63,15 @@ function hotspot_pg_campay_format_phone($phone)
 function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 {
     $phone = $trx->phone_number;
-    $fullname = $trx->customer_name ?? '';
-    $address = $trx->customer_address ?? '';
+    $fullname = 'Hotspot User';
+    $address = 'Hotspot';
+    $gatewayMeta = json_decode($trx->gateway_response ?? '{}', true);
+    if (!empty($gatewayMeta['customer_name'])) {
+        $fullname = $gatewayMeta['customer_name'];
+    }
+    if (!empty($gatewayMeta['customer_address'])) {
+        $address = $gatewayMeta['customer_address'];
+    }
     $routername = $trx->router_name;
     $planid = $trx->plan_id;
     $mac_address = $trx->mac_address;
@@ -303,8 +310,6 @@ function hotspot_processPayment_campay($data)
     $trx->transaction_ref = $txref;
     $trx->amount = $amount;
     $trx->phone_number = $phone;
-    $trx->customer_name = $_POST['fullname'] ?? 'Client Hotspot';
-    $trx->customer_address = $_POST['address'] ?? 'Hotspot';
     $trx->plan_id = $planid;
     $trx->plan_name = $plan_name;
     $trx->mac_address = $mac_address;
@@ -313,7 +318,12 @@ function hotspot_processPayment_campay($data)
     $trx->voucher_code = '**********';
     $trx->transaction_status = 'pending';
     $trx->payment_gateway = 'campay';
-    $trx->gateway_response = json_encode(['payload' => $payload, 'response' => $result]);
+    $trx->gateway_response = json_encode([
+        'payload' => $payload,
+        'response' => $result,
+        'customer_name' => $_POST['fullname'] ?? 'Client Hotspot',
+        'customer_address' => $_POST['address'] ?? 'Hotspot',
+    ]);
     $trx->save();
 
     header('Location: ' . U . 'plugin/hotspot_verify&reference=' . urlencode($txref));
