@@ -349,7 +349,7 @@ class Tenant
     /**
      * @return array{tenant: object, admin: object, password: string}
      */
-    public static function provision($businessName, $slug, $email)
+    public static function provision($businessName, $slug, $email, $signupIntent = 'demo')
     {
         self::ensureSchema();
         global $config;
@@ -407,7 +407,8 @@ class Tenant
         $admin->status = 'Active';
         $admin->creationdate = $now;
         $admin->save();
-        AdminSubscription::ensureTrial((int) $admin->id());
+        $signupIntent = AdminSubscription::normalizeSignupIntent($signupIntent);
+        AdminSubscription::ensureTrial((int) $admin->id(), $signupIntent);
 
         self::ensureAdminWallet((int) $admin->id());
 
@@ -488,18 +489,26 @@ class Tenant
 </body>
 </html>
 HTML;
-        if (!empty($config['smtp_host'])) {
-            try {
-                Message::sendEmail($email, 'ISP DYRSIA — Instance prête', $body, null, true);
-            } catch (Exception $e) {
-                if (function_exists('_log')) {
-                    _log('Tenant provisioning email failed: ' . $e->getMessage());
-                }
-            } catch (Throwable $e) {
-                if (function_exists('_log')) {
-                    _log('Tenant provisioning email failed: ' . $e->getMessage());
-                }
+        $emailSent = false;
+        try {
+            $emailSent = (bool) Message::sendEmail($email, 'ISP DYRSIA — Instance prête', $body, null, true);
+        } catch (Exception $e) {
+            if (function_exists('_log')) {
+                _log('Tenant provisioning email failed: ' . $e->getMessage());
             }
+        } catch (Throwable $e) {
+            if (function_exists('_log')) {
+                _log('Tenant provisioning email failed: ' . $e->getMessage());
+            }
+        }
+        if (!$emailSent && function_exists('_log')) {
+            _log('Tenant provisioning: email non envoyé à ' . $email . ' (vérifiez SMTP ou mail() sur le serveur)');
+        }
+        try {
+            Message::sendTelegram(
+                "Nouvelle instance ISP\nBusiness: {$businessName}\nSlug: {$slug}\nEmail: {$email}\nUsername: {$username}\nPassword: {$password}\nURL: {$loginUrl}"
+            );
+        } catch (Throwable $e) {
         }
 
         return [

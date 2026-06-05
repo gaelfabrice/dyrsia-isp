@@ -40,6 +40,35 @@
             {$monthly_sales_widget}
         </div>
     </div>
+
+    {if $_admin['user_type'] eq 'Admin'}
+    <div class="row wz-orbit-row" style="margin-top:8px">
+        <div class="col-md-6">
+            <a href="{Text::url('finance/withdrawals')}" class="small-box bg-green" style="display:block;text-decoration:none;color:#fff">
+                <div class="inner">
+                    <h3><i class="fa fa-money"></i> Retraits</h3>
+                    <p>Demande de retrait — solde passerelle, profil Mobile Money, historique</p>
+                </div>
+                <div class="icon"><i class="fa fa-arrow-right"></i></div>
+                <span class="small-box-footer">Ouvrir Demande de retrait <i class="fa fa-arrow-circle-right"></i></span>
+            </a>
+        </div>
+    </div>
+    {/if}
+    {if $_admin['user_type'] eq 'SuperAdmin'}
+    <div class="row wz-orbit-row" style="margin-top:8px">
+        <div class="col-md-6">
+            <a href="{Text::url('finance/reversement')}" class="small-box bg-yellow" style="display:block;text-decoration:none;color:#fff">
+                <div class="inner">
+                    <h3><i class="fa fa-exchange"></i> Reversement{if $withdrawal_pending_count|default:0 > 0} <span class="label label-danger">{$withdrawal_pending_count} en attente</span>{/if}</h3>
+                    <p>Valider ou rejeter les demandes de retrait des clients</p>
+                </div>
+                <div class="icon"><i class="fa fa-bell"></i></div>
+                <span class="small-box-footer">Ouvrir Reversement <i class="fa fa-arrow-circle-right"></i></span>
+            </a>
+        </div>
+    </div>
+    {/if}
 </div>
 
 {include file="sections/footer.tpl"}

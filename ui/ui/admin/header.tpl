@@ -625,6 +625,33 @@ body.theme-dark .sidebar-menu li a {
                             <span class="isp-brand-label" title="{Lang::T('Your ISP')}"><i class="fa fa-building-o"></i> {$isp_brand_name|escape}</span>
                         </li>
                         {/if}
+                        {if $_admin['user_type'] eq 'SuperAdmin' && $withdrawal_pending_count|default:0 > 0}
+                        <li class="dropdown" id="wdNotifyDropdown">
+                            <a href="#" class="dropdown-toggle" data-toggle="dropdown" title="Alertes retraits">
+                                <i class="fa fa-bell"></i>
+                                <span class="label label-danger" style="position:absolute;top:8px;right:4px;font-size:10px;padding:2px 5px">{$withdrawal_pending_count}</span>
+                            </a>
+                            <ul class="dropdown-menu" style="min-width:320px;max-height:360px;overflow-y:auto">
+                                <li class="dropdown-header">Demandes de retrait en attente</li>
+                                {foreach $withdrawal_notifications|default:[] as $wn}
+                                <li>
+                                    <a href="{Text::url('finance/reversement')}&notification={$wn->id}">
+                                        <i class="fa fa-circle text-danger" style="font-size:8px"></i>
+                                        {$wn->message|escape}
+                                    </a>
+                                </li>
+                                {/foreach}
+                                <li class="divider"></li>
+                                <li><a href="{Text::url('finance/reversement')}"><strong>Voir tout — Reversement</strong></a></li>
+                            </ul>
+                        </li>
+                        {elseif $_admin['user_type'] eq 'SuperAdmin'}
+                        <li>
+                            <a href="{Text::url('finance/reversement')}" title="Reversement">
+                                <i class="fa fa-bell-o"></i>
+                            </a>
+                        </li>
+                        {/if}
                         <li class="header-search-toggle">
                             <a href="#" id="openSearch" role="button" aria-label="{Lang::T('Search Users')}">
                                 <i class="fa fa-search"></i>
@@ -813,11 +840,27 @@ body.theme-dark .sidebar-menu li a {
                                 </li>
                             </ul>
                         </li>
-                        <li {if $_system_menu eq 'finance' }class="active" {/if}>
+                        <li class="{if $_system_menu eq 'finance' || $_routes[1] eq 'withdrawals' || $_routes[1] eq 'reversement'}active menu-open{/if} treeview">
                             <a href="{Text::url('finance')}">
                                 <i class="fa fa-credit-card"></i>
                                 <span>{Lang::T('Finance')}</span>
+                                <span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span>
                             </a>
+                            <ul class="treeview-menu" style="{if $_system_menu eq 'finance' || $_routes[1] eq 'withdrawals' || $_routes[1] eq 'reversement'}display:block{/if}">
+                                <li {if $_system_menu eq 'finance' && ($_routes[1] eq '' || !$_routes[1])}class="active"{/if}>
+                                    <a href="{Text::url('finance')}">{Lang::T('Overview')}</a>
+                                </li>
+                                {if $_admin['user_type'] eq 'Admin'}
+                                <li {if $_routes[1] eq 'withdrawals'}class="active"{/if}>
+                                    <a href="{Text::url('finance/withdrawals')}"><i class="fa fa-money"></i> Demande de retrait</a>
+                                </li>
+                                {/if}
+                                {if $_admin['user_type'] eq 'SuperAdmin'}
+                                <li {if $_routes[1] eq 'reversement'}class="active"{/if}>
+                                    <a href="{Text::url('finance/reversement')}"><i class="fa fa-exchange"></i> Reversement{if $withdrawal_pending_count|default:0 > 0} <span class="label label-danger" style="font-size:10px">{$withdrawal_pending_count}</span>{/if}</a>
+                                </li>
+                                {/if}
+                            </ul>
                         </li>
                         <li class="{if $_routes[0] eq 'plan' || $_routes[0] eq 'coupons'}active{/if} treeview">
                             <a href="#">

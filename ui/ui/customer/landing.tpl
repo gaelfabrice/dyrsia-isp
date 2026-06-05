@@ -483,7 +483,7 @@
                         <h3>Mode Démo</h3>
                         <div class="pricing-price">
                             <span class="amount">0 F CFA</span>
-                            <span class="period">/ 14 jours</span>
+                            <span class="period">/ 5 jours</span>
                         </div>
                     </div>
                     <ul class="pricing-features">
@@ -491,13 +491,13 @@
                         <li><i class="fa fa-check"></i> Aucun routeur réel connectable (mode simulation)</li>
                         <li><i class="fa fa-check"></i> Idéal pour tester l'interface avant de se lancer</li>
                     </ul>
-                    <a class="btn btn-block" href="{Text::url('provision')}"><i class="fa fa-play-circle"></i> Essai Gratuit</a>
+                    <a class="btn btn-block" href="{Text::url('provision&intent=demo')}"><i class="fa fa-play-circle"></i> Essai Gratuit</a>
                 </div>
 
                 <div class="pricing-card pricing-featured">
                     <span class="pricing-badge">Le plus populaire</span>
                     <div class="pricing-header">
-                        <h3>Mode Business</h3>
+                        <h3>Forfait Business</h3>
                         <div class="pricing-price">
                             <span class="amount">2 500 F CFA</span>
                             <span class="period">/ mois</span>
@@ -509,12 +509,12 @@
                         <li><i class="fa fa-check"></i> Configuration simplifiée (nous gérons les encaissements)</li>
                         <li><i class="fa fa-check"></i> Idéal pour les petites installations de quartier</li>
                     </ul>
-                    <a class="btn btn-primary btn-block" href="{Text::url('order/package')}"><i class="fa fa-rocket"></i> Souscrire</a>
+                    <a class="btn btn-primary btn-block" href="{Text::url('provision&intent=business')}"><i class="fa fa-rocket"></i> Souscrire</a>
                 </div>
 
                 <div class="pricing-card">
                     <div class="pricing-header">
-                        <h3>Mode Pro</h3>
+                        <h3>Forfait Pro</h3>
                         <div class="pricing-price">
                             <span class="amount">10 000 F CFA</span>
                             <span class="period">/ mois</span>
@@ -523,11 +523,11 @@
                     </div>
                     <ul class="pricing-features">
                         <li><i class="fa fa-check"></i> 0% de commission sur toutes vos ventes</li>
-                        <li><i class="fa fa-check"></i> Intégration de votre propre API de paiement (CamPay, MyCoolPay, etc.)</li>
+                        <li><i class="fa fa-check"></i> Intégration de votre propre API de paiement</li>
                         <li><i class="fa fa-check"></i> Reversement direct et automatique sur votre compte</li>
                         <li><i class="fa fa-check"></i> Conçu pour les FAI locaux et les techniciens à fort volume</li>
                     </ul>
-                    <a class="btn btn-block" href="{Text::url('order/package')}"><i class="fa fa-bolt"></i> Choisir Pro</a>
+                    <a class="btn btn-block" href="{Text::url('provision&intent=pro')}"><i class="fa fa-bolt"></i> Choisir Pro</a>
                 </div>
             </div>
 

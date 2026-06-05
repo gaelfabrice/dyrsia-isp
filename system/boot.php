@@ -132,12 +132,19 @@ try {
         $ui->assign('_admin', $admin);
         Tenant::applyAdminBranding($admin);
         Impersonate::assignUi($ui);
+        if (($admin['user_type'] ?? '') === 'SuperAdmin') {
+            $ui->assign('withdrawal_pending_count', Withdrawal::pendingCount());
+            $ui->assign('withdrawal_notifications', Withdrawal::pendingNotifications(8));
+        }
     }
     if ($currentTenant && $admin) {
         Tenant::validateAdminTenant($admin);
     } elseif ($currentTenant && !$admin && $tenantDashboardRoute) {
         $_SESSION['tenant_login_redirect'] = Tenant::dashboardUrl($currentTenant['slug']);
         r2(getUrl('admin') . '&tenant=' . urlencode($currentTenant['slug']), 'e', Lang::T('Please sign in to access your dashboard'));
+    }
+    if ($admin) {
+        AdminSubscription::enforceSubscriptionGate($admin, $handler, $routes[1] ?? '');
     }
     $sys_render = $root_path . File::pathFixer('system/controllers/' . $handler . '.php');
     if (file_exists($sys_render)) {

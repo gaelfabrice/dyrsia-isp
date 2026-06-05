@@ -15,6 +15,8 @@ global $UPLOAD_PATH;
 file_put_contents($UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt', date('c'));
 
 WifiZonePayment::processPendingQueue(30);
+Withdrawal::ensureSchema();
+Withdrawal::expireStaleRequests(false);
 WifiZoneNotify::processRenewalReminders();
 WifiZoneNotify::checkGenieacsOffline();
 

@@ -261,6 +261,20 @@ function campay_payment_notification()
         _log("CamPay Webhook: No reference in payload");
         exit();
     }
+
+    if (preg_match('/^ISP-SUB-(\d+)/', (string) $externalRef, $subMatch)) {
+        campay_admin_subscription_webhook((int) $subMatch[1], $reference, $status, $data);
+        exit();
+    }
+
+    $adminPayment = ORM::for_table('admin_subscription_payments')
+        ->where('reference', $reference)
+        ->where('status', 'pending')
+        ->find_one();
+    if ($adminPayment) {
+        campay_admin_subscription_webhook((int) $adminPayment->id, $reference, $status, $data);
+        exit();
+    }
     
     $trx = ORM::for_table('tbl_payment_gateway')
         ->where('gateway_trx_id', $reference)
@@ -399,5 +413,155 @@ function campay_get_status($transaction, $user)
     } else {
         _log("CamPay Status: Unknown status '$status' for reference $reference");
         r2(U . "order/view/" . $transaction['id'], 'd', Lang::T("Unknown transaction status."));
+    }
+}
+
+function campay_admin_subscription_collect($ctx, $admin, $phone)
+{
+    global $config;
+
+    campay_validate_config();
+
+    $token = campay_get_token();
+    if (!$token) {
+        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
+        r2(getUrl('admin/subscription'), 'e', Lang::T('Payment gateway authentication failed. Please try again.'));
+    }
+
+    $baseUrl = ($config['campay_environment'] === 'prod')
+        ? 'https://www.campay.net/api'
+        : 'https://demo.campay.net/api';
+
+    $phone = preg_replace('/[^0-9]/', '', (string) $phone);
+    if (strlen($phone) === 9) {
+        $phone = '237' . $phone;
+    } elseif (!preg_match('/^237/', $phone)) {
+        $phone = '237' . ltrim($phone, '0');
+    }
+
+    $amountError = campay_validate_collect_amount($phone, $ctx['amount']);
+    if ($amountError) {
+        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
+        r2(getUrl('admin/subscription'), 'e', $amountError);
+    }
+
+    $payload = [
+        'amount' => (int) $ctx['amount'],
+        'currency' => $config['campay_currency'] ?: 'XAF',
+        'from' => $phone,
+        'description' => $ctx['plan_label'] . ' - ' . ($config['CompanyName'] ?? 'DYRSIA'),
+        'external_reference' => $ctx['external_ref'],
+    ];
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $baseUrl . '/collect/',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Token ' . $token,
+        ],
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
+        r2(getUrl('admin/subscription'), 'e', Lang::T('Connection error. Please try again.'));
+    }
+
+    $result = json_decode($response, true);
+    if ($httpCode !== 200 || empty($result['reference'])) {
+        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
+        $errorMsg = $result['message'] ?? $result['detail'] ?? $response;
+        r2(getUrl('admin/subscription'), 'e', Lang::T('Failed to initiate payment.') . ' ' . $errorMsg);
+    }
+
+    AdminSubscription::setCampayReference((int) $ctx['payment']->id, $result['reference']);
+    r2(
+        getUrl('admin/subscription') . '&payment_id=' . (int) $ctx['payment']->id,
+        'i',
+        Lang::T('Payment request sent to your phone.') . ' ' .
+        Lang::T('Please confirm the payment on your mobile device.')
+    );
+}
+
+function campay_admin_subscription_check_status($paymentId, $adminId)
+{
+    global $config;
+
+    $payment = AdminSubscription::getPaymentForAdmin((int) $paymentId, (int) $adminId);
+    if (!$payment) {
+        return ['ok' => false, 'message' => Lang::T('Payment not found')];
+    }
+    if ($payment->status === 'paid') {
+        return ['ok' => true, 'message' => Lang::T('Subscription activated successfully'), 'paid' => true];
+    }
+    if ($payment->status !== 'pending') {
+        return ['ok' => false, 'message' => Lang::T('Transaction failed.')];
+    }
+
+    $reference = trim((string) $payment->reference);
+    if ($reference === '' || strpos($reference, 'pending-') === 0 || strpos($reference, 'ISP-SUB-') === 0) {
+        return ['ok' => false, 'pending' => true, 'message' => Lang::T('Transaction is still pending.') . ' ⏳'];
+    }
+
+    $token = campay_get_token();
+    if (!$token) {
+        return ['ok' => false, 'message' => Lang::T('Unable to verify the transaction. Authentication failed.')];
+    }
+
+    $baseUrl = ($config['campay_environment'] === 'prod')
+        ? 'https://www.campay.net/api'
+        : 'https://demo.campay.net/api';
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $baseUrl . '/transaction/' . urlencode($reference) . '/',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Token ' . $token,
+        ],
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode !== 200) {
+        return ['ok' => false, 'pending' => true, 'message' => Lang::T('Unable to verify the transaction, try again later.')];
+    }
+
+    $result = json_decode($response, true);
+    $status = strtoupper($result['status'] ?? 'PENDING');
+
+    if ($status === 'SUCCESSFUL') {
+        return AdminSubscription::activateFromPayment((int) $payment->id, $result);
+    }
+    if ($status === 'FAILED') {
+        AdminSubscription::markPaymentFailed((int) $payment->id);
+        return ['ok' => false, 'message' => Lang::T('Transaction failed.')];
+    }
+
+    return ['ok' => false, 'pending' => true, 'message' => Lang::T('Transaction is still pending.')];
+}
+
+function campay_admin_subscription_webhook($paymentId, $reference, $status, $data)
+{
+    AdminSubscription::setCampayReference((int) $paymentId, $reference);
+    if (strtoupper((string) $status) === 'SUCCESSFUL') {
+        AdminSubscription::activateFromPayment((int) $paymentId, $data);
+        _log("CamPay ISP Subscription: Payment successful for payment #$paymentId");
+    } elseif (strtoupper((string) $status) === 'FAILED') {
+        AdminSubscription::markPaymentFailed((int) $paymentId);
+        _log("CamPay ISP Subscription: Payment failed for payment #$paymentId");
     }
 }

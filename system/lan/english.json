@@ -1622,5 +1622,7 @@
     "Transaction_with_this_Reference_ID___trx6a222c451a3a9__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222c451a3a9] has been processed and failed.",
     "Failed_to_initiate_payment_": "Failed to initiate payment.",
     "Transaction_with_this_Reference_ID___trx6a222fa8680e6__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222fa8680e6] has been processed and failed.",
-    "Transaction_with_this_Reference_ID___trx6a222fd45354a__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222fd45354a] has been processed and failed."
+    "Transaction_with_this_Reference_ID___trx6a222fd45354a__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222fd45354a] has been processed and failed.",
+    "This_email_is_already_registered": "This email is already registered",
+    "Complete_your_subscription_payment_to_activate_your_plan_": "Complete your subscription payment to activate your plan."
 }

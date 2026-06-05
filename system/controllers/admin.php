@@ -9,7 +9,7 @@ header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Expires: Tue, 01 Jan 2000 00:00:00 GMT");
 header("Pragma: no-cache");
 
-$isSubscriptionPage = isset($routes['1']) && in_array($routes['1'], ['subscription', 'subscription-post'], true);
+$isSubscriptionPage = isset($routes['1']) && in_array($routes['1'], ['subscription', 'subscription-post', 'subscription-pay', 'subscription-verify', 'subscription-demo-ack'], true);
 
 if (Admin::getID() && !$isSubscriptionPage) {
     $slug = $_GET['tenant'] ?? ($_SESSION['tenant_slug'] ?? '');
@@ -44,6 +44,22 @@ switch ($do) {
         AdminSubscription::ensureSchema();
         $subscription = AdminSubscription::getForAdmin((int) $admin['id']);
         $settings = AdminSubscription::settings();
+        if (_get('demo_ack') == '1') {
+            unset($_SESSION['signup_checkout_plan']);
+        }
+        $checkoutPlan = '';
+        if (in_array((string) _get('plan'), ['business', 'pro'], true)) {
+            $checkoutPlan = (string) _get('plan');
+        } elseif (in_array((string) ($_SESSION['signup_checkout_plan'] ?? ''), ['business', 'pro'], true)) {
+            $checkoutPlan = (string) $_SESSION['signup_checkout_plan'];
+        }
+        $autoCheckout = $subscription->status === 'trial'
+            && $checkoutPlan !== ''
+            && ((_get('checkout') == '1') || !empty($_SESSION['signup_checkout_plan']));
+        $ui->assign('checkout_plan', $checkoutPlan);
+        $ui->assign('auto_checkout', $autoCheckout);
+        $ui->assign('demo_trial_days', AdminSubscription::demoTrialDays());
+        $ui->assign('subscription_demo_ack_url', getUrl('admin/subscription-demo-ack'));
         $ui->assign('_title', Lang::T('Admin Subscription'));
         $ui->assign('_system_menu', 'isp_reseller');
         $ui->assign('subscription', $subscription);
@@ -53,11 +69,19 @@ switch ($do) {
         $ui->assign('subscription_invoices', AdminSubscription::invoicesForAdmin((int) $admin['id']));
         $ui->assign('subscription_payments', AdminSubscription::paymentsForAdmin((int) $admin['id']));
         $ui->assign('router_count', AdminSubscription::routerCount((int) $admin['id']));
+        $ui->assign('admin_phone', trim((string) ($admin['phone'] ?? '')));
+        $ui->assign('pending_payment_id', (int) (_get('payment_id') ?? 0));
+        $ui->assign('subscription_verify_url', getUrl('admin/subscription-verify'));
+        global $config;
+        $ui->assign('campay_configured', !empty($config['campay_username']) && !empty($config['campay_password']));
+        $adminPhoneLocal = preg_replace('/^237/', '', trim((string) ($admin['phone'] ?? '')));
+        $ui->assign('admin_phone_local', $adminPhoneLocal);
         $csrf_token = Csrf::generateAndStoreToken();
         $ui->assign('csrf_token', $csrf_token);
         $ui->display('admin/subscription.tpl');
         break;
 
+    case 'subscription-pay':
     case 'subscription-post':
         _admin();
         if ($admin['user_type'] !== 'Admin') {
@@ -67,13 +91,64 @@ switch ($do) {
         if (!Csrf::check($csrf_token)) {
             r2(getUrl('admin/subscription'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
         }
+        global $PAYMENTGATEWAY_PATH;
+        require_once $PAYMENTGATEWAY_PATH . DIRECTORY_SEPARATOR . 'campay.php';
         try {
-            AdminSubscription::subscribe((int) $admin['id'], _post('plan_type'), _post('routers_count'));
-            r2(getUrl('admin/subscription'), 's', Lang::T('Subscription activated successfully'));
+            $phone = trim(_post('phone'));
+            if ($phone === '') {
+                $phone = trim((string) ($admin['phone'] ?? ''));
+            }
+            if ($phone === '') {
+                r2(getUrl('admin/subscription'), 'e', Lang::T('Phone number is required for Mobile Money payment'));
+            }
+            if (strlen(preg_replace('/\D/', '', $phone)) >= 9) {
+                $adminRow = ORM::for_table('tbl_users')->find_one((int) $admin['id']);
+                if ($adminRow && trim((string) $adminRow->phone) === '') {
+                    $adminRow->phone = $phone;
+                    $adminRow->save();
+                }
+            }
+            $ctx = AdminSubscription::initiatePayment(
+                (int) $admin['id'],
+                _post('plan_type'),
+                _post('routers_count')
+            );
+            campay_admin_subscription_collect($ctx, $admin, $phone);
         } catch (Exception $e) {
             r2(getUrl('admin/subscription'), 'e', $e->getMessage());
         }
         break;
+
+    case 'subscription-demo-ack':
+        _admin();
+        if ($admin['user_type'] !== 'Admin') {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        }
+        unset($_SESSION['signup_checkout_plan']);
+        if (_get('ajax') == '1') {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => true, 'message' => 'Mode Démo conservé.']);
+            exit;
+        }
+        r2(
+            getUrl('admin/subscription&demo_ack=1'),
+            'i',
+            'Votre compte reste en Mode Démo (' . AdminSubscription::demoTrialDays() . ' jours). Vous pouvez souscrire à tout moment.'
+        );
+        break;
+
+    case 'subscription-verify':
+        _admin();
+        if ($admin['user_type'] !== 'Admin') {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'message' => Lang::T('You do not have permission to access this page')]);
+            exit;
+        }
+        global $PAYMENTGATEWAY_PATH;
+        require_once $PAYMENTGATEWAY_PATH . DIRECTORY_SEPARATOR . 'campay.php';
+        header('Content-Type: application/json');
+        echo json_encode(campay_admin_subscription_check_status((int) _get('payment_id'), (int) $admin['id']));
+        exit;
 
     case 'post':
         $username = _post('username');

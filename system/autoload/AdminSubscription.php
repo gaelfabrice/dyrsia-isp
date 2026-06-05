@@ -76,13 +76,88 @@ class AdminSubscription
         }
     }
 
-    public static function ensureTrial($adminId)
+    /** Jours d'essai Mode Démo (page d'accueil). */
+    public static function demoTrialDays()
+    {
+        return 5;
+    }
+
+    /** Routes admin autorisées lorsque l'abonnement / la démo est expiré(e). */
+    public static function subscriptionGateRoutes()
+    {
+        return [
+            'subscription',
+            'subscription-post',
+            'subscription-pay',
+            'subscription-verify',
+            'subscription-demo-ack',
+        ];
+    }
+
+    public static function isSubscriptionRoute($handler, $action)
+    {
+        return $handler === 'admin'
+            && in_array((string) $action, self::subscriptionGateRoutes(), true);
+    }
+
+    /** True si l'admin doit souscrire avant d'accéder au reste de l'application. */
+    public static function mustSubscribeToContinue($adminId)
+    {
+        self::ensureSchema();
+        self::syncStatuses();
+        $sub = ORM::for_table('admin_subscriptions')->where('admin_id', (int) $adminId)->find_one();
+        if (!$sub) {
+            return true;
+        }
+        if ($sub->status === 'active') {
+            return false;
+        }
+        if ($sub->status === 'trial' && !empty($sub->trial_end) && strtotime($sub->trial_end) > time()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Redirige vers la page d'abonnement si la démo ou l'abonnement est expiré(e).
+     * Exception : déconnexion et pages de souscription / paiement.
+     */
+    public static function enforceSubscriptionGate($admin, $handler, $action)
+    {
+        if (!$admin || ($admin['user_type'] ?? '') !== 'Admin') {
+            return;
+        }
+        if ($handler === 'logout') {
+            return;
+        }
+        if (self::isSubscriptionRoute($handler, $action)) {
+            return;
+        }
+        if (!self::mustSubscribeToContinue((int) ($admin['id'] ?? 0))) {
+            return;
+        }
+        r2(
+            getUrl('admin/subscription'),
+            'w',
+            'Votre Mode Démo a expiré. Choisissez un forfait pour continuer.'
+        );
+    }
+
+    public static function normalizeSignupIntent($intent)
+    {
+        $intent = strtolower(trim((string) $intent));
+        return in_array($intent, ['demo', 'business', 'pro'], true) ? $intent : 'demo';
+    }
+
+    public static function ensureTrial($adminId, $signupIntent = 'demo')
     {
         self::ensureSchema();
         $adminId = (int) $adminId;
         if ($adminId < 1) {
             return null;
         }
+        $signupIntent = self::normalizeSignupIntent($signupIntent);
         $sub = ORM::for_table('admin_subscriptions')->where('admin_id', $adminId)->find_one();
         if ($sub) {
             return $sub;
@@ -93,12 +168,28 @@ class AdminSubscription
         $sub->plan_type = null;
         $sub->status = 'trial';
         $sub->trial_start = $now;
-        $sub->trial_end = date('Y-m-d H:i:s', strtotime('+7 days'));
+        $sub->trial_end = date('Y-m-d H:i:s', strtotime('+' . self::demoTrialDays() . ' days'));
         $sub->routers_count = self::routerCount($adminId);
         $sub->created_at = $now;
         $sub->updated_at = $now;
         $sub->save();
         return $sub;
+    }
+
+    public static function subscriptionUrl($plan = '', $checkout = false)
+    {
+        $url = 'admin/subscription';
+        $params = [];
+        if (in_array($plan, ['business', 'pro'], true)) {
+            $params[] = 'plan=' . $plan;
+        }
+        if ($checkout) {
+            $params[] = 'checkout=1';
+        }
+        if (!empty($params)) {
+            $url .= '&' . implode('&', $params);
+        }
+        return getUrl($url);
     }
 
     public static function getForAdmin($adminId)
@@ -137,9 +228,8 @@ class AdminSubscription
         return true;
     }
 
-    public static function subscribe($adminId, $planType, $routersRequested)
+    public static function validatePlanSelection($adminId, $planType, $routersRequested)
     {
-        self::ensureSchema();
         $planType = strtolower(trim($planType));
         if (!in_array($planType, ['business', 'pro'], true)) {
             throw new InvalidArgumentException(Lang::T('Invalid subscription plan'));
@@ -149,21 +239,208 @@ class AdminSubscription
         if ($planType === 'business' && $currentRouters > 3) {
             throw new RuntimeException(Lang::T('Business plan allows a maximum of 3 routers'));
         }
+        if ($planType === 'pro' && $routersRequested < 1) {
+            throw new RuntimeException(Lang::T('Number of routers is required for Pro plan'));
+        }
+        return [
+            'plan_type' => $planType,
+            'routers_count' => $planType === 'pro' ? $routersRequested : min(3, max($currentRouters, 1)),
+        ];
+    }
+
+    public static function planLabel($planType)
+    {
+        return strtolower((string) $planType) === 'pro' ? 'Forfait Pro' : 'Forfait Business';
+    }
+
+    /**
+     * Crée une facture impayée + paiement CamPay en attente (sans activer l'abonnement).
+     *
+     * @return array{payment: object, invoice: object, amount: float, plan_label: string, external_ref: string}
+     */
+    public static function initiatePayment($adminId, $planType, $routersRequested)
+    {
+        self::ensureSchema();
+        $selection = self::validatePlanSelection($adminId, $planType, $routersRequested);
+        $amount = self::calculateAmount($selection['plan_type'], $selection['routers_count']);
+        if ($amount <= 0) {
+            throw new RuntimeException(Lang::T('Invalid subscription amount'));
+        }
+        $invoice = self::createInvoice($adminId, $selection['plan_type'], $selection['routers_count'], $amount, 'unpaid');
+        $payment = self::recordPayment(
+            $adminId,
+            $invoice ? (int) $invoice->id() : null,
+            $amount,
+            'CamPay',
+            'pending-' . (int) $invoice->id(),
+            'pending'
+        );
+        $externalRef = 'ISP-SUB-' . (int) $payment->id();
+        $payment->reference = $externalRef;
+        $payment->save();
+        return [
+            'payment' => $payment,
+            'invoice' => $invoice,
+            'amount' => $amount,
+            'plan_label' => self::planLabel($selection['plan_type']),
+            'external_ref' => $externalRef,
+            'plan_type' => $selection['plan_type'],
+            'routers_count' => $selection['routers_count'],
+        ];
+    }
+
+    public static function setCampayReference($paymentId, $campayReference)
+    {
+        $payment = ORM::for_table('admin_subscription_payments')->find_one((int) $paymentId);
+        if (!$payment || $payment->status !== 'pending') {
+            return false;
+        }
+        $payment->reference = trim((string) $campayReference);
+        $payment->save();
+        return true;
+    }
+
+    public static function getPaymentForAdmin($paymentId, $adminId)
+    {
+        self::ensureSchema();
+        return ORM::for_table('admin_subscription_payments')
+            ->where('id', (int) $paymentId)
+            ->where('admin_id', (int) $adminId)
+            ->find_one();
+    }
+
+    public static function activateFromPayment($paymentId, $campayPayload = [])
+    {
+        self::ensureSchema();
+        $payment = ORM::for_table('admin_subscription_payments')->find_one((int) $paymentId);
+        if (!$payment) {
+            return ['ok' => false, 'message' => Lang::T('Payment not found')];
+        }
+        if ($payment->status === 'paid') {
+            return ['ok' => true, 'message' => Lang::T('Subscription activated successfully'), 'already' => true];
+        }
+        if ($payment->status !== 'pending') {
+            return ['ok' => false, 'message' => Lang::T('Transaction failed.')];
+        }
+        $invoice = $payment->invoice_id
+            ? ORM::for_table('admin_subscription_invoices')->find_one((int) $payment->invoice_id)
+            : null;
+        if (!$invoice) {
+            return ['ok' => false, 'message' => Lang::T('Invoice not found')];
+        }
+        $sub = self::applySubscription(
+            (int) $payment->admin_id,
+            $invoice->plan_type,
+            (int) $invoice->routers_count
+        );
+        $now = date('Y-m-d H:i:s');
+        $invoice->status = 'paid';
+        $invoice->paid_at = $now;
+        $invoice->save();
+        $payment->status = 'paid';
+        $payment->method = 'CamPay';
+        if (!empty($campayPayload)) {
+            $payment->reference = (string) ($campayPayload['reference'] ?? $payment->reference);
+        }
+        $payment->save();
+        $admin = ORM::for_table('tbl_users')->find_one((int) $payment->admin_id);
+        if ($admin) {
+            self::sendActivationNotifications($admin, $sub, $invoice);
+        }
+        if (isset($_SESSION['signup_checkout_plan'])) {
+            unset($_SESSION['signup_checkout_plan']);
+        }
+        return [
+            'ok' => true,
+            'message' => Lang::T('Subscription activated successfully'),
+            'subscription_end' => $sub->subscription_end,
+            'plan_label' => self::planLabel($sub->plan_type),
+        ];
+    }
+
+    public static function markPaymentFailed($paymentId)
+    {
+        $payment = ORM::for_table('admin_subscription_payments')->find_one((int) $paymentId);
+        if ($payment && $payment->status === 'pending') {
+            $payment->status = 'failed';
+            $payment->save();
+            if ($payment->invoice_id) {
+                $invoice = ORM::for_table('admin_subscription_invoices')->find_one((int) $payment->invoice_id);
+                if ($invoice && $invoice->status === 'unpaid') {
+                    $invoice->status = 'cancelled';
+                    $invoice->save();
+                }
+            }
+        }
+    }
+
+    public static function applySubscription($adminId, $planType, $routersCount)
+    {
+        self::ensureSchema();
+        $selection = self::validatePlanSelection($adminId, $planType, $routersCount);
         $sub = self::ensureTrial($adminId);
         $now = date('Y-m-d H:i:s');
-        $sub->plan_type = $planType;
+        $base = (!empty($sub->subscription_end) && strtotime($sub->subscription_end) > time())
+            ? $sub->subscription_end
+            : $now;
+        $sub->plan_type = $selection['plan_type'];
         $sub->status = 'active';
-        $sub->subscription_start = $now;
-        $sub->subscription_end = date('Y-m-d H:i:s', strtotime('+30 days'));
+        if (empty($sub->subscription_start) || $sub->status !== 'active') {
+            $sub->subscription_start = $now;
+        }
+        $sub->subscription_end = date('Y-m-d H:i:s', strtotime($base . ' +30 days'));
         $sub->grace_end = null;
-        $sub->routers_count = $planType === 'pro' ? $routersRequested : min(3, max($currentRouters, 1));
+        $sub->routers_count = $selection['routers_count'];
         $sub->updated_at = $now;
         $sub->save();
-        $amount = self::calculateAmount($planType, $sub->routers_count);
-        $invoice = self::createInvoice($adminId, $planType, $sub->routers_count, $amount, 'paid');
-        self::recordPayment($adminId, $invoice ? (int) $invoice->id() : null, $amount, 'Manual', 'subscription-' . date('YmdHis'), 'paid');
         return $sub;
     }
+
+    public static function sendActivationNotifications($admin, $sub, $invoice)
+    {
+        global $config;
+        $planLabel = self::planLabel($sub->plan_type);
+        $endDate = date('d/m/Y', strtotime($sub->subscription_end));
+        $amount = number_format((float) $invoice->amount, 0, ',', ' ');
+        $company = $config['CompanyName'] ?? 'DYRSIA';
+        $username = $admin->username ?? '';
+        $smsText = "{$company}: Votre {$planLabel} est actif jusqu'au {$endDate}. Montant: {$amount} XAF. Merci!";
+        $phone = trim((string) ($admin->phone ?? ''));
+        if ($phone !== '') {
+            try {
+                Message::sendSMS($phone, $smsText);
+            } catch (Throwable $e) {
+                _log('Subscription SMS failed: ' . $e->getMessage());
+            }
+        }
+        $safePlan = htmlspecialchars($planLabel, ENT_QUOTES, 'UTF-8');
+        $safeEnd = htmlspecialchars($endDate, ENT_QUOTES, 'UTF-8');
+        $safeUser = htmlspecialchars($username, ENT_QUOTES, 'UTF-8');
+        $body = <<<HTML
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Abonnement activé</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0f172a;color:#f8fafc;padding:24px;">
+<div style="max-width:560px;margin:0 auto;background:#111827;border:1px solid #1e293b;border-radius:16px;padding:28px;">
+<h2 style="margin:0 0 12px;color:#22c55e;">✅ Abonnement activé</h2>
+<p>Bonjour <strong>{$safeUser}</strong>,</p>
+<p>Votre <strong>{$safePlan}</strong> est maintenant actif jusqu'au <strong>{$safeEnd}</strong>.</p>
+<p>Montant payé : <strong>{$amount} XAF</strong></p>
+<p style="color:#94a3b8;font-size:13px;">Vous pouvez gérer vos routeurs depuis votre tableau de bord.</p>
+</div></body></html>
+HTML;
+        $email = trim((string) ($admin->email ?? ''));
+        if ($email !== '') {
+            try {
+                Message::sendEmail($email, $company . ' — Abonnement activé', $body, null, true);
+            } catch (Throwable $e) {
+                _log('Subscription email failed: ' . $e->getMessage());
+            }
+        }
+        try {
+            Message::sendTelegram("Abonnement activé\nAdmin: {$username}\nPlan: {$planLabel}\nFin: {$endDate}\nMontant: {$amount} XAF");
+        } catch (Throwable $e) {
+        }
+    }
+
 
     public static function calculateAmount($planType, $routersCount)
     {

@@ -82,14 +82,22 @@
 <body>
     <div class="wrap">
         <div class="card">
-            <h1>Provision Your Instance</h1>
-            <p class="sub">Create your dedicated database and admin panel in under 60 seconds.</p>
+            <h1>Créer votre instance</h1>
+            <p class="sub">Déployez votre panneau admin en moins de 60 secondes.</p>
+            {if $signup_intent eq 'business'}
+                <div class="alert alert-success" style="margin-bottom:18px">Vous avez choisi le <strong>Forfait Business</strong>. Après création du compte, le paiement Mobile Money vous sera proposé.</div>
+            {elseif $signup_intent eq 'pro'}
+                <div class="alert alert-success" style="margin-bottom:18px">Vous avez choisi le <strong>Forfait Pro</strong>. Après création du compte, le paiement Mobile Money vous sera proposé.</div>
+            {else}
+                <div class="alert alert-success" style="margin-bottom:18px"><strong>Mode Démo</strong> — 5 jours d'exploration sans routeur réel. Vous pourrez souscrire à un forfait plus tard.</div>
+            {/if}
 
             {if $notify}
                 <div class="alert alert-{$notify_t|default:'danger'}">{$notify}</div>
             {/if}
 
             <form method="post" action="{Text::url('provision/submit')}" id="provision-form" autocomplete="on">
+                <input type="hidden" name="signup_intent" value="{$signup_intent|default:'demo'}">
                 <div class="hp-field" aria-hidden="true">
                     <label for="website">Website</label>
                     <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">

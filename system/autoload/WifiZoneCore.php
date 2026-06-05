@@ -202,6 +202,9 @@ class WifiZoneCore
                 WifiZoneLogger::logPluginError('schema', $e);
             }
         }
+        if (class_exists('Withdrawal')) {
+            Withdrawal::ensureSchema();
+        }
         if (class_exists('WifiZoneFfthSchema')) {
             WifiZoneFfthSchema::install();
         }
@@ -238,6 +241,9 @@ class WifiZoneCore
             'wifizone_jwt_secret' => bin2hex(random_bytes(16)),
             'wifizone_renewal_notify_days' => '7,3,1',
             'wifizone_plugin_telegram_errors' => 'no',
+            'wifizone_withdraw_commission_hotspot' => '15',
+            'wifizone_withdraw_commission_pppoe' => '10',
+            'wifizone_withdraw_commission_default' => '10',
         ];
         foreach ($defaults as $k => $v) {
             $exists = ORM::for_table('tbl_appconfig')->where('setting', $k)->find_one();

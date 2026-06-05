@@ -348,12 +348,12 @@
 
                 <div class="accordion">
                     <button class="accordion-header">
-                        <span class="question">Que se passe-t-il après les 14 jours d'essai du Mode Démo ?</span>
+                        <span class="question">Que se passe-t-il après les 5 jours d'essai du Mode Démo ?</span>
                         <span class="icon"><i class="fa fa-chevron-down"></i></span>
                     </button>
                     <div class="accordion-content">
                         <div class="accordion-body">
-                            Le Mode Démo vous permet d'<strong>explorer gratuitement</strong> l'ensemble du tableau de bord sans connecter de routeur réel. Après 14 jours, pour commencer à vendre des tickets et connecter vos équipements au Cameroun, il vous suffit de <strong>choisir entre la formule Business ou Pro</strong>.
+                            Le Mode Démo vous permet d'<strong>explorer gratuitement</strong> l'ensemble du tableau de bord sans connecter de routeur réel. Après 5 jours, pour commencer à vendre des tickets et connecter vos équipements au Cameroun, il vous suffit de <strong>choisir entre la formule Business ou Pro</strong>.
                         </div>
                     </div>
                 </div>
@@ -362,7 +362,7 @@
             <!-- CTA Box -->
             <div class="cta-box">
                 <h3>Une autre question ?</h3>
-                <p>Contactez-nous sur WhatsApp ou lancez votre essai gratuit de 14 jours.</p>
+                <p>Contactez-nous sur WhatsApp ou lancez votre essai gratuit de 5 jours.</p>
                 <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
                     <a class="btn" href="https://wa.me/237690000000" target="_blank"><i class="fa fa-whatsapp"></i> WhatsApp</a>
                     <a class="btn btn-primary" href="{Text::url('provision')}"><i class="fa fa-rocket"></i> Essai Gratuit</a>
