@@ -5,6 +5,16 @@ class wifizone_kpi
     public function getWidget($data = null)
     {
         global $admin;
+        if (DemoShowcase::isActive($admin)) {
+            $s = DemoShowcase::stats();
+            return $this->render([
+                'active_customers' => $s['u_act'],
+                'sales_today' => $s['iday'],
+                'sales_month' => $s['imonth'],
+                'routers_offline' => max(0, $s['routers_total'] - $s['routers_connected']),
+                'open_tickets' => $s['open_tickets'],
+            ]);
+        }
         $cacheKey = 'kpi_' . ($admin['id'] ?? 0) . '_' . date('Y-m-d-H');
         $cached = WifiZoneCache::get($cacheKey, 300);
         if ($cached) {

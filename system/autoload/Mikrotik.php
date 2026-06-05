@@ -137,8 +137,8 @@ class Mikrotik
 
     public static function getClient($ip, $user, $pass, $timeout = 5)
     {
-        global $_app_stage;
-        if ($_app_stage == 'demo') {
+        global $_app_stage, $admin;
+        if ($_app_stage == 'demo' || DemoShowcase::blocksRouterSync($admin ?? null)) {
             return null;
         }
 

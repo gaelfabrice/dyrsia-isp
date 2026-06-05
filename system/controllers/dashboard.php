@@ -87,7 +87,11 @@ $ui->assign('widgets', $widgets);
 
 /* ================= WALLET BALANCE LOGIC (এখানে বসানো হয়েছে) ================= */
 
-if ($admin['user_type'] == 'SuperAdmin') {
+if (DemoShowcase::isActive($admin)) {
+    $demoStats = DemoShowcase::stats();
+    $w_balance = $demoStats['w_balance'];
+    $w_commission = $demoStats['w_commission'];
+} elseif ($admin['user_type'] == 'SuperAdmin') {
     // যদি সুপার এডমিন হয়, তবে সব এডমিনের মোট ব্যালেন্স দেখাবে
     $w_balance = ORM::for_table('admin_wallet')->sum('balance') ?: 0;
 } else {

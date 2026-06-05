@@ -4,8 +4,12 @@ class graph_monthly_sales
 {
     public function getWidget()
     {
-        global $CACHE_PATH, $ui;
+        global $CACHE_PATH, $ui, $admin;
 
+        if (DemoShowcase::isActive($admin ?? null)) {
+            $ui->assign('monthlySales', DemoShowcase::monthlySalesData());
+            return $ui->fetch('widget/graph_monthly_sales.tpl');
+        }
 
         $cacheMSfile = $CACHE_PATH . File::pathFixer('/monthlySales.temp');
         //Cache for 12 hours

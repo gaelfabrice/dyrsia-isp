@@ -482,13 +482,20 @@ switch ($action) {
         if ($name != '') {
             $query->where_like('name', '%' . $name . '%');
         }
-        $d = Paginator::findMany($query, ['name' => $name]);
+        if (DemoShowcase::isActive($admin)) {
+            DemoShowcase::injectRoutersList($ui, 20);
+        } else {
+            $d = Paginator::findMany($query, ['name' => $name]);
+            $ui->assign('d', $d);
+        }
         $routerPermission = ['ok' => true, 'message' => ''];
         if ($admin['user_type'] !== 'SuperAdmin') {
             $routerPermission = AdminSubscription::canAddRouter((int) $admin['id']);
         }
+        if (DemoShowcase::isActive($admin)) {
+            $routerPermission = ['ok' => false, 'message' => 'Compte démo : ajout de routeur désactivé.'];
+        }
         $ui->assign('router_add_permission', $routerPermission);
-        $ui->assign('d', $d);
         run_hook('view_list_routers'); #HOOK
         $ui->display('admin/routers/list.tpl');
         break;

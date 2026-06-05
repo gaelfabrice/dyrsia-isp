@@ -27,6 +27,12 @@
         </div>
     </div>
 
+    {if $demo_showcase_active|default:false}
+        <div class="alert alert-info" style="margin:18px 0;border-radius:12px;">
+            <strong><i class="fa fa-eye"></i> Mode démonstration</strong> — Données fictives générées pour la présentation. Aucun routeur réel n'est synchronisé.
+        </div>
+    {/if}
+
     {if $admin_subscription}
         <style>
             {literal}

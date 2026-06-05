@@ -18,6 +18,23 @@ switch ($action) {
         if ($isSuperAdmin && (_req('preview') !== '1')) {
             r2(getUrl('finance/reversement'), 'i', 'Les retraits clients se gèrent via Reversement (SuperAdmin).');
         }
+        if (DemoShowcase::isActive($admin)) {
+            $demoStats = DemoShowcase::stats();
+            $csrf_token = Csrf::generateAndStoreToken();
+            $ui->assign('_title', 'Retraits');
+            $ui->assign('withdrawal_profile', null);
+            $ui->assign('withdrawal_available', (float) $demoStats['w_balance']);
+            $ui->assign('withdrawal_approved_total', (float) $demoStats['withdrawals_approved']);
+            $ui->assign('withdrawal_sales', ['hotspot' => $demoStats['iday'], 'pppoe' => (int) ($demoStats['imonth'] / 30)]);
+            $ui->assign('withdrawal_requests', DemoShowcase::dataset()['withdrawals'] ?? []);
+            $ui->assign('withdrawal_min', Withdrawal::minAmount());
+            $ui->assign('withdrawal_operators', Withdrawal::OPERATORS);
+            $ui->assign('withdrawal_commission_label', Withdrawal::commissionLabel());
+            $ui->assign('withdrawal_can_submit', false);
+            $ui->assign('csrf_token', $csrf_token);
+            $ui->display('admin/finance/withdrawals.tpl');
+            break;
+        }
         $profile = Withdrawal::getProfile($adminId);
         $available = Withdrawal::availableBalance($adminId);
         $approvedTotal = Withdrawal::sumApproved($adminId);
@@ -166,6 +183,13 @@ switch ($action) {
 
     default:
         $ui->assign('_title', Lang::T('Finance'));
+        if (DemoShowcase::isActive($admin)) {
+            DemoShowcase::applyFinance($ui);
+            require_once $WIDGET_PATH . DIRECTORY_SEPARATOR . 'graph_monthly_sales.php';
+            $ui->assign('monthly_sales_widget', (new graph_monthly_sales())->getWidget());
+            $ui->display('admin/finance.tpl');
+            break;
+        }
         $current_date = date('Y-m-d');
         $start_date = date('Y-m-01');
         $isAdmin = ($admin['user_type'] != 'SuperAdmin');

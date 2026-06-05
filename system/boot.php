@@ -143,7 +143,15 @@ try {
         $_SESSION['tenant_login_redirect'] = Tenant::dashboardUrl($currentTenant['slug']);
         r2(getUrl('admin') . '&tenant=' . urlencode($currentTenant['slug']), 'e', Lang::T('Please sign in to access your dashboard'));
     }
+    DemoShowcase::ensureAccount();
     if ($admin) {
+        DemoShowcase::bootstrapSession($admin);
+        if (DemoShowcase::isActive($admin)) {
+            $routerActions = ['add', 'edit', 'delete', 'test-connection'];
+            if ($handler === 'routers' && in_array((string) ($routes[1] ?? ''), $routerActions, true)) {
+                DemoShowcase::assertRouterMutationAllowed();
+            }
+        }
         AdminSubscription::enforceSubscriptionGate($admin, $handler, $routes[1] ?? '');
     }
     $sys_render = $root_path . File::pathFixer('system/controllers/' . $handler . '.php');

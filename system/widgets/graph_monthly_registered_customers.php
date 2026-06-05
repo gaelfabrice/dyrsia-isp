@@ -4,7 +4,12 @@ class graph_monthly_registered_customers
 {
     public function getWidget()
     {
-        global $CACHE_PATH,$ui;
+        global $CACHE_PATH,$ui,$admin;
+
+        if (DemoShowcase::isActive($admin ?? null)) {
+            $ui->assign('monthlyRegistered', DemoShowcase::monthlyRegisteredData());
+            return $ui->fetch('widget/graph_monthly_registered_customers.tpl');
+        }
 
         $cacheMRfile = $CACHE_PATH . File::pathFixer('/monthlyRegistered.temp');
         //Compatibility for old path

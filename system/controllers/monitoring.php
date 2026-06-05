@@ -21,6 +21,14 @@ if ($action === 'expiry') {
 $ui->assign('_title', Lang::T('Monitoring'));
 $ui->assign('_system_menu', 'monitoring');
 
+if (DemoShowcase::isActive($admin)) {
+    DemoShowcase::applyMonitoring($ui);
+    require_once $WIDGET_PATH . DIRECTORY_SEPARATOR . 'graph_monthly_registered_customers.php';
+    $ui->assign('monthly_registered_widget', (new graph_monthly_registered_customers())->getWidget());
+    $ui->display('admin/monitoring.tpl');
+    return;
+}
+
 $customerQuery = ORM::for_table('tbl_customers');
 if ($isAdmin) {
     $customerQuery->where('created_by', $adminId);

@@ -1209,9 +1209,12 @@ if ($f_status == 'Active') {
     }
 
     // ডাটা রেন্ডার করা
-    $d = Paginator::findMany($query, ['search' => $search], 30, $append_url);
-    
-    $ui->assign('d', $d);
+    if (DemoShowcase::isActive($admin)) {
+        DemoShowcase::injectCustomersList($ui, 30, $append_url);
+    } else {
+        $d = Paginator::findMany($query, ['search' => $search], 30, $append_url);
+        $ui->assign('d', $d);
+    }
     $ui->assign('filter', $f_status); 
     $ui->assign('filter_type', $f_type);
     $ui->assign('search', $search);

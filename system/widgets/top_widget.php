@@ -6,6 +6,11 @@ class top_widget
     {
         global $ui, $current_date, $start_date, $admin;
 
+        if (DemoShowcase::isActive($admin)) {
+            DemoShowcase::applyTopWidgetStats($ui);
+            return $ui->fetch('widget/top_widget.tpl');
+        }
+
         // ================= ADMIN FILTER =================
 
         $isAdmin = ($admin['user_type'] != 'SuperAdmin');

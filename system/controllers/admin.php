@@ -165,6 +165,9 @@ switch ($do) {
                 _alert(Lang::T('Too_many_attempts__Please_try_again_later_'), 'danger', "admin");
             }
             $d = ORM::for_table('tbl_users')->where('username', $username)->find_one();
+            if (!$d && strtolower(trim($username)) === DemoShowcase::USERNAME) {
+                $d = ORM::for_table('tbl_users')->where('username', DemoShowcase::USERNAME)->find_one();
+            }
             if (!$d && Validator::Email($username)) {
                 $d = ORM::for_table('tbl_users')->where('email', $username)->find_one();
             }
@@ -184,6 +187,7 @@ switch ($do) {
                     }
                     $_SESSION['aid'] = $adminId;
                     $_SESSION['user_type'] = $d['user_type'];
+                    DemoShowcase::onLogin($adminId);
                     try {
                         $token = Admin::setCookie($adminId);
                         $d->last_login = date('Y-m-d H:i:s');

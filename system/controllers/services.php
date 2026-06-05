@@ -209,8 +209,12 @@ switch ($action) {
         if ($name != '') {
             $query->where_like('tbl_plans.name_plan', '%' . $name . '%');
         }
-        $d = Paginator::findMany($query, ['name' => $name], 20, $append_url);
-        $ui->assign('d', $d);
+        if (DemoShowcase::isActive($admin)) {
+            DemoShowcase::injectPlansList($ui, 'Hotspot', 20, $append_url);
+        } else {
+            $d = Paginator::findMany($query, ['name' => $name], 20, $append_url);
+            $ui->assign('d', $d);
+        }
         run_hook('view_list_plans'); #HOOK
         $ui->display('admin/hotspot/list.tpl');
         break;
@@ -613,9 +617,12 @@ case 'hotspot-bulk-delete':
         if ($name != '') {
             $query->where_like('tbl_plans.name_plan', '%' . $name . '%');
         }
-        $d = Paginator::findMany($query, ['name' => $name], 20, $append_url);
-
-        $ui->assign('d', $d);
+        if (DemoShowcase::isActive($admin)) {
+            DemoShowcase::injectPlansList($ui, 'PPPoE', 20, $append_url);
+        } else {
+            $d = Paginator::findMany($query, ['name' => $name], 20, $append_url);
+            $ui->assign('d', $d);
+        }
         run_hook('view_list_ppoe'); #HOOK
         $ui->display('admin/pppoe/list.tpl');
         break;

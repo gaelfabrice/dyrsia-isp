@@ -575,6 +575,19 @@ function animateValue(id, start, end, duration) {
 }
 
 function updateLiveBoxes() {
+    {if $demo_showcase_active|default:false}
+    var pppoeVal = {$pppoeOnline|default:0};
+    var hotspotVal = {$hotspotOnline|default:0};
+    ['pppoe','hotspot'].forEach(function(type) {
+        var boxId = type === 'pppoe' ? 'pppoeBox' : 'hotspotBox';
+        var box = document.getElementById(boxId);
+        if (!box) return;
+        var target = type === 'pppoe' ? pppoeVal : hotspotVal;
+        var current = parseInt(box.innerText) || 0;
+        animateValue(boxId, current, target, 500);
+    });
+    return;
+    {/if}
     ['pppoe','hotspot'].forEach(type => {
         // âœ… Correct backend URL for each service
         let url = type === 'pppoe'

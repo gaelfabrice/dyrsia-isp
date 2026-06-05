@@ -103,6 +103,9 @@ class AdminSubscription
     /** True si l'admin doit souscrire avant d'accéder au reste de l'application. */
     public static function mustSubscribeToContinue($adminId)
     {
+        if (DemoShowcase::isShowcaseUser((int) $adminId)) {
+            return false;
+        }
         self::ensureSchema();
         self::syncStatuses();
         $sub = ORM::for_table('admin_subscriptions')->where('admin_id', (int) $adminId)->find_one();
