@@ -1611,5 +1611,8 @@
     "Reference": "Reference",
     "Subscription_activated_successfully": "Subscription activated successfully",
     "Invalid_API_username_or_password": "Invalid API username or password",
-    "Create_or_verify_a_user_under_System_____Users_with_API_rights__group_full_or_api__": "Create or verify a user under System \u2192 Users with API rights (group full or api)."
+    "Create_or_verify_a_user_under_System_____Users_with_API_rights__group_full_or_api__": "Create or verify a user under System \u2192 Users with API rights (group full or api).",
+    "Make_sure_your_Mikrotik_accessible_from_DYRSIA": "Make sure your Mikrotik accessible from DYRSIA",
+    "If_you_just_update_DYRSIA_from_upload_files__try_click_Update": "If you just update DYRSIA from upload files, try click Update",
+    "Update_DYRSIA": "Update DYRSIA"
 }

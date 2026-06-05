@@ -119,6 +119,7 @@
             setMessage('', 'fa-spinner fa-spin', 'Connexion au routeur en cours...');
 
             var data = new FormData();
+            data.append('csrf_token', CSRF_TOKEN);
             data.append('ip_address', document.getElementById('ip_address').value);
             data.append('api_port', document.getElementById('api_port').value);
             data.append('username', document.getElementById('username').value);
