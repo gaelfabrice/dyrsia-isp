@@ -342,7 +342,7 @@ function wifizone_verify_csrf()
     $handler = $routes[0] ?? '';
     $action = $routes[1] ?? '';
     $publicPlugins = [
-        'hotspot_login', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_bkash_verify', 'hotspot_pg_campay_verify',
+        'hotspot_login', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
         'wifizone_reseller_api', 'hotspot_resellers_login',
     ];
     if ($handler === 'plugin' && in_array($action, $publicPlugins, true)) {

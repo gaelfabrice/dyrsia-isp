@@ -390,7 +390,7 @@
                 <div class="logo-row">
                     <span class="logo-chip"><i class="fa fa-server"></i> MikroTik</span>
                     <span class="logo-chip"><i class="fa fa-mobile"></i> M-PESA</span>
-                    <span class="logo-chip"><i class="fa fa-credit-card"></i> PayHero</span>
+                    <span class="logo-chip"><i class="fa fa-credit-card"></i> CamPay</span>
                 </div>
             </div>
         </section>
@@ -409,7 +409,7 @@
                 <article class="feat">
                     <div class="feat-icon"><i class="fa fa-mobile"></i></div>
                     <h3>Flawless STK Push</h3>
-                    <p>Customers select a package, enter their PIN, and get internet instantly. Automated reconciliation via PayHero.</p>
+                    <p>Les clients choisissent un forfait, paient via MTN ou Orange Money, et accèdent à Internet instantanément via CamPay.</p>
                 </article>
                 <article class="feat">
                     <div class="feat-icon"><i class="fa fa-wifi"></i></div>
@@ -454,7 +454,7 @@
                     <div class="step">
                         <div class="step-num">3</div>
                         <h3>Connect M-Pesa</h3>
-                        <p>Enable instant STK Push and payment reconciliation with PayHero.</p>
+                        <p>Activez les paiements Mobile Money MTN et Orange avec CamPay.</p>
                     </div>
                     <div class="step">
                         <div class="step-num">4</div>

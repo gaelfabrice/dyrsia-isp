@@ -99,12 +99,32 @@ add dst-host=*.demo.campay.net</pre>
                     <div class="bs-callout bs-callout-info">
                         <h4><i class="fa fa-phone"></i> Opérateurs supportés</h4>
                         <ul>
-                            <li><strong>MTN Mobile Money</strong> - Numéros commençant par 67, 68, 650-654</li>
-                            <li><strong>Orange Money</strong> - Numéros commençant par 69, 655-659</li>
+                            <li><strong>MTN Mobile Money</strong> — numéros 67, 68, 650-654</li>
+                            <li><strong>Orange Money</strong> — numéros 69, 655-659</li>
                         </ul>
                         <small class="text-muted">
-                            Le client reçoit une demande de paiement USSD sur son téléphone et confirme avec son code PIN.
+                            Le client reçoit une demande USSD sur son téléphone et confirme avec son code PIN.
                         </small>
+                    </div>
+
+                    <div class="bs-callout bs-callout-success">
+                        <h4><i class="fa fa-flask"></i> Mode Demo — numéros de test CamPay</h4>
+                        <p>En environnement <strong>Demo</strong>, le montant maximum par transaction est <strong>25 XAF</strong>.</p>
+                        <p>Pour simuler sans vrai débit mobile, utilisez ces numéros (format complet avec indicatif) :</p>
+                        <table class="table table-condensed table-bordered" style="background:#fff;color:#333;max-width:520px;">
+                            <thead>
+                                <tr><th>Numéro</th><th>Opérateur</th><th>Résultat simulé</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><code>237677777777</code></td><td>MTN</td><td>PENDING → SUCCESSFUL</td></tr>
+                                <tr><td><code>237677777770</code></td><td>MTN</td><td>PENDING → FAILED</td></tr>
+                                <tr><td><code>237699999999</code></td><td>Orange</td><td>PENDING → SUCCESSFUL</td></tr>
+                                <tr><td><code>237699999990</code></td><td>Orange</td><td>PENDING → FAILED</td></tr>
+                            </tbody>
+                        </table>
+                        <p class="text-muted" style="margin-bottom:0;">
+                            Sur le portail hotspot, saisissez les <strong>9 derniers chiffres</strong> (ex. <code>677777777</code> pour MTN succès).
+                        </p>
                     </div>
 
                 </div>

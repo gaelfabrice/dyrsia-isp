@@ -14,7 +14,7 @@ if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $pluginFn)) {
 }
 
 $publicPlugins = [
-    'hotspot_login', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_bkash_verify', 'hotspot_pg_campay_verify',
+    'hotspot_login', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
     'wifizone_reseller_api',
 ];
 if (!in_array($pluginFn, $publicPlugins, true)) {
