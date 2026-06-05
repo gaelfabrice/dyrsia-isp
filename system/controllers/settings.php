@@ -1135,6 +1135,48 @@ switch ($action) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
 
+        $syncHotspotPlansForRouter = function ($targetRouter) {
+            $targetRouter = trim((string) $targetRouter);
+            if ($targetRouter === '') {
+                return 0;
+            }
+
+            $validRouterNames = [];
+            foreach (settings_scoped_router_query($GLOBALS['admin'])->find_many() as $routerRow) {
+                $validRouterNames[] = trim((string) $routerRow['name']);
+            }
+
+            $updated = 0;
+            $plans = ORM::for_table('tbl_plans')
+                ->where('type', 'Hotspot')
+                ->where('enabled', 1)
+                ->find_many();
+
+            foreach ($plans as $plan) {
+                $planRouter = trim((string) $plan['routers']);
+                if ($planRouter === $targetRouter) {
+                    continue;
+                }
+
+                $isOrphanRouter = $planRouter === '' || !in_array($planRouter, $validRouterNames, true);
+                $singleRouterSite = count($validRouterNames) === 1;
+
+                if ($isOrphanRouter || $singleRouterSite) {
+                    $plan->routers = $targetRouter;
+                    $plan->save();
+                    $updated++;
+                }
+            }
+
+            if ($updated > 0) {
+                foreach (glob('system/cache/hotspot_plan_*.json') ?: [] as $cacheFile) {
+                    @unlink($cacheFile);
+                }
+            }
+
+            return $updated;
+        };
+
         $hotspotKeys = [
             'hotspot_page_title',
             'hotspot_page_tagline',
@@ -1160,7 +1202,7 @@ switch ($action) {
             'hotspot_smtp_server'
         ];
 
-        $buildHotspotLoginHtml = function () use ($UPLOAD_PATH, &$config) {
+        $buildHotspotLoginHtml = function () use ($UPLOAD_PATH, &$config, $syncHotspotPlansForRouter) {
             $defaultLoginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
             if (file_exists($defaultLoginFile)) {
                 $html = file_get_contents($defaultLoginFile);
@@ -1169,9 +1211,9 @@ switch ($action) {
                 }
                 $title = $config['hotspot_page_title'] ?? $config['CompanyName'] ?? 'Hotspot';
                 $tagline = trim($config['hotspot_page_tagline'] ?? '');
-                $apiUrl = trim($config['hotspot_api_url'] ?? 'http://10.0.0.1:8000');
+                $apiUrl = trim($config['hotspot_api_url'] ?? 'https://wifizones.org');
                 if ($apiUrl === '') {
-                    $apiUrl = 'http://10.0.0.1:8000';
+                    $apiUrl = 'https://wifizones.org';
                 }
                 $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
                 $safeTagline = htmlspecialchars($tagline, ENT_QUOTES, 'UTF-8');
@@ -1189,9 +1231,18 @@ switch ($action) {
                 $taglineHtml = $safeTagline !== '' ? "\n        " . '<p>' . $safeTagline . '</p>' : '';
                 $html = preg_replace('/<div class="hero">\s*<h1>(.*?)<\/h1>\s*(?:<p>.*?<\/p>)?/is', '<div class="hero">' . "\n        " . '<h1>$1</h1>' . $taglineHtml, $html, 1);
                 $html = preg_replace('/const APP_URL = .*?;/s', 'const APP_URL = ' . json_encode(rtrim($apiUrl, '/')) . ';', $html, 1);
-                $html = preg_replace('/const ROUTER_ID = .*?;/s', 'const ROUTER_ID = 2;' . "\n    " . 'const HOTSPOT_ROUTER_NAME = ' . json_encode($config['hotspot_login_router'] ?? '') . ';', $html, 1);
-                $embeddedPlans = [];
+                $html = preg_replace('/const ROUTER_ID = .*?;/s', 'const ROUTER_ID = 2;', $html, 1);
                 $hotspotRouterName = trim((string) ($config['hotspot_login_router'] ?? ''));
+                if ($hotspotRouterName !== '') {
+                    $syncHotspotPlansForRouter($hotspotRouterName);
+                }
+                $routerNameJs = 'const HOTSPOT_ROUTER_NAME = ' . json_encode($hotspotRouterName) . ';';
+                if (preg_match('/const HOTSPOT_ROUTER_NAME = .*?;/s', $html)) {
+                    $html = preg_replace('/const HOTSPOT_ROUTER_NAME = .*?;/s', $routerNameJs, $html, 1);
+                } else {
+                    $html = preg_replace('/const ROUTER_ID = .*?;/s', 'const ROUTER_ID = 2;' . "\n    " . $routerNameJs, $html, 1);
+                }
+                $embeddedPlans = [];
                 try {
                     $plansQuery = ORM::for_table('tbl_plans')
                         ->where('type', 'Hotspot')
@@ -1232,7 +1283,7 @@ switch ($action) {
                 if (strpos($html, 'function hotspotApiBases') === false) {
                     $html = str_replace(
                         'let CLIENT_MAC = \'\';',
-                        "let CLIENT_MAC = '';\n    function hotspotApiBases() {\n        const bases = [APP_URL];\n        if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {\n            bases.push(window.location.origin);\n        }\n        bases.push('http://127.0.0.1:8000');\n        return [...new Set(bases.filter(Boolean).map(base => String(base).replace(/\\/$/, '')))];\n    }\n    async function fetchHotspotEndpoint(route, options) {\n        let lastError = null;\n        for (const base of hotspotApiBases()) {\n            try {\n                const response = await fetch(base + '/index.php?_route=plugin/' + route, options);\n                if (response.ok) return response;\n                lastError = new Error('HTTP ' + response.status + ' via ' + base);\n            } catch (error) {\n                lastError = error;\n            }\n        }\n        throw lastError || new Error('API hotspot indisponible');\n    }",
+                        "let CLIENT_MAC = '';\n    function hotspotApiBases() {\n        const bases = [];\n        if (APP_URL) bases.push(String(APP_URL).replace(/\\/$/, ''));\n        if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {\n            bases.push(window.location.origin);\n        }\n        return [...new Set(bases.filter(Boolean))];\n    }\n    async function fetchHotspotEndpoint(route, options) {\n        let lastError = null;\n        for (const base of hotspotApiBases()) {\n            try {\n                const response = await fetch(base + '/index.php?_route=plugin/' + route, options);\n                if (response.ok) return response;\n                lastError = new Error('HTTP ' + response.status + ' via ' + base);\n            } catch (error) {\n                lastError = error;\n            }\n        }\n        throw lastError || new Error('API hotspot indisponible');\n    }",
                         $html
                     );
                 }
@@ -1254,71 +1305,103 @@ switch ($action) {
                 } else {
                     $html = preg_replace('/\s*<div class="voucher-section">.*?<div class="divider">.*?<\/div>\s*/is', $portalActionsHtml, $html, 1);
                 }
+                // Normalisation idempotente du séparateur « Déjà un compte ».
+                // Les builds précédents (regex non-greedy) laissaient un fragment
+                // orphelin à chaque sauvegarde, d'où l'accumulation. On réduit toute
+                // la série (séparateur + fragments orphelins) à UN seul séparateur propre.
+                $cleanDivider = "<div class=\"divider\">\n<div class=\"divider-line\"></div>\n<span class=\"divider-text\">Déjà un compte</span>\n<div class=\"divider-line\"></div>\n</div>";
+                $html = preg_replace(
+                    '/<div class="divider">\s*<div class="divider-line"><\/div>\s*<span class="divider-text">Déjà un compte<\/span>\s*<div class="divider-line"><\/div>\s*<\/div>(?:\s*<span class="divider-text">Déjà un compte<\/span>\s*<div class="divider-line"><\/div>\s*<\/div>)*/su',
+                    $cleanDivider,
+                    $html,
+                    1
+                );
                 $html = str_replace('placeholder="Code voucher / identifiant"', 'placeholder="Identifiant"', $html);
                 if (strpos($html, 'function renderHotspotPlans') === false) {
                     $html = str_replace(
                         "/* ===== CHARGEMENT DES FORFAITS (API hotspot_plan) ===== */",
-                        "/* ===== CHARGEMENT DES FORFAITS (API hotspot_plan) ===== */\n    function renderHotspotPlans(plans) {\n        const container = document.getElementById('packagesList');\n        if (!container) return;\n        if (!plans || !plans.length) {\n            container.innerHTML = '<div class=\"package-item\" style=\"text-align:center;\">Aucun forfait actif pour ce routeur.</div>';\n            return;\n        }\n        container.innerHTML = plans.map(pkg => {\n            const paymentLink = pkg.paymentlink || (APP_URL + '/index.php?_route=plugin/hotspot_pay&routername=' + encodeURIComponent((typeof HOTSPOT_ROUTER_NAME !== 'undefined' && HOTSPOT_ROUTER_NAME) ? HOTSPOT_ROUTER_NAME : '$(identity)') + '&planid=' + encodeURIComponent(pkg.planid || '') + '&amount=' + encodeURIComponent(pkg.price || ''));\n            const url = paymentLink + (paymentLink.indexOf('?') >= 0 ? '&' : '?') + 'mac=$(mac)&ip=$(ip)';\n            return `\n                <a class=\"package-item\" href=\"\${url}\" target=\"_self\" onclick=\"event.preventDefault(); handlePlanPayment('\${escapeHtml(pkg.planname)}', '\${pkg.price}', '\${pkg.currency || 'Fcfa'}', '\${pkg.validity}', this.href)\">\n                    <div class=\"package-name\">\n                        <b>\${escapeHtml(pkg.planname)}</b>\n                        <span class=\"package-price\">\${pkg.price} \${pkg.currency || 'Fcfa'}</span>\n                    </div>\n                    <div class=\"package-desc\">\n                        <span>⏱️ Validité: \${pkg.validity || '—'}</span>\n                        <span class=\"badge-unlimited\">♾️ ILLIMITÉ</span>\n                    </div>\n                </a>\n            `;\n        }).join('');\n    }",
+                        "/* ===== CHARGEMENT DES FORFAITS (API hotspot_plan) ===== */\n    function renderHotspotPlans(plans) {\n        const container = document.getElementById('packagesList');\n        if (!container) return;\n        if (!plans || !plans.length) {\n            container.innerHTML = '<div class=\"package-item\" style=\"text-align:center;\">Aucun forfait actif pour ce routeur.</div>';\n            return;\n        }\n        container.innerHTML = plans.map(pkg => {\n            const paymentLink = pkg.paymentlink || (APP_URL + '/index.php?_route=plugin/hotspot_pay&routername=' + encodeURIComponent((typeof HOTSPOT_ROUTER_NAME !== 'undefined' && HOTSPOT_ROUTER_NAME) ? HOTSPOT_ROUTER_NAME : '$(identity)') + '&planid=' + encodeURIComponent(pkg.planid || pkg.planId || '') + '&amount=' + encodeURIComponent(pkg.price || ''));\n            const url = paymentLink + (paymentLink.indexOf('?') >= 0 ? '&' : '?') + 'mac=$(mac)&ip=$(ip)';\n            return `\n                <a class=\"package-item\" href=\"\${url}\" target=\"_self\" onclick=\"event.preventDefault(); handlePlanPayment('\${escapeHtml(pkg.planname)}', '\${pkg.price}', '\${pkg.currency || 'Fcfa'}', '\${pkg.validity}', this.href)\">\n                    <div class=\"package-name\">\n                        <b>\${escapeHtml(pkg.planname)}</b>\n                        <span class=\"package-price\">\${pkg.price} \${pkg.currency || 'Fcfa'}</span>\n                    </div>\n                    <div class=\"package-desc\">\n                        <span>⏱️ Validité: \${pkg.validity || '—'}</span>\n                        <span class=\"badge-unlimited\">♾️ ILLIMITÉ</span>\n                    </div>\n                </a>\n            `;\n        }).join('');\n    }",
                         $html
                     );
                 }
-                if (strpos($html, 'submitHotspotPaymentForm') === false && strpos($html, 'function handlePlanPayment') !== false) {
+                if (strpos($html, 'CAMPAY_WAIT_SECONDS') === false && strpos($html, 'function handlePlanPayment') !== false) {
                     $campayPaymentJs = <<<'JS'
-    function submitHotspotPaymentForm(params) {
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = APP_URL + '/index.php?_route=plugin/hotspot_pay';
-        form.style.display = 'none';
-        Object.keys(params).forEach(function (key) {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = key;
-            input.value = params[key];
-            form.appendChild(input);
-        });
-        document.body.appendChild(form);
-        form.submit();
-    }
+    const CAMPAY_WAIT_SECONDS = 60;
     function parsePaymentUrl(paymentUrl) {
         try {
             const url = new URL(paymentUrl, APP_URL + '/');
-            return {
-                planid: url.searchParams.get('planid') || '',
-                routername: url.searchParams.get('routername') || '',
-                amount: url.searchParams.get('amount') || ''
-            };
-        } catch (e) {
-            return { planid: '', routername: '', amount: '' };
-        }
+            return { planid: url.searchParams.get('planid') || '', routername: url.searchParams.get('routername') || '', amount: url.searchParams.get('amount') || '' };
+        } catch (e) { return { planid: '', routername: '', amount: '' }; }
     }
+    function normalizeLocalPhone(value) { let digits = String(value || '').replace(/\D/g, ''); if (digits.indexOf('237') === 0) digits = digits.slice(3); if (digits.indexOf('0') === 0) digits = digits.slice(1); return digits.slice(0, 9); }
+    function formatCameroonPhone(phone) { const local = normalizeLocalPhone(phone); return local.length === 9 ? '+237 ' + local.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3') : '+237 ' + local; }
+    function detectMobileOperator(phone, apiOperator, apiUssd) {
+        if (apiOperator && apiUssd) return { name: apiOperator, ussd: apiUssd };
+        const p = String(phone || '').replace(/\D/g, '');
+        if (/^(67|68)/.test(p) || /^65[0-4]/.test(p)) return { name: 'MTN', ussd: '*126#' };
+        if (/^(69|65[5-9])/.test(p)) return { name: 'Orange', ussd: '#150*50#' };
+        return { name: 'Mobile Money', ussd: '#150*50# ou *126#' };
+    }
+    function buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency) {
+        return '<div style="text-align:center;padding:6px 2px"><div style="width:58px;height:58px;margin:0 auto 18px;border:4px solid rgba(16,185,129,.18);border-top-color:#10b981;border-radius:50%;animation:campaySpin 1s linear infinite"></div><style>@keyframes campaySpin{to{transform:rotate(360deg)}}</style><p style="font-size:16px;line-height:1.5;margin:0 0 10px"><strong>Validez la transaction sur votre téléphone</strong></p><p style="font-size:14px;color:#94a3b8;margin:0 0 8px">' + escapeHtml(planName) + ' — <strong>' + escapeHtml(String(price)) + ' ' + escapeHtml(currency || 'Fcfa') + '</strong></p><p style="font-size:14px;margin:0 0 12px">Numéro: <strong>' + escapeHtml(formatCameroonPhone(phone)) + '</strong> (' + escapeHtml(operator.name) + ')</p><div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:16px;padding:14px;margin:12px 0;text-align:left"><p style="margin:0 0 8px;font-size:14px">📲 Une notification USSD va s\'afficher.<br>Confirmez avec votre <strong>code PIN</strong>.</p><p style="margin:0;font-size:14px">Sinon composez: <strong style="color:#10b981;font-size:20px">' + escapeHtml(operator.ussd) + '</strong></p></div><p id="campayCountdown" style="font-size:13px;color:#64748b;margin:14px 0 0">Temps restant: ' + secondsLeft + ' secondes…</p><p style="font-size:12px;color:#64748b;margin:8px 0 0">Ne fermez pas cette page pendant la validation.</p></div>';
+    }
+    async function pollPaymentStatus(reference, maxSeconds) {
+        const deadline = Date.now() + (maxSeconds * 1000);
+        while (Date.now() < deadline) {
+            await new Promise(function (r) { setTimeout(r, 3000); });
+            try {
+                const res = await fetchHotspotEndpoint('hotspot_verify&reference=' + encodeURIComponent(reference) + '&format=json', { headers: { 'Accept': 'application/json' } });
+                if (!res.ok) continue;
+                const data = await res.json();
+                if (data.status === 'paid' || data.status === 'failed' || data.status === 'cancelled') return data;
+            } catch (e) {}
+        }
+        return { status: 'timeout', message: 'Délai dépassé. Vérifiez votre téléphone puis réessayez.' };
+    }
+    let campayCountdownTimer = null;
+    function openUssdWaitModal(phone, operator, planName, price, currency) {
+        let secondsLeft = CAMPAY_WAIT_SECONDS;
+        Swal.fire({ title: 'Paiement en cours…', html: buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency), allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false,
+            didOpen: function () {
+                campayCountdownTimer = setInterval(function () {
+                    secondsLeft -= 1;
+                    const el = document.getElementById('campayCountdown');
+                    if (el) el.textContent = secondsLeft > 0 ? ('Temps restant: ' + secondsLeft + ' secondes…') : 'Vérification finale…';
+                    if (secondsLeft <= 0 && campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; }
+                }, 1000);
+            },
+            willClose: function () { if (campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; } }
+        });
+    }
+    async function initiateCampayPayment(params) {
+        const body = new URLSearchParams(params); body.set('ajax', '1');
+        const res = await fetchHotspotEndpoint('hotspot_pay', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: body.toString() });
+        return JSON.parse(await res.text());
+    }
+    function hotspotAssetUrl(filename) { return filename; }
+    function buildPaymentModalHtml(planName, price, currency, validity) { return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 Mobile Money · Cameroun</div><h4>Paiement sécurisé</h4><p>MTN MoMo ou Orange Money</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro de téléphone</label><div class="campay-phone-wrap"><span class="campay-phone-prefix">+237</span><input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="6XX XXX XXX" maxlength="9" /></div><div class="campay-operators"><span class="campay-op mtn"><img src="' + hotspotAssetUrl('MTN.png') + '" alt="MoMo MTN" /></span><span class="campay-op orange"><img src="' + hotspotAssetUrl('orange.png') + '" alt="Orange Money" /></span></div></div></div>'; }
+    function bindPaymentPhoneInput() { const input = document.getElementById('campayPhoneInput'); if (!input) return; input.addEventListener('input', function () { input.value = normalizeLocalPhone(input.value); }); setTimeout(function () { input.focus(); }, 80); }
     async function handlePlanPayment(planName, price, currency, validity, paymentUrl) {
         const meta = parsePaymentUrl(paymentUrl);
-        const result = await Swal.fire({
-            title: 'Paiement Mobile Money',
-            html: '<div style="text-align:center"><div style="background:rgba(16,185,129,0.15);border-radius:20px;padding:10px;margin-bottom:12px"><strong>' + escapeHtml(planName) + '</strong><br>' + escapeHtml(String(price)) + ' ' + escapeHtml(currency || 'Fcfa') + ' — ' + escapeHtml(validity || '') + '</div><p>Entrez votre numéro MTN ou Orange (9 chiffres)</p><div style="font-size:2.5rem;">📱</div></div>',
-            input: 'tel',
-            inputPlaceholder: '6XX XXX XXX',
-            inputAttributes: { maxlength: 9, inputmode: 'numeric' },
-            showCancelButton: true,
-            confirmButtonText: 'Payer maintenant',
-            cancelButtonText: 'Annuler',
-            allowOutsideClick: false,
-            inputValidator: function (value) {
-                const phone = String(value || '').replace(/\D/g, '');
-                if (phone.length !== 9) return 'Le numéro doit contenir 9 chiffres (ex: 677123456)';
-                return undefined;
-            }
-        });
+        const result = await Swal.fire({ title: '', html: buildPaymentModalHtml(planName, price, currency, validity), showCancelButton: true, confirmButtonText: 'Payer maintenant', cancelButtonText: 'Annuler', allowOutsideClick: false, focusConfirm: false, customClass: { popup: 'campay-swal-popup', confirmButton: 'campay-swal-confirm', cancelButton: 'campay-swal-cancel' }, didOpen: bindPaymentPhoneInput, preConfirm: function () { const input = document.getElementById('campayPhoneInput'); const phone = normalizeLocalPhone(input ? input.value : ''); if (phone.length !== 9) { Swal.showValidationMessage('Entrez 9 chiffres après +237 (ex: 677123456)'); return false; } if (!/^[26]/.test(phone)) { Swal.showValidationMessage('Numéro camerounais invalide (doit commencer par 6 ou 2)'); return false; } return phone; } });
         if (!result.isConfirmed) return;
-        const phone = String(result.value || '').replace(/\D/g, '');
-        await Swal.fire({ title: 'Demande envoyée…', html: 'Validez le paiement sur votre téléphone.<br>Redirection vers la confirmation…', icon: 'info', timer: 2500, showConfirmButton: false, allowOutsideClick: false });
-        submitHotspotPaymentForm({
-            pay: '1', type: 'gateways', payment_gateway: 'campay', phone: phone,
-            routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : ''),
-            planid: meta.planid, amount: meta.amount || price, plan_name: planName,
-            mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)',
-            fullname: 'Client Hotspot', address: 'Hotspot'
-        });
+        const phone = normalizeLocalPhone(result.value || '');
+        let initResult;
+        try { initResult = await initiateCampayPayment({ pay: '1', type: 'gateways', payment_gateway: 'campay', phone: phone, routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : '$(identity)'), planid: meta.planid, amount: meta.amount || price, plan_name: planName, mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)', fullname: 'Client Hotspot', address: 'Hotspot' }); }
+        catch (e) { await Swal.fire({ title: 'Erreur réseau', text: 'Impossible de contacter le serveur.', icon: 'error' }); return; }
+        if (!initResult.ok) { await Swal.fire({ title: 'Paiement refusé', text: initResult.message || 'Erreur', icon: 'error' }); return; }
+        const operator = detectMobileOperator(phone, initResult.operator, initResult.ussd_code);
+        openUssdWaitModal(phone, operator, planName, price, currency);
+        const paymentResult = await pollPaymentStatus(initResult.reference, CAMPAY_WAIT_SECONDS);
+        Swal.close();
+        if (paymentResult.status === 'paid') {
+            const code = paymentResult.voucher_code && paymentResult.voucher_code !== '**********' ? paymentResult.voucher_code : (CLIENT_MAC || '');
+            await Swal.fire({ title: 'Paiement réussi !', html: 'Forfait activé. Connexion automatique…', icon: 'success', confirmButtonText: 'Se connecter' });
+            const userField = document.getElementById('loginUsername'); const pwdField = document.getElementById('loginPassword');
+            if (userField && code) userField.value = code; if (pwdField && code) pwdField.value = code; return;
+        }
+        if (paymentResult.status === 'failed') { await Swal.fire({ title: 'Paiement échoué', text: paymentResult.message || 'Transaction refusée.', icon: 'error' }); return; }
+        await Swal.fire({ title: 'En attente', html: 'Confirmation non reçue. Si vous avez validé, attendez 1 minute puis réessayez.', icon: 'warning' });
     }
 JS;
                     $html = preg_replace(
@@ -1460,6 +1543,16 @@ HTML;
                     'if (form && prepareMikrotikLogin(form)) form.submit();',
                     $html
                 );
+                // Minification légère : on retire l'indentation et les lignes vides
+                // (les sauts de ligne sont conservés → JS intact via ASI) afin de
+                // passer sous la limite d'écriture API RouterOS (~60 Ko).
+                $minLines = array_filter(
+                    array_map('ltrim', preg_split('/\r\n|\r|\n/', $html)),
+                    static function ($line) {
+                        return $line !== '';
+                    }
+                );
+                $html = implode("\n", $minLines);
                 return $html;
             }
             return null;
@@ -1533,14 +1626,70 @@ HTML;
             }
         };
 
+        $writeHotspotLoginHtml = function () use ($buildHotspotLoginHtml, $UPLOAD_PATH) {
+            $renderedLoginHtml = $buildHotspotLoginHtml();
+            if ($renderedLoginHtml === null) {
+                return false;
+            }
+            $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+            if (!is_dir($loginDir)) {
+                @mkdir($loginDir, 0755, true);
+            }
+            return file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml) !== false;
+        };
+
         if (_post('save') == 'save') {
             $saveHotspotSettings();
+            $selectedRouter = trim((string) ($config['hotspot_login_router'] ?? ''));
+            $syncedPlans = 0;
+            if ($selectedRouter !== '') {
+                $syncedPlans = $syncHotspotPlansForRouter($selectedRouter);
+            }
+            $writeHotspotLoginHtml();
+            $planCount = 0;
+            if ($selectedRouter !== '') {
+                $planCount = (int) ORM::for_table('tbl_plans')
+                    ->where('type', 'Hotspot')
+                    ->where('enabled', 1)
+                    ->where('routers', $selectedRouter)
+                    ->count();
+            }
+            if ($selectedRouter !== '' && $planCount === 0) {
+                r2(
+                    getUrl('settings/hotspot'),
+                    'w',
+                    'Paramètres enregistrés, mais aucun forfait Hotspot actif pour « '
+                    . $selectedRouter
+                    . ' ». Créez ou activez des forfaits Hotspot assignés à ce routeur.'
+                );
+            }
+            if ($syncedPlans > 0) {
+                r2(
+                    getUrl('settings/hotspot'),
+                    's',
+                    Lang::T('Settings Saved Successfully')
+                    . ' — '
+                    . $syncedPlans
+                    . ' forfait(s) Hotspot réassigné(s) au routeur « '
+                    . $selectedRouter
+                    . ' ».'
+                );
+            }
             r2(getUrl('settings/hotspot'), 's', Lang::T('Settings Saved Successfully'));
         }
 
         if (_post('send_mikrotik') == '1') {
+            // Déploiement réseau long (fetch + sleeps + allers-retours RouterOS) :
+            // on lève la limite PHP de 30 s pour éviter une erreur 500 (fatal timeout).
+            @set_time_limit(300);
+            @ini_set('default_socket_timeout', '15');
+            @ignore_user_abort(true);
             $saveHotspotSettings();
             $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+            if ($routerName !== '') {
+                $syncHotspotPlansForRouter($routerName);
+            }
+            $writeHotspotLoginHtml();
             $mikrotik = null;
             if ($routerName !== '') {
                 $mikrotik = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
@@ -1571,33 +1720,54 @@ HTML;
                 if ($renderedLoginHtml === null) {
                     r2(getUrl('settings/hotspot'), 'e', 'Login.html default file not found');
                 }
-                $util = new PEAR2\Net\RouterOS\Util($client);
-                try {
-                    $client->sendSync((new PEAR2\Net\RouterOS\Request('/file/make-directory'))->setArgument('name', 'hotspot'));
-                } catch (Throwable $e) {
-                } catch (Exception $e) {
+                $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+                if (!is_dir($loginDir)) {
+                    @mkdir($loginDir, 0755, true);
                 }
-                $sent = false;
-                $sentPath = '';
-                $sendErrors = [];
-                foreach (['hotspot/login.html', 'flash/hotspot/login.html', 'login.html'] as $targetPath) {
-                    try {
-                        if ($util->filePutContents($targetPath, $renderedLoginHtml, true)) {
-                            $sent = true;
-                            $sentPath = $targetPath;
-                            break;
-                        }
-                        $sendErrors[] = $targetPath . ': écriture refusée';
-                    } catch (Throwable $e) {
-                        $sendErrors[] = $targetPath . ': ' . $e->getMessage();
-                    } catch (Exception $e) {
-                        $sendErrors[] = $targetPath . ': ' . $e->getMessage();
+                file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml);
+                $fetchBases = array_values(array_unique(array_filter([
+                    rtrim(APP_URL, '/'),
+                    rtrim((string) ($config['hotspot_api_url'] ?? ''), '/'),
+                ])));
+                $fetchTs = time();
+                $loginFetchUrls = [];
+                $assetFetchUrlsByName = [];
+                foreach ($fetchBases as $fetchBase) {
+                    $loginFetchUrls[] = $fetchBase . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs;
+                    foreach (['MTN.png', 'orange.png'] as $assetName) {
+                        $assetFetchUrlsByName[$assetName][] = $fetchBase . '/system/uploads/mikrotik_hotspot/' . rawurlencode($assetName) . '?ts=' . $fetchTs;
                     }
                 }
-                if (!$sent) {
-                    r2(getUrl('settings/hotspot'), 'e', 'MikroTik: impossible d envoyer login.html (' . implode(' | ', $sendErrors) . ')');
+
+                $deployResult = Mikrotik::deployHotspotLoginHtml($client, $renderedLoginHtml, $loginFetchUrls);
+                if (empty($deployResult['ok'])) {
+                    $sendErrors = $deployResult['errors'] ?? ['échec inconnu'];
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'MikroTik: impossible d envoyer login.html (' . implode(' | ', $sendErrors)
+                        . '). Vérifiez que le routeur peut joindre '
+                        . ($fetchBases[0] ?? 'votre serveur')
+                        . ' (DNS + Internet) ou téléchargez login.html manuellement.'
+                    );
                 }
-                $apiUrl = trim($config['hotspot_api_url'] ?? 'http://10.0.0.1:8000');
+                $sentPath = (string) ($deployResult['path'] ?? 'hotspot/login.html');
+                $deployMethod = (string) ($deployResult['method'] ?? 'api');
+
+                $hotspotAssetDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+                foreach (['MTN.png', 'orange.png'] as $assetName) {
+                    $assetSource = $hotspotAssetDir . DIRECTORY_SEPARATOR . $assetName;
+                    if (!is_file($assetSource)) {
+                        continue;
+                    }
+                    $assetBinary = file_get_contents($assetSource);
+                    if ($assetBinary === false) {
+                        continue;
+                    }
+                    $assetFetchUrls = $assetFetchUrlsByName[$assetName] ?? [];
+                    Mikrotik::deployHotspotAssetFile($client, $assetName, $assetBinary, $assetFetchUrls);
+                }
+                $apiUrl = trim($config['hotspot_api_url'] ?? 'https://wifizones.org');
                 $apiHost = parse_url($apiUrl, PHP_URL_HOST);
                 $apiPort = parse_url($apiUrl, PHP_URL_PORT);
                 $apiScheme = parse_url($apiUrl, PHP_URL_SCHEME);
@@ -1638,7 +1808,18 @@ HTML;
                         r2(getUrl('settings/hotspot'), 'e', 'MikroTik: login.html envoyé mais walled garden non créé (' . implode(' | ', $walledGardenErrors) . ')');
                     }
                 }
-                r2(getUrl('settings/hotspot'), 's', Lang::T('Settings Saved Successfully') . ' — pool, ' . $sentPath . ' et walled garden envoyés vers MikroTik (' . $routerName . ').');
+                r2(
+                    getUrl('settings/hotspot'),
+                    's',
+                    Lang::T('Settings Saved Successfully')
+                    . ' — pool, '
+                    . $sentPath
+                    . ' ('
+                    . $deployMethod
+                    . ') et walled garden envoyés vers MikroTik ('
+                    . $routerName
+                    . ').'
+                );
             } catch (Throwable $e) {
                 r2(getUrl('settings/hotspot'), 'e', 'MikroTik: ' . $e->getMessage());
             } catch (Exception $e) {

@@ -7,7 +7,7 @@
     <title>{$_title} — {$companyName}</title>
     <link rel="shortcut icon" href="{$app_url}/ui/ui/images/logo.png" type="image/x-icon" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/font-awesome/css/font-awesome.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/inter/inter.css">
     <style>
         {literal}
         :root {

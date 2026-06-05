@@ -99,9 +99,13 @@ add dst-host=*.demo.campay.net</pre>
                     <div class="bs-callout bs-callout-info">
                         <h4><i class="fa fa-phone"></i> Opérateurs supportés</h4>
                         <ul>
-                            <li><strong>MTN Mobile Money</strong> — numéros 67, 68, 650-654</li>
-                            <li><strong>Orange Money</strong> — numéros 69, 655-659</li>
+                            <li><strong>MTN Mobile Money</strong> — numéros 67, 68, 650-654 — <strong>minimum 2 XAF</strong></li>
+                            <li><strong>Orange Money</strong> — numéros 69, 655-659 — <strong>minimum 10 XAF</strong></li>
                         </ul>
+                        <p class="text-warning" style="margin-top:8px;">
+                            Un forfait à 1 XAF ne peut pas être payé avec Orange (ex. <code>656xxxxxx</code>).
+                            Proposez un forfait d'au moins <strong>10 XAF</strong> pour vos clients Orange.
+                        </p>
                         <small class="text-muted">
                             Le client reçoit une demande USSD sur son téléphone et confirme avec son code PIN.
                         </small>
@@ -122,8 +126,16 @@ add dst-host=*.demo.campay.net</pre>
                                 <tr><td><code>237699999990</code></td><td>Orange</td><td>PENDING → FAILED</td></tr>
                             </tbody>
                         </table>
+                        <p class="text-warning" style="margin-top:10px;">
+                            <i class="fa fa-exclamation-triangle"></i>
+                            <strong>Important :</strong> avec ces numéros magiques, CamPay simule uniquement le statut (succès/échec).
+                            Le <strong>montant affiché sur le dashboard CamPay sera 0 XAF</strong> — c'est normal en demo.
+                            DYRSIA enregistre bien le montant réel du forfait (ex. 10 XAF) dans sa base.
+                        </p>
                         <p class="text-muted" style="margin-bottom:0;">
-                            Sur le portail hotspot, saisissez les <strong>9 derniers chiffres</strong> (ex. <code>677777777</code> pour MTN succès).
+                            Pour voir un montant sur le dashboard CamPay, utilisez un <strong>vrai numéro mobile</strong> (max 25 XAF en demo).
+                            Sur le portail hotspot, saisissez les <strong>9 derniers chiffres</strong> des numéros magiques
+                            (ex. <code>677777777</code> pour MTN succès).
                         </p>
                     </div>
 

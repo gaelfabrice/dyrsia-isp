@@ -301,6 +301,25 @@ function getCookie(name) {
 }
 
 /* =========================
+   CONFIRM DELETE / ACTION
+========================= */
+function ask(field, text) {
+    var txt = field.innerHTML;
+    if (confirm(text)) {
+        setTimeout(function () {
+            field.innerHTML = field.innerHTML.replace('<span class="loading"></span>', txt);
+            field.removeAttribute('disabled');
+        }, 5000);
+        return true;
+    }
+    setTimeout(function () {
+        field.innerHTML = field.innerHTML.replace('<span class="loading"></span>', txt);
+        field.removeAttribute('disabled');
+    }, 500);
+    return false;
+}
+
+/* =========================
    TOOLTIP + POPOVER
 ========================= */
 $(function () {

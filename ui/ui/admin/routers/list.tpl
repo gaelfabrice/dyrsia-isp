@@ -84,9 +84,13 @@
                                     <td>
                                         <a href="{Text::url('')}routers/edit/{$ds['id']}"
                                             class="btn btn-info btn-xs">{Lang::T('Edit')}</a>
-                                        <a href="{Text::url('')}routers/delete/{$ds['id']}" id="{$ds['id']}"
-                                            onclick="return ask(this, '{Lang::T('Delete')}?')"
-                                            class="btn btn-danger btn-xs"><i class="glyphicon glyphicon-trash"></i></a>
+                                        <form method="post" action="{Text::url('')}routers/delete/{$ds['id']}" style="display:inline;margin:0;padding:0"
+                                            onsubmit="return confirm('{Lang::T('Delete')}?');">
+                                            <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                                            <button type="submit" class="btn btn-danger btn-xs" title="{Lang::T('Delete')}">
+                                                <i class="glyphicon glyphicon-trash"></i>
+                                            </button>
+                                        </form>
                                     </td>
                                     <td>{$ds['id']}</td>
                                 </tr>

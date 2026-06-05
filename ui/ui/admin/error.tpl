@@ -54,7 +54,8 @@
                                 <li>{Lang::T('Make sure your hosting not blocking port to external')}</li>
                                 <li>{Lang::T('Make sure your Mikrotik accessible from DYRSIA')}</li>
                                 <li>IP privée (ex. 10.x) : connectez le PC/serveur DYRSIA au même VPN ou réseau que le routeur</li>
-                                <li>Sur le MikroTik : <code>/ip service enable api</code> et autorisez le port 8728 dans le firewall</li>
+                                <li>Sur le MikroTik : <code>/ip service enable api</code> (port 8728) ou <code>/ip service enable api-ssl</code> (port 8729)</li>
+                                <li>Erreur « not a compatible RouterOS service » : mauvais port, API désactivée, ou IP privée (10.x) inaccessible depuis le serveur cloud</li>
                                 <li>Testez depuis <strong>Réseau → Routeurs → Test connexion</strong> avant de créer un forfait</li>
                             </ul>
                             {Lang::T('If you just update DYRSIA from upload files, try click Update')} Database

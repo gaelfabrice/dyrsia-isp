@@ -2,7 +2,7 @@
 
 {assign var=hs_title value=$_c['hotspot_page_title']|default:'yoyo'}
 {assign var=hs_tagline value=$_c['hotspot_page_tagline']|default:''}
-{assign var=hs_api_url value=$_c['hotspot_api_url']|default:'http://10.0.0.1:8000'}
+{assign var=hs_api_url value=$_c['hotspot_api_url']|default:'https://wifizones.org'}
 {assign var=hs_router value=$_c['hotspot_login_router']|default:''}
 {assign var=hs_color value=$_c['hotspot_login_color']|default:'green'}
 {assign var=hs_shape value=$_c['hotspot_card_shape']|default:'rounded'}
@@ -168,8 +168,8 @@
                         <div class="form-group">
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
-                                <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="http://10.0.0.1:8000">
-                                <p class="help-block">URL de cette application accessible depuis la page captive MikroTik. En localhost, utilisez une URL joignable par le client ou le tunnel.</p>
+                                <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="https://wifizones.org">
+                                <p class="help-block">URL publique du serveur DYRSIA (sans port MikroTik). Ex: <code>https://wifizones.org</code> — pas <code>10.0.0.3:8000</code>. Le walled-garden est créé automatiquement à l'envoi vers MikroTik.</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -185,7 +185,7 @@
                                         {/foreach}
                                     {/if}
                                 </select>
-                                <p class="help-block" style="margin-top:6px;">{Lang::T('Router name must match MikroTik System → Identity (used on captive portal).')}</p>
+                                <p class="help-block" style="margin-top:6px;">Le <strong>nom du routeur</strong> (Réseau → Routeurs) doit être <strong>identique</strong> à <em>MikroTik → System → Identity</em>. Les forfaits Hotspot doivent être assignés à ce même nom — aucun nom par défaut n'est utilisé.</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -372,7 +372,7 @@
             <div class="hs-phone">
                 <div class="hs-phone-notch"></div>
                 <div id="hs-preview-screen" class="hs-phone-screen" style="padding:0;">
-                    <iframe id="hs-real-preview" src="{$app_url}/system/uploads/mikrotik_hotspot/login.html?title={$hs_title|escape:'url'}" style="width:100%;height:100%;border:0;border-radius:36px;background:#0a0c15;" title="Aperçu login hotspot"></iframe>
+                    <iframe id="hs-real-preview" src="{$app_url}/system/uploads/mikrotik_hotspot/login.html?title={$hs_title|escape:'url'}&routername={$hs_router|escape:'url'}" style="width:100%;height:100%;border:0;border-radius:36px;background:#0a0c15;" title="Aperçu login hotspot"></iframe>
                 </div>
             </div>
         </aside>
@@ -388,9 +388,22 @@ document.addEventListener('DOMContentLoaded', function () {
         return;
     }
     var basePreviewUrl = '{$app_url}/system/uploads/mikrotik_hotspot/login.html';
-    titleInput.addEventListener('input', function () {
-        preview.src = basePreviewUrl + '?title=' + encodeURIComponent(titleInput.value || '');
-    });
+    var previewRouter = '{$hs_router|escape:'javascript'}';
+    function updatePreviewUrl() {
+        var qs = '?title=' + encodeURIComponent(titleInput.value || '');
+        if (previewRouter) {
+            qs += '&routername=' + encodeURIComponent(previewRouter);
+        }
+        preview.src = basePreviewUrl + qs;
+    }
+    titleInput.addEventListener('input', updatePreviewUrl);
+    var routerSelect = document.querySelector('select[name="hotspot_login_router"]');
+    if (routerSelect) {
+        routerSelect.addEventListener('change', function () {
+            previewRouter = routerSelect.value || '';
+            updatePreviewUrl();
+        });
+    }
 });
 </script>
 

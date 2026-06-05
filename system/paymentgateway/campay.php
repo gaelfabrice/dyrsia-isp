@@ -90,6 +90,44 @@ function campay_get_token()
     return $data['token'] ?? null;
 }
 
+function campay_detect_operator($phone)
+{
+    $phone = preg_replace('/[^0-9]/', '', (string) $phone);
+    if (preg_match('/^237/', $phone)) {
+        $phone = substr($phone, 3);
+    }
+    if (preg_match('/^(67|68)/', $phone) || preg_match('/^65[0-4]/', $phone)) {
+        return 'MTN';
+    }
+    if (preg_match('/^(69|65[5-9])/', $phone)) {
+        return 'Orange';
+    }
+    return null;
+}
+
+function campay_minimum_amount($phone)
+{
+    $operator = campay_detect_operator($phone);
+    if ($operator === 'Orange') {
+        return 10;
+    }
+    if ($operator === 'MTN') {
+        return 2;
+    }
+    return 2;
+}
+
+function campay_validate_collect_amount($phone, $amount)
+{
+    $min = campay_minimum_amount($phone);
+    $amount = (int) $amount;
+    if ($amount < $min) {
+        $operator = campay_detect_operator($phone) ?: 'Mobile Money';
+        return "Le montant minimum CamPay pour {$operator} est {$min} XAF. Ce forfait est à {$amount} XAF.";
+    }
+    return null;
+}
+
 function campay_create_transaction($trx, $user)
 {
     global $config;
@@ -114,9 +152,14 @@ function campay_create_transaction($trx, $user)
     } elseif (!preg_match('/^237/', $phone)) {
         $phone = '237' . ltrim($phone, '0');
     }
+
+    $amountError = campay_validate_collect_amount($phone, $trx['price']);
+    if ($amountError) {
+        r2(U . 'order/package', 'e', $amountError);
+    }
     
     $payload = [
-        'amount'             => (string) intval($trx['price']),
+        'amount'             => (int) intval($trx['price']),
         'currency'           => $currency,
         'from'               => $phone,
         'description'        => $trx['plan_name'] . ' - ' . $config['CompanyName'],

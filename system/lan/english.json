@@ -1614,5 +1614,13 @@
     "Create_or_verify_a_user_under_System_____Users_with_API_rights__group_full_or_api__": "Create or verify a user under System \u2192 Users with API rights (group full or api).",
     "Make_sure_your_Mikrotik_accessible_from_DYRSIA": "Make sure your Mikrotik accessible from DYRSIA",
     "If_you_just_update_DYRSIA_from_upload_files__try_click_Update": "If you just update DYRSIA from upload files, try click Update",
-    "Update_DYRSIA": "Update DYRSIA"
+    "Update_DYRSIA": "Update DYRSIA",
+    "Payment_gateway_not_configured__Please_contact": "Payment gateway not configured. Please contact",
+    "Payment_Page": "Payment Page",
+    "You_already_have_an_active_plan_for_this_username_phone_number_": "You already have an active plan for this username\/phone number.",
+    "Transaction_with_this_Reference_ID___trx6a222bfb5f622__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222bfb5f622] has been processed and failed.",
+    "Transaction_with_this_Reference_ID___trx6a222c451a3a9__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222c451a3a9] has been processed and failed.",
+    "Failed_to_initiate_payment_": "Failed to initiate payment.",
+    "Transaction_with_this_Reference_ID___trx6a222fa8680e6__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222fa8680e6] has been processed and failed.",
+    "Transaction_with_this_Reference_ID___trx6a222fd45354a__has_been_processed_and_failed_": "Transaction with this Reference ID: [trx6a222fd45354a] has been processed and failed."
 }

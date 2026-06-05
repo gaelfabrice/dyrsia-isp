@@ -43,6 +43,98 @@ class Mikrotik
         return ['host' => $ipAddress, 'port' => $defaultPort];
     }
 
+    /**
+     * @return array<int, array{port: int, ssl: bool, label: string}>
+     */
+    private static function mikrotikConnectionAttempts($port)
+    {
+        $port = (int) $port ?: 8728;
+        $attempts = [
+            ['port' => $port, 'ssl' => false, 'label' => 'API'],
+        ];
+
+        if ($port === 8728) {
+            $attempts[] = ['port' => 8729, 'ssl' => true, 'label' => 'API-SSL'];
+        } elseif ($port === 8729) {
+            $attempts[] = ['port' => 8728, 'ssl' => false, 'label' => 'API'];
+        }
+
+        return $attempts;
+    }
+
+    private static function isRetriableMikrotikConnectionError(Throwable $e)
+    {
+        if ($e instanceof RouterOS\DataFlowException
+            && $e->getCode() === RouterOS\DataFlowException::CODE_INVALID_CREDENTIALS) {
+            return false;
+        }
+
+        $message = strtolower($e->getMessage());
+        if (strpos($message, 'invalid username or password') !== false) {
+            return false;
+        }
+
+        if ($e instanceof RouterOS\SocketException
+            && $e->getCode() === RouterOS\SocketException::CODE_SERVICE_INCOMPATIBLE) {
+            return true;
+        }
+
+        return strpos($message, 'not a compatible routeros service') !== false
+            || strpos($message, 'error connecting to routeros') !== false;
+    }
+
+    /**
+     * Fast pre-flight TCP reachability test so we never block on a long OS-level
+     * connect timeout (which would exceed PHP max_execution_time and yield HTTP 500).
+     *
+     * @return true|string  true if reachable, otherwise a short error string.
+     */
+    private static function probeTcp($host, $port, $timeout = 4)
+    {
+        $host = trim((string) $host);
+        $port = (int) $port;
+        if ($host === '' || $port <= 0) {
+            return 'hôte ou port invalide';
+        }
+
+        $errno = 0;
+        $errstr = '';
+        $prev = error_reporting(error_reporting() & ~E_WARNING);
+        $sock = @stream_socket_client(
+            'tcp://' . $host . ':' . $port,
+            $errno,
+            $errstr,
+            max(1, (float) $timeout),
+            STREAM_CLIENT_CONNECT
+        );
+        error_reporting($prev);
+
+        if ($sock === false) {
+            $reason = trim($errstr) !== '' ? trim($errstr) : ('erreur ' . $errno);
+            return 'TCP injoignable ' . $host . ':' . $port . ' — ' . $reason;
+        }
+
+        fclose($sock);
+        return true;
+    }
+
+    private static function formatMikrotikConnectionHelp($host, $port)
+    {
+        $hints = [
+            'Vérifiez sur le routeur : /ip service print — le service « api » doit être activé (port 8728) ou « api-ssl » (port 8729).',
+            'Commandes : /ip service enable api puis /ip service set api port=8728 disabled=no',
+            'Utilisateur API : System → Users → groupe « full » ou « api » (pas seulement winbox).',
+        ];
+
+        if (preg_match('/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/', (string) $host)) {
+            $hints[] = 'IP privée (' . $host . ') : le serveur DYRSIA doit être sur le même réseau/VPN que le MikroTik. Depuis wifizones.org, utilisez l’IP publique du routeur ou un tunnel VPN.';
+        }
+
+        return Lang::T('Cannot connect to MikroTik')
+            . ' (' . $host . ':' . $port . '). '
+            . implode(' ', $hints);
+    }
+
     public static function getClient($ip, $user, $pass, $timeout = 5)
     {
         global $_app_stage;
@@ -57,51 +149,79 @@ class Mikrotik
 
         $user = trim((string) $user);
         $pass = (string) $pass;
+        $attempts = self::mikrotikConnectionAttempts($endpoint['port']);
+        $lastError = null;
+        $prevErrorLevel = error_reporting(error_reporting() & ~E_DEPRECATED);
 
-        try {
-            // Suppress PHP 8.x deprecation warnings from PEAR2 library
-            $prevErrorLevel = error_reporting(error_reporting() & ~E_DEPRECATED);
-            $client = new RouterOS\Client(
-                $endpoint['host'],
-                $user,
-                $pass,
-                $endpoint['port'],
-                false,
-                $timeout
-            );
-            error_reporting($prevErrorLevel);
-            return $client;
-        } catch (RouterOS\DataFlowException $e) {
-            error_reporting($prevErrorLevel ?? E_ALL);
-            if ($e->getCode() === RouterOS\DataFlowException::CODE_INVALID_CREDENTIALS) {
-                throw new Exception(
-                    Lang::T('Cannot connect to MikroTik')
-                    . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '
-                    . Lang::T('Invalid API username or password')
-                    . ' (« ' . $user . ' »). '
-                    . Lang::T('Create or verify a user under System → Users with API rights (group full or api).')
+        $connectTimeout = max(1, min((int) $timeout, 4));
+
+        foreach ($attempts as $attempt) {
+            $reach = self::probeTcp($endpoint['host'], $attempt['port'], $connectTimeout);
+            if ($reach !== true) {
+                $lastError = new Exception(
+                    self::formatMikrotikConnectionHelp($endpoint['host'], $attempt['port'])
+                    . ' (' . $reach . ')'
                 );
+                continue;
             }
+
+            try {
+                $client = new RouterOS\Client(
+                    $endpoint['host'],
+                    $user,
+                    $pass,
+                    $attempt['port'],
+                    false,
+                    $timeout,
+                    $attempt['ssl']
+                        ? PEAR2\Net\Transmitter\NetworkStream::CRYPTO_TLS
+                        : PEAR2\Net\Transmitter\NetworkStream::CRYPTO_OFF
+                );
+                error_reporting($prevErrorLevel);
+                return $client;
+            } catch (RouterOS\DataFlowException $e) {
+                $lastError = $e;
+                error_reporting($prevErrorLevel);
+                if ($e->getCode() === RouterOS\DataFlowException::CODE_INVALID_CREDENTIALS) {
+                    throw new Exception(
+                        Lang::T('Cannot connect to MikroTik')
+                        . ' (' . $endpoint['host'] . ':' . $attempt['port'] . '): '
+                        . Lang::T('Invalid API username or password')
+                        . ' (« ' . $user . ' »). '
+                        . Lang::T('Create or verify a user under System → Users with API rights (group full or api).')
+                    );
+                }
+                if (!self::isRetriableMikrotikConnectionError($e)) {
+                    break;
+                }
+            } catch (Throwable $e) {
+                $lastError = $e;
+                if (!self::isRetriableMikrotikConnectionError($e)) {
+                    break;
+                }
+            } catch (Exception $e) {
+                $lastError = $e;
+                if (!self::isRetriableMikrotikConnectionError($e)) {
+                    break;
+                }
+            }
+        }
+
+        error_reporting($prevErrorLevel ?? E_ALL);
+
+        if ($lastError instanceof RouterOS\DataFlowException
+            && $lastError->getCode() === RouterOS\DataFlowException::CODE_INVALID_CREDENTIALS) {
             throw new Exception(
                 Lang::T('Cannot connect to MikroTik')
                 . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '
-                . $e->getMessage()
-            );
-        } catch (Throwable $e) {
-            error_reporting($prevErrorLevel ?? E_ALL);
-            throw new Exception(
-                Lang::T('Cannot connect to MikroTik')
-                . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '
-                . $e->getMessage()
-            );
-        } catch (Exception $e) {
-            error_reporting($prevErrorLevel ?? E_ALL);
-            throw new Exception(
-                Lang::T('Cannot connect to MikroTik')
-                . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '
-                . $e->getMessage()
+                . Lang::T('Invalid API username or password')
+                . ' (« ' . $user . ' »). '
+                . Lang::T('Create or verify a user under System → Users with API rights (group full or api).')
             );
         }
+
+        $detail = $lastError ? $lastError->getMessage() : 'connexion impossible';
+        throw new Exception(self::formatMikrotikConnectionHelp($endpoint['host'], $endpoint['port']) . ' (' . $detail . ')');
     }
 
     public static function isUserLogin($client, $username)
@@ -638,5 +758,189 @@ class Mikrotik
             $removeRequest
                 ->setArgument('numbers', $id)
         );
+    }
+
+    /**
+     * Ensure a directory exists on the router file store.
+     */
+    public static function ensureRouterDirectory($client, $directory)
+    {
+        $directory = trim((string) $directory, '/');
+        if ($directory === '') {
+            return;
+        }
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/file/make-directory'))->setArgument('name', $directory)
+            );
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+    }
+
+    /**
+     * Download a remote file onto the router via /tool fetch.
+     *
+     * @return string|null Error message on failure, null on success.
+     */
+    public static function fetchUrlToRouterFile($client, $url, $dstPath)
+    {
+        $url = trim((string) $url);
+        $dstPath = trim((string) $dstPath);
+        if ($url === '' || $dstPath === '') {
+            return 'URL ou chemin destination vide';
+        }
+
+        $util = new RouterOS\Util($client);
+        try {
+            $util->filePutContents($dstPath, null);
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        $mode = stripos($url, 'https://') === 0 ? 'https' : 'http';
+        $request = (new RouterOS\Request('/tool/fetch'))
+            ->setArgument('url', $url)
+            ->setArgument('dst-path', $dstPath)
+            ->setArgument('mode', $mode)
+            ->setArgument('check-certificate', 'no');
+
+        try {
+            $responses = $client->sendSync($request);
+        } catch (Throwable $e) {
+            return $e->getMessage();
+        } catch (Exception $e) {
+            return $e->getMessage();
+        }
+
+        $status = '';
+        $message = '';
+        foreach ($responses as $response) {
+            $status = $status ?: (string) $response->getProperty('status');
+            $message = $message ?: (string) $response->getProperty('message');
+            if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
+                return trim($message) !== '' ? $message : 'fetch RouterOS error';
+            }
+        }
+
+        if ($status !== '' && stripos($status, 'fail') !== false) {
+            return trim($message) !== '' ? $message : ('fetch status: ' . $status);
+        }
+
+        sleep(2);
+
+        $size = self::getRouterFileSize($client, $dstPath);
+        if ($size > 0) {
+            return null;
+        }
+
+        return 'fichier non créé après fetch';
+    }
+
+    /**
+     * @return int
+     */
+    public static function getRouterFileSize($client, $path)
+    {
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/print'))
+                    ->setArgument('.proplist', 'size')
+                    ->setQuery(RouterOS\Query::where('name', $path))
+            );
+            foreach ($responses as $response) {
+                $size = $response->getProperty('size');
+                if ($size !== null && $size !== '') {
+                    return (int) $size;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return 0;
+    }
+
+    /**
+     * Upload hotspot/login.html — fichiers >4 Ko via /tool fetch (limite API RouterOS).
+     *
+     * @param array<int, string> $fetchUrls
+     * @return array{ok: bool, path?: string, method?: string, errors?: array<int, string>}
+     */
+    public static function deployHotspotLoginHtml($client, $html, array $fetchUrls = [])
+    {
+        $html = (string) $html;
+        $paths = ['hotspot/login.html', 'login.html'];
+        $errors = [];
+        $util = new RouterOS\Util($client);
+
+        self::ensureRouterDirectory($client, 'hotspot');
+
+        foreach ($paths as $path) {
+            foreach ($fetchUrls as $url) {
+                $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
+                if ($fetchError === null) {
+                    return ['ok' => true, 'path' => $path, 'method' => 'fetch'];
+                }
+                $errors[] = $path . ' (fetch): ' . $fetchError;
+            }
+
+            try {
+                $util->filePutContents($path, null);
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+
+            if ($util->filePutContents($path, $html, true)) {
+                return ['ok' => true, 'path' => $path, 'method' => 'api'];
+            }
+
+            $errors[] = $path . ': écriture API refusée (' . strlen($html) . ' octets, limite ~4–60 Ko)';
+        }
+
+        return ['ok' => false, 'errors' => $errors];
+    }
+
+    /**
+     * @param array<int, string> $fetchUrls
+     * @return array{ok: bool, path?: string, method?: string, errors?: array<int, string>}
+     */
+    public static function deployHotspotAssetFile($client, $filename, $binary, array $fetchUrls = [])
+    {
+        $filename = trim((string) $filename);
+        $binary = (string) $binary;
+        if ($filename === '' || $binary === '') {
+            return ['ok' => false, 'errors' => ['fichier asset vide']];
+        }
+
+        $paths = ['hotspot/' . $filename, $filename];
+        $errors = [];
+        $util = new RouterOS\Util($client);
+
+        self::ensureRouterDirectory($client, 'hotspot');
+
+        foreach ($paths as $path) {
+            foreach ($fetchUrls as $url) {
+                $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
+                if ($fetchError === null) {
+                    return ['ok' => true, 'path' => $path, 'method' => 'fetch'];
+                }
+                $errors[] = $path . ' (fetch): ' . $fetchError;
+            }
+
+            try {
+                $util->filePutContents($path, null);
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+
+            if ($util->filePutContents($path, $binary, true)) {
+                return ['ok' => true, 'path' => $path, 'method' => 'api'];
+            }
+
+            $errors[] = $path . ': écriture API refusée (' . strlen($binary) . ' octets)';
+        }
+
+        return ['ok' => false, 'errors' => $errors];
     }
 }

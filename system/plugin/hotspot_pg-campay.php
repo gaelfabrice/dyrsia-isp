@@ -60,6 +60,39 @@ function hotspot_pg_campay_format_phone($phone)
     return $phone;
 }
 
+function hotspot_pg_campay_is_ajax()
+{
+    return !empty($_POST['ajax'])
+        || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+}
+
+function hotspot_pg_campay_respond_error($message)
+{
+    if (hotspot_pg_campay_is_ajax()) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => false, 'message' => $message]);
+        exit;
+    }
+    header('Location: ' . U . 'plugin/hotspot_verify&message=' . urlencode($message));
+    exit;
+}
+
+function hotspot_pg_campay_respond_success($txref, $result = [])
+{
+    if (hotspot_pg_campay_is_ajax()) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'ok' => true,
+            'reference' => $txref,
+            'operator' => $result['operator'] ?? '',
+            'ussd_code' => $result['ussd_code'] ?? '',
+        ]);
+        exit;
+    }
+    header('Location: ' . U . 'plugin/hotspot_verify&reference=' . urlencode($txref));
+    exit;
+}
+
 function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 {
     $phone = $trx->phone_number;
@@ -211,6 +244,10 @@ function hotspot_processPayment_campay($data)
 {
     global $config;
 
+    if (!function_exists('campay_validate_collect_amount')) {
+        require_once dirname(__DIR__) . '/paymentgateway/campay.php';
+    }
+
     $phone = $data['phone'];
     $mac_address = $data['mac_address'];
     $ip_address = $data['ip_address'];
@@ -221,10 +258,8 @@ function hotspot_processPayment_campay($data)
     $amount = $data['amount'];
 
     if (empty($config['campay_username']) || empty($config['campay_password'])) {
-        $message = urlencode(Lang::T('Payment gateway not configured. Please contact') . ' ' . ($config['CompanyName'] ?? 'admin'));
         Message::sendTelegram('CamPay Hotspot: gateway not configured');
-        header('Location: ' . U . 'plugin/hotspot_verify&message=' . $message);
-        exit;
+        hotspot_pg_campay_respond_error(Lang::T('Payment gateway not configured. Please contact') . ' ' . ($config['CompanyName'] ?? 'admin'));
     }
 
     if (!function_exists('hotspot_cleanMac')) {
@@ -246,23 +281,24 @@ function hotspot_processPayment_campay($data)
             ->where('status', 'on')
             ->find_one();
         if ($activePlan) {
-            $message = urlencode(Lang::T('You already have an active plan for this username/phone number.'));
-            header('Location: ' . U . 'plugin/hotspot_verify&message=' . $message);
-            exit;
+            hotspot_pg_campay_respond_error(Lang::T('You already have an active plan for this username/phone number.'));
         }
+    }
+
+    $amountError = campay_validate_collect_amount($phone, $amount);
+    if ($amountError) {
+        hotspot_pg_campay_respond_error($amountError);
     }
 
     $token = hotspot_pg_campay_get_token();
     if (!$token) {
-        $message = urlencode(Lang::T('Payment gateway authentication failed. Please try again.'));
-        header('Location: ' . U . 'plugin/hotspot_verify&message=' . $message);
-        exit;
+        hotspot_pg_campay_respond_error(Lang::T('Payment gateway authentication failed. Please try again.'));
     }
 
     $campayPhone = hotspot_pg_campay_format_phone($phone);
     $currency = $config['campay_currency'] ?? 'XAF';
     $payload = [
-        'amount' => (string) intval($amount),
+        'amount' => (int) intval($amount),
         'currency' => $currency,
         'from' => $campayPhone,
         'description' => $plan_name . ' - ' . ($config['CompanyName'] ?? 'Hotspot'),
@@ -290,9 +326,7 @@ function hotspot_processPayment_campay($data)
 
     if ($curlError) {
         _log('CamPay Hotspot collect curl error: ' . $curlError);
-        $message = urlencode(Lang::T('Connection error. Please try again.'));
-        header('Location: ' . U . 'plugin/hotspot_verify&message=' . $message);
-        exit;
+        hotspot_pg_campay_respond_error(Lang::T('Connection error. Please try again.'));
     }
 
     $result = json_decode($response, true);
@@ -300,9 +334,7 @@ function hotspot_processPayment_campay($data)
         $errorMsg = $result['message'] ?? $result['detail'] ?? $response;
         _log('CamPay Hotspot collect failed: HTTP ' . $httpCode . ' - ' . $errorMsg);
         Message::sendTelegram("CamPay Hotspot collect failed:\n" . json_encode($result, JSON_PRETTY_PRINT));
-        $message = urlencode(Lang::T('Failed to initiate payment.') . ' ' . $errorMsg);
-        header('Location: ' . U . 'plugin/hotspot_verify&message=' . $message);
-        exit;
+        hotspot_pg_campay_respond_error(Lang::T('Failed to initiate payment.') . ' ' . $errorMsg);
     }
 
     $trx = ORM::for_table('tbl_hotspot_payments')->create();
@@ -326,8 +358,7 @@ function hotspot_processPayment_campay($data)
     ]);
     $trx->save();
 
-    header('Location: ' . U . 'plugin/hotspot_verify&reference=' . urlencode($txref));
-    exit;
+    hotspot_pg_campay_respond_success($txref, $result);
 }
 
 function hotspot_pg_campay_verify()

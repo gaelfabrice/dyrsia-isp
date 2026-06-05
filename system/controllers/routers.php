@@ -256,12 +256,32 @@ switch ($action) {
         break;
 
     case 'delete':
-        $id  = $routes['2'];
-        run_hook('router_delete'); #HOOK
+        $id = intval($routes['2'] ?? 0);
+        if ($id <= 0) {
+            r2(getUrl('routers/list'), 'e', Lang::T('Account Not Found'));
+        }
+        if ($_app_stage == 'Demo') {
+            r2(getUrl('routers/list'), 'e', Lang::T('You cannot perform this action in Demo mode'));
+        }
+
         $d = router_scoped_query($admin)->where('id', $id)->find_one();
-        if ($d) {
+        if (!$d && $admin['user_type'] === 'SuperAdmin') {
+            $d = ORM::for_table('tbl_routers')->find_one($id);
+        }
+        if (!$d) {
+            r2(getUrl('routers/list'), 'e', Lang::T('Account Not Found'));
+        }
+
+        run_hook('router_delete'); #HOOK
+        try {
             $d->delete();
+            if ($admin['user_type'] !== 'SuperAdmin') {
+                AdminSubscription::syncRouterCount((int) $admin['id']);
+            }
             r2(getUrl('routers/list'), 's', Lang::T('Data Deleted Successfully'));
+        } catch (Throwable $e) {
+            _log('[Router Delete] ID ' . $id . ': ' . $e->getMessage(), 'Error');
+            r2(getUrl('routers/list'), 'e', Lang::T('Failed to delete router') . ': ' . $e->getMessage());
         }
         break;
 
