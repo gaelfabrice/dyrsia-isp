@@ -11,8 +11,11 @@ class Tenant
     public static function ensureUserTenantColumn()
     {
         self::ensureSchema();
-        global $db;
         try {
+            $db = ORM::get_db();
+            if (!$db) {
+                return;
+            }
             $cols = $db->query("SHOW COLUMNS FROM tbl_users LIKE 'tenant_id'")->fetchAll(PDO::FETCH_ASSOC);
             if (count($cols) === 0) {
                 ORM::raw_execute('ALTER TABLE tbl_users ADD COLUMN tenant_id INT UNSIGNED NULL DEFAULT NULL AFTER id');
