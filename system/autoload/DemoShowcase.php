@@ -158,9 +158,9 @@ class DemoShowcase
         $wBalance = mt_rand(45000, 320000);
         $wCommission = mt_rand(12000, 85000);
         $withdrawalsApproved = mt_rand(80000, 450000);
-        $hotspotOnline = mt_rand((int) ($hAct * 0.35), (int) ($hAct * 0.85));
-        $pppoeOnline = mt_rand((int) ($pAct * 0.4), (int) ($pAct * 0.9));
-        $ftthOnline = mt_rand((int) ($ftthAct * 0.5), (int) ($ftthAct * 0.95));
+        $hotspotOnline = self::randInt((int) ($hAct * 0.35), (int) ($hAct * 0.85));
+        $pppoeOnline = self::randInt((int) ($pAct * 0.4), (int) ($pAct * 0.9));
+        $ftthOnline = self::randInt((int) ($ftthAct * 0.5), (int) ($ftthAct * 0.95));
 
         $routerNames = self::buildRouters($routersTotal, $routersConnected);
         $dataset = [
@@ -403,15 +403,22 @@ class DemoShowcase
     {
         $month = (int) date('n');
         $sales = [];
-        $remaining = $monthTotal;
+        $remaining = max(0, (int) $monthTotal);
         for ($m = 1; $m <= 12; $m++) {
             if ($m < $month) {
-                $val = ($m === $month - 1) ? max(0, $remaining) : mt_rand(80000, (int) ($monthTotal * 0.25));
+                if ($m === $month - 1) {
+                    $val = max(0, $remaining);
+                } else {
+                    $cap = max(1, (int) round($monthTotal * 0.25));
+                    $hi = min($remaining, max($cap, 80000));
+                    $lo = min(80000, $hi);
+                    $val = self::randInt($lo, $hi);
+                }
                 $remaining -= $val;
             } elseif ($m === $month) {
-                $val = max(50000, $remaining);
+                $val = max(0, $remaining);
             } else {
-                $val = mt_rand(60000, 180000);
+                $val = self::randInt(60000, 180000);
             }
             $sales[] = ['month' => $m, 'totalSales' => max(0, $val)];
         }
@@ -424,7 +431,7 @@ class DemoShowcase
         $rows = [];
         $remaining = $totalCustomers;
         for ($m = 1; $m <= $month; $m++) {
-            $count = ($m === $month) ? max(1, $remaining) : mt_rand(2, max(3, (int) ($totalCustomers / 6)));
+            $count = ($m === $month) ? max(1, $remaining) : self::randInt(2, max(3, (int) ($totalCustomers / 6)));
             $remaining -= $count;
             $rows[] = ['date' => $m, 'count' => max(1, $count)];
         }
@@ -438,7 +445,7 @@ class DemoShowcase
         $count = mt_rand(3, 6);
         $remaining = $approvedTotal;
         for ($i = 1; $i <= $count; $i++) {
-            $amount = ($i === $count) ? max(5000, $remaining) : mt_rand(10000, (int) max(10000, $approvedTotal / 2));
+            $amount = ($i === $count) ? max(5000, $remaining) : self::randInt(10000, (int) max(10000, $approvedTotal / 2));
             $remaining -= $amount;
             $rows[] = (object) [
                 'id' => 60000 + $i,
@@ -524,5 +531,16 @@ class DemoShowcase
         }
         $decoded = json_decode($raw, true);
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /** mt_rand sûr pour PHP 8+ (min <= max). */
+    private static function randInt($min, $max)
+    {
+        $min = (int) $min;
+        $max = (int) $max;
+        if ($min > $max) {
+            [$min, $max] = [$max, $min];
+        }
+        return $min === $max ? $min : mt_rand($min, $max);
     }
 }
