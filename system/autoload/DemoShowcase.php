@@ -14,7 +14,7 @@ class DemoShowcase
             ->where('username', self::USERNAME)
             ->find_one();
         if ($user) {
-            return (int) $user->id;
+            return self::syncExistingAccount($user);
         }
 
         $now = date('Y-m-d H:i:s');
@@ -32,6 +32,46 @@ class DemoShowcase
         $user->save();
 
         $adminId = (int) $user->id();
+        self::ensureSubscription($adminId, $now);
+
+        return $adminId;
+    }
+
+    private static function syncExistingAccount($user)
+    {
+        $adminId = (int) $user->id();
+        $data = self::decodeData($user->data ?? '');
+        $data['showcase_demo'] = true;
+        $dirty = false;
+
+        if (($user->status ?? '') !== 'Active') {
+            $user->status = 'Active';
+            $dirty = true;
+        }
+        if (($user->user_type ?? '') !== 'Admin') {
+            $user->user_type = 'Admin';
+            $dirty = true;
+        }
+        if (!Password::_verify(self::PASSWORD, (string) ($user->password ?? ''))) {
+            $user->password = Password::_crypt(self::PASSWORD);
+            $dirty = true;
+        }
+        $encoded = json_encode($data, JSON_UNESCAPED_UNICODE);
+        if ((string) ($user->data ?? '') !== $encoded) {
+            $user->data = $encoded;
+            $dirty = true;
+        }
+        if ($dirty) {
+            $user->save();
+        }
+
+        self::ensureSubscription($adminId, date('Y-m-d H:i:s'));
+
+        return $adminId;
+    }
+
+    private static function ensureSubscription($adminId, $now)
+    {
         AdminSubscription::ensureSchema();
         $sub = ORM::for_table('admin_subscriptions')->where('admin_id', $adminId)->find_one();
         if (!$sub) {
@@ -45,9 +85,14 @@ class DemoShowcase
             $sub->created_at = $now;
             $sub->updated_at = $now;
             $sub->save();
+            return;
         }
-
-        return $adminId;
+        if (($sub->status ?? '') !== 'active') {
+            $sub->status = 'active';
+            $sub->subscription_end = date('Y-m-d H:i:s', strtotime('+10 years'));
+            $sub->updated_at = $now;
+            $sub->save();
+        }
     }
 
     public static function isShowcaseUser($adminOrId = null)

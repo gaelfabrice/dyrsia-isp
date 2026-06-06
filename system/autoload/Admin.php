@@ -195,6 +195,10 @@ class Admin
         if ($aid <= 0) {
             return 0;
         }
+        if (DemoShowcase::isShowcaseUser($aid)) {
+            DemoShowcase::ensureAccount();
+            return $aid;
+        }
         $user = ORM::for_table('tbl_users')->select('status')->find_one($aid);
         if (!$user || $user->status !== 'Active') {
             self::removeCookie();

@@ -122,6 +122,7 @@ if ($currentTenant) {
     $ui->assign('wifizone_tenant_name', $currentTenant['business_name']);
 }
 try {
+    DemoShowcase::ensureAccount();
     $admin = Admin::_info();
     if (Impersonate::isActive() && (Impersonate::info()['mode'] ?? '') === 'customer') {
         $admin = null;
@@ -143,9 +144,8 @@ try {
         $_SESSION['tenant_login_redirect'] = Tenant::dashboardUrl($currentTenant['slug']);
         r2(getUrl('admin') . '&tenant=' . urlencode($currentTenant['slug']), 'e', Lang::T('Please sign in to access your dashboard'));
     }
-    DemoShowcase::ensureAccount();
+    DemoShowcase::bootstrapSession($admin ?? null);
     if ($admin) {
-        DemoShowcase::bootstrapSession($admin);
         if (DemoShowcase::isActive($admin)) {
             $routerActions = ['add', 'edit', 'delete', 'test-connection'];
             if ($handler === 'routers' && in_array((string) ($routes[1] ?? ''), $routerActions, true)) {

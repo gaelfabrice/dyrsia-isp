@@ -173,7 +173,7 @@ switch ($do) {
             }
             if ($d) {
                 $d_pass = $d['password'];
-                if ($d['status'] != 'Active') {
+                if ($d['status'] != 'Active' && !DemoShowcase::isShowcaseUser($d->as_array())) {
                     _alert(Lang::T('This account status') . ' : ' . Lang::T($d['status']), 'danger', "admin");
                 }
                 if (Password::_verify($password, $d_pass) == true) {
