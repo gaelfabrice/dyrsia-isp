@@ -87,34 +87,33 @@ $ui->assign('widgets', $widgets);
 
 /* ================= WALLET BALANCE LOGIC (এখানে বসানো হয়েছে) ================= */
 
+$w_balance = 0;
+$w_commission = 0;
+
 if (DemoShowcase::isActive($admin)) {
     $demoStats = DemoShowcase::stats();
     $w_balance = $demoStats['w_balance'];
     $w_commission = $demoStats['w_commission'];
-} elseif ($admin['user_type'] == 'SuperAdmin') {
-    // যদি সুপার এডমিন হয়, তবে সব এডমিনের মোট ব্যালেন্স দেখাবে
-    $w_balance = ORM::for_table('admin_wallet')->sum('balance') ?: 0;
 } else {
-    // যদি নরমাল এডমিন হয়, তবে শুধুমাত্র তার নিজের ব্যালেন্স দেখাবে
-    $wallet = ORM::for_table('admin_wallet')->where('admin_id', $adminId)->find_one();
-    $w_balance = ($wallet) ? $wallet->balance : 0;
+    WifiZoneWallet::ensureSchema();
+    try {
+        if ($admin['user_type'] == 'SuperAdmin') {
+            $w_balance = ORM::for_table('admin_wallet')->sum('balance') ?: 0;
+            $w_commission = ORM::for_table('admin_wallet')->sum('commission_balance') ?: 0;
+        } else {
+            $wallet = ORM::for_table('admin_wallet')->where('admin_id', $adminId)->find_one();
+            if ($wallet) {
+                $w_balance = $wallet->balance;
+                $w_commission = $wallet->commission_balance;
+            }
+        }
+    } catch (Exception $e) {
+        $w_balance = 0;
+        $w_commission = 0;
+    }
 }
 
-// স্মার্টলি টেমপ্লেটে ডাটা পাঠানো হচ্ছে
 $ui->assign('w_balance', $w_balance);
-
-/* ================= WALLET COMMISSION ================= */
-
-if ($admin['user_type'] == 'SuperAdmin') {
-    $w_commission = ORM::for_table('admin_wallet')->sum('commission_balance') ?: 0;
-} else {
-    $wallet = ORM::for_table('admin_wallet')
-        ->where('admin_id', $adminId)
-        ->find_one();
-
-    $w_commission = ($wallet) ? $wallet->commission_balance : 0;
-}
-
 $ui->assign('w_commission', $w_commission);
 
 /* ========================================================================= */

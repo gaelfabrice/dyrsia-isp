@@ -2,6 +2,38 @@
 
 class WifiZoneWallet
 {
+    public static function ensureSchema()
+    {
+        try {
+            $db = ORM::get_db();
+            if (!$db) {
+                return;
+            }
+            $db->exec("CREATE TABLE IF NOT EXISTS admin_wallet (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                admin_id INT NOT NULL,
+                balance DECIMAL(15,2) DEFAULT 0,
+                commission_balance DECIMAL(15,2) DEFAULT 0,
+                commission_rate DECIMAL(5,2) DEFAULT 10.00,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_admin_id (admin_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $db->exec("CREATE TABLE IF NOT EXISTS admin_wallet_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                admin_id INT NOT NULL,
+                type VARCHAR(50) NOT NULL,
+                old_balance DECIMAL(15,2),
+                amount DECIMAL(15,2),
+                total_balance DECIMAL(15,2),
+                note TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_admin_id (admin_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } catch (Exception $e) {
+            // ignore
+        }
+    }
+
     public static function commissionLimitForRole($role)
     {
         if ($role === 'Agent') {

@@ -123,6 +123,7 @@ if ($currentTenant) {
 }
 try {
     DemoShowcase::ensureAccount();
+    WifiZoneWallet::ensureSchema();
     $admin = Admin::_info();
     if (Impersonate::isActive() && (Impersonate::info()['mode'] ?? '') === 'customer') {
         $admin = null;
