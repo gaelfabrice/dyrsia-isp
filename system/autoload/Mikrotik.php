@@ -187,7 +187,7 @@ class Mikrotik
                         Lang::T('Cannot connect to MikroTik')
                         . ' (' . $endpoint['host'] . ':' . $attempt['port'] . '): '
                         . Lang::T('Invalid API username or password')
-                        . ' (« ' . $user . ' »). '
+                        . '. '
                         . Lang::T('Create or verify a user under System → Users with API rights (group full or api).')
                     );
                 }
@@ -215,7 +215,7 @@ class Mikrotik
                 Lang::T('Cannot connect to MikroTik')
                 . ' (' . $endpoint['host'] . ':' . $endpoint['port'] . '): '
                 . Lang::T('Invalid API username or password')
-                . ' (« ' . $user . ' »). '
+                . '. '
                 . Lang::T('Create or verify a user under System → Users with API rights (group full or api).')
             );
         }
@@ -827,14 +827,71 @@ class Mikrotik
             return trim($message) !== '' ? $message : ('fetch status: ' . $status);
         }
 
-        sleep(2);
-
-        $size = self::getRouterFileSize($client, $dstPath);
-        if ($size > 0) {
-            return null;
+        for ($attempt = 0; $attempt < 6; $attempt++) {
+            usleep(400000);
+            if (self::getRouterFileSize($client, $dstPath) > 0) {
+                return null;
+            }
         }
 
         return 'fichier non créé après fetch';
+    }
+
+    public static function isRouterFetchableUrl($url)
+    {
+        $url = trim((string) $url);
+        if ($url === '') {
+            return false;
+        }
+        $host = parse_url($url, PHP_URL_HOST);
+        if (!$host) {
+            return false;
+        }
+        $host = strtolower($host);
+        if (in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+            return false;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            if (preg_match('/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/', $host)) {
+                return false;
+            }
+        }
+        $port = (int) (parse_url($url, PHP_URL_PORT) ?: 0);
+        if ($port === 8080 || $port === 8000 || $port === 3000) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<int, string> $fetchUrls
+     * @return array<int, string>
+     */
+    public static function filterRouterFetchUrls(array $fetchUrls)
+    {
+        $filtered = [];
+        foreach ($fetchUrls as $url) {
+            if (self::isRouterFetchableUrl($url)) {
+                $filtered[] = $url;
+            }
+        }
+
+        return array_values(array_unique($filtered));
+    }
+
+    /**
+     * @return bool
+     */
+    public static function tryRouterFileWrite($util, $path, $contents)
+    {
+        try {
+            $util->filePutContents($path, null);
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return $util->filePutContents($path, $contents, true);
     }
 
     /**
@@ -870,6 +927,7 @@ class Mikrotik
     public static function deployHotspotLoginHtml($client, $html, array $fetchUrls = [])
     {
         $html = (string) $html;
+        $fetchUrls = self::filterRouterFetchUrls($fetchUrls);
         $paths = ['hotspot/login.html', 'login.html'];
         $errors = [];
         $util = new RouterOS\Util($client);
@@ -877,6 +935,11 @@ class Mikrotik
         self::ensureRouterDirectory($client, 'hotspot');
 
         foreach ($paths as $path) {
+            if (self::tryRouterFileWrite($util, $path, $html)) {
+                return ['ok' => true, 'path' => $path, 'method' => 'api'];
+            }
+            $errors[] = $path . ': écriture API refusée (' . strlen($html) . ' octets)';
+
             foreach ($fetchUrls as $url) {
                 $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
                 if ($fetchError === null) {
@@ -884,18 +947,6 @@ class Mikrotik
                 }
                 $errors[] = $path . ' (fetch): ' . $fetchError;
             }
-
-            try {
-                $util->filePutContents($path, null);
-            } catch (Throwable $e) {
-            } catch (Exception $e) {
-            }
-
-            if ($util->filePutContents($path, $html, true)) {
-                return ['ok' => true, 'path' => $path, 'method' => 'api'];
-            }
-
-            $errors[] = $path . ': écriture API refusée (' . strlen($html) . ' octets, limite ~4–60 Ko)';
         }
 
         return ['ok' => false, 'errors' => $errors];
@@ -913,6 +964,7 @@ class Mikrotik
             return ['ok' => false, 'errors' => ['fichier asset vide']];
         }
 
+        $fetchUrls = self::filterRouterFetchUrls($fetchUrls);
         $paths = ['hotspot/' . $filename, $filename];
         $errors = [];
         $util = new RouterOS\Util($client);
@@ -920,22 +972,16 @@ class Mikrotik
         self::ensureRouterDirectory($client, 'hotspot');
 
         foreach ($paths as $path) {
+            if (self::tryRouterFileWrite($util, $path, $binary)) {
+                return ['ok' => true, 'path' => $path, 'method' => 'api'];
+            }
+
             foreach ($fetchUrls as $url) {
                 $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
                 if ($fetchError === null) {
                     return ['ok' => true, 'path' => $path, 'method' => 'fetch'];
                 }
                 $errors[] = $path . ' (fetch): ' . $fetchError;
-            }
-
-            try {
-                $util->filePutContents($path, null);
-            } catch (Throwable $e) {
-            } catch (Exception $e) {
-            }
-
-            if ($util->filePutContents($path, $binary, true)) {
-                return ['ok' => true, 'path' => $path, 'method' => 'api'];
             }
 
             $errors[] = $path . ': écriture API refusée (' . strlen($binary) . ' octets)';

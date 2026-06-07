@@ -475,6 +475,9 @@ body.theme-light .sub-page .sub-table > thead > tr > th,
 body.theme-light .sub-page .sub-table > tbody > tr > td {
     border-color: var(--sub-line) !important;
 }
+@keyframes subPaySpin {
+    to { transform: rotate(360deg); }
+}
 {/literal}
 </style>
 
@@ -494,11 +497,6 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
         {else}
             <p>Abonnement expiré. Choisissez un forfait et payez pour réactiver votre compte.</p>
         {/if}
-    </div>
-
-    <div id="payStatusBox" class="sub-alert pay{if $pending_payment_id} show{/if}">
-        <strong><i class="fa fa-mobile"></i> Paiement Mobile Money en cours</strong>
-        <p id="payStatusText" style="margin:8px 0 0">Confirmez sur votre téléphone. Vérification automatique…</p>
     </div>
 
     <div class="sub-stats">
@@ -527,7 +525,7 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
     <div class="sub-pricing-wrap">
         <div class="sub-pricing-head">
             <h2>{if $subscription->status eq 'active' || $subscription->status eq 'grace'}Renouveler votre forfait{else}Choisir un forfait{/if}</h2>
-            <p>Paiement sécurisé MTN MoMo / Orange Money via CamPay</p>
+            <p>Paiement sécurisé MTN MoMo / Orange Money via CamPay{if $isp_settings_updated_at} — tarifs SuperAdmin du {$isp_settings_updated_at}{/if}</p>
         </div>
 
         <div class="sub-pricing-grid">
@@ -638,14 +636,38 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
 </div>
 
 <script>
+var WZ_SUB = {
+    businessPrice: {$subscription_settings.business_price|default:0},
+    proPrice: {$subscription_settings.pro_price_per_router|default:0},
+    pendingPaymentId: {$pending_payment_id|default:0},
+    pendingOperator: '{$pending_operator|escape:'javascript'}',
+    pendingUssd: '{$pending_ussd_code|escape:'javascript'}',
+    pendingAmount: {$pending_amount|default:0},
+    pendingPlanLabel: '{$pending_plan_label|escape:'javascript'}',
+    verifyUrl: '{$subscription_verify_url|escape:'javascript'}',
+    payUrl: '{$subscription_pay_url|escape:'javascript'}',
+    csrfToken: '{$csrf_token|escape:'javascript'}',
+    demoAckUrl: '{$subscription_demo_ack_url|escape:'javascript'}',
+    autoCheckout: {if $auto_checkout}true{else}false{/if},
+    checkoutPlan: '{$checkout_plan|escape:'javascript'}',
+    campayOk: {if $campay_configured}true{else}false{/if}
+};
+{literal}
 (function(){
-    var businessPrice = {$subscription_settings.business_price|default:0};
-    var proPrice = {$subscription_settings.pro_price_per_router|default:0};
-    var pendingPaymentId = {$pending_payment_id|default:0};
-    var verifyUrl = '{$subscription_verify_url|escape:'javascript'}';
-    var demoAckUrl = '{$subscription_demo_ack_url|escape:'javascript'}';
-    var autoCheckout = {if $auto_checkout}true{else}false{/if};
-    var checkoutPlan = '{$checkout_plan|escape:'javascript'}';
+    var businessPrice = WZ_SUB.businessPrice;
+    var proPrice = WZ_SUB.proPrice;
+    var pendingPaymentId = WZ_SUB.pendingPaymentId;
+    var pendingOperator = WZ_SUB.pendingOperator;
+    var pendingUssd = WZ_SUB.pendingUssd;
+    var pendingAmount = WZ_SUB.pendingAmount;
+    var pendingPlanLabel = WZ_SUB.pendingPlanLabel;
+    var verifyUrl = WZ_SUB.verifyUrl;
+    var payUrl = WZ_SUB.payUrl;
+    var csrfToken = WZ_SUB.csrfToken;
+    var demoAckUrl = WZ_SUB.demoAckUrl;
+    var autoCheckout = WZ_SUB.autoCheckout;
+    var checkoutPlan = WZ_SUB.checkoutPlan;
+    var PAY_WAIT_SECONDS = 60;
 
     var modal = document.getElementById('campayModal');
     if (modal && modal.parentNode !== document.body) {
@@ -657,6 +679,8 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
     var proRoutersInput = document.getElementById('proRoutersInput');
     var amountPreview = document.getElementById('campayAmountPreview');
     var phoneInput = document.getElementById('campayPhone');
+    var payForm = document.getElementById('campayPayForm');
+    var payCountdownTimer = null;
 
     function formatAmount(n){ return (n||0).toLocaleString('fr-FR') + ' F CFA'; }
     function updateAmount(){
@@ -671,15 +695,113 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
         document.getElementById('campayModalTitle').textContent = plan === 'pro' ? 'Payer — Forfait Pro' : 'Payer — Forfait Business';
         updateAmount();
         modal.classList.add('show');
+        modal.setAttribute('aria-hidden', 'false');
         document.body.style.overflow = 'hidden';
         phoneInput.focus();
     }
     function closeModal(){
+        if (modal.contains(document.activeElement)) {
+            document.activeElement.blur();
+        }
         modal.classList.remove('show');
+        modal.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
     }
 
-    var campayOk = {if $campay_configured}true{else}false{/if};
+    function buildUssdWaitHtml(planLabel, amount, operator, ussd, secondsLeft) {
+        return '<div style="text-align:center;padding:4px 2px">' +
+            '<div style="width:58px;height:58px;margin:0 auto 16px;border:4px solid rgba(16,185,129,.18);border-top-color:#10b981;border-radius:50%;animation:subPaySpin 1s linear infinite"></div>' +
+            '<p style="font-size:15px;line-height:1.5;margin:0 0 8px"><strong>Validez la transaction sur votre téléphone</strong></p>' +
+            '<p style="font-size:14px;color:#64748b;margin:0 0 10px">' + (planLabel || 'Forfait') + ' — <strong>' + formatAmount(amount) + '</strong></p>' +
+            '<div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:14px;padding:14px;margin:12px 0;text-align:left;font-size:14px;line-height:1.55">' +
+            '📲 Une notification USSD va s\'afficher' + (operator ? ' (<strong>' + operator + '</strong>)' : '') + '.<br>Confirmez avec votre <strong>code PIN</strong>.' +
+            (ussd ? '<br><br>Sinon composez : <strong style="color:#10b981;font-size:20px">' + ussd + '</strong>' : '') +
+            '</div>' +
+            '<p id="subPayCountdown" style="font-size:13px;color:#64748b;margin:12px 0 0">Temps restant : ' + secondsLeft + ' secondes…</p>' +
+            '<p style="font-size:12px;color:#94a3b8;margin:8px 0 0">Ne fermez pas cette fenêtre pendant la validation.</p></div>';
+    }
+
+    function clearPayCountdown() {
+        if (payCountdownTimer) { clearInterval(payCountdownTimer); payCountdownTimer = null; }
+    }
+
+    function pollSubscriptionPayment(paymentId, maxSeconds) {
+        var deadline = Date.now() + (maxSeconds * 1000);
+        return new Promise(function(resolve) {
+            function tick() {
+                fetch(verifyUrl + '&payment_id=' + paymentId, { credentials: 'same-origin' })
+                    .then(function(r){ return r.json(); })
+                    .then(function(j){
+                        if (j.ok) {
+                            resolve({ status: 'paid', message: j.message || 'Abonnement activé avec succès !' });
+                            return;
+                        }
+                        if (!j.pending) {
+                            resolve({ status: 'failed', message: j.message || 'Paiement échoué.' });
+                            return;
+                        }
+                        if (Date.now() >= deadline) {
+                            resolve({ status: 'timeout', message: 'Délai dépassé. Si vous avez validé sur votre téléphone, attendez 1 minute puis rechargez la page.' });
+                            return;
+                        }
+                        setTimeout(tick, 3000);
+                    })
+                    .catch(function(){
+                        if (Date.now() >= deadline) {
+                            resolve({ status: 'timeout', message: 'Impossible de vérifier le paiement. Réessayez dans un instant.' });
+                        } else {
+                            setTimeout(tick, 3000);
+                        }
+                    });
+            }
+            tick();
+        });
+    }
+
+    function openPaymentWaitPopup(paymentId, planLabel, amount, operator, ussd) {
+        if (typeof Swal === 'undefined') return;
+        var secondsLeft = PAY_WAIT_SECONDS;
+        Swal.fire({
+            title: 'Paiement en cours…',
+            html: buildUssdWaitHtml(planLabel, amount, operator, ussd, secondsLeft),
+            allowOutsideClick: false,
+            allowEscapeKey: false,
+            showConfirmButton: false,
+            didOpen: function() {
+                payCountdownTimer = setInterval(function() {
+                    secondsLeft -= 1;
+                    var el = document.getElementById('subPayCountdown');
+                    if (el) {
+                        el.textContent = secondsLeft > 0
+                            ? ('Temps restant : ' + secondsLeft + ' secondes…')
+                            : 'Vérification finale…';
+                    }
+                    if (secondsLeft <= 0) clearPayCountdown();
+                }, 1000);
+            },
+            willClose: clearPayCountdown
+        });
+
+        pollSubscriptionPayment(paymentId, PAY_WAIT_SECONDS).then(function(result) {
+            clearPayCountdown();
+            if (result.status === 'paid') {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Paiement confirmé',
+                    text: result.message,
+                    confirmButtonText: 'OK'
+                }).then(function(){ window.location.href = window.location.pathname + '?_route=admin/subscription'; });
+                return;
+            }
+            Swal.fire({
+                icon: result.status === 'timeout' ? 'warning' : 'error',
+                title: result.status === 'timeout' ? 'En attente' : 'Paiement échoué',
+                text: result.message
+            });
+        });
+    }
+
+    var campayOk = WZ_SUB.campayOk;
     document.querySelectorAll('[data-plan]').forEach(function(btn){
         btn.addEventListener('click', function(e){
             e.preventDefault();
@@ -710,47 +832,64 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
         if (e.key === 'Escape' && modal.classList.contains('show')) closeModal();
     });
     if(proRoutersInput) proRoutersInput.addEventListener('input', updateAmount);
-    document.getElementById('campayPayForm').addEventListener('submit', function(){
-        if(planInput.value === 'pro' && proRoutersInput) {
-            routersInput.value = Math.max(1, parseInt(proRoutersInput.value, 10) || 1);
-        }
-    });
     if(phoneInput) phoneInput.addEventListener('input', function(){
         phoneInput.value = phoneInput.value.replace(/\D/g,'').slice(0,9);
     });
 
-    function pollPayment(){
-        if(!pendingPaymentId) return;
-        var box = document.getElementById('payStatusBox');
-        var txt = document.getElementById('payStatusText');
-        box.classList.add('show');
-        var tries = 0;
-        var timer = setInterval(function(){
-            tries++;
-            fetch(verifyUrl + '&payment_id=' + pendingPaymentId, { credentials: 'same-origin' })
-                .then(function(r){ return r.json(); })
-                .then(function(j){
-                    if(j.ok){
-                        clearInterval(timer);
-                        txt.textContent = j.message || 'Abonnement activé avec succès !';
-                        box.style.background = 'rgba(34,197,94,.15)';
-                        box.style.borderColor = 'rgba(34,197,94,.35)';
-                        box.style.color = '#bbf7d0';
-                        setTimeout(function(){ window.location.href = window.location.pathname + '?_route=admin/subscription'; }, 2500);
-                    } else if(!j.pending || tries > 40){
-                        if(!j.pending){
-                            clearInterval(timer);
-                            txt.textContent = j.message || 'Paiement échoué.';
-                            box.style.background = 'rgba(239,68,68,.12)';
-                            box.style.borderColor = 'rgba(239,68,68,.35)';
-                            box.style.color = '#fecaca';
-                        }
-                    }
+    if (payForm) {
+        payForm.addEventListener('submit', function(e){
+            e.preventDefault();
+            if(planInput.value === 'pro' && proRoutersInput) {
+                routersInput.value = Math.max(1, parseInt(proRoutersInput.value, 10) || 1);
+            }
+            var phone = (phoneInput.value || '').replace(/\D/g,'').slice(0,9);
+            if (phone.length < 9) {
+                alert('Entrez un numéro valide (9 chiffres).');
+                return;
+            }
+            var plan = planInput.value;
+            var routers = plan === 'pro' ? Math.max(1, parseInt(proRoutersInput.value,10)||1) : 1;
+            var amount = plan === 'pro' ? proPrice * routers : businessPrice;
+            var planLabel = plan === 'pro' ? 'Forfait Pro' : 'Forfait Business';
+            var submitBtn = document.getElementById('campaySubmitBtn');
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi…'; }
+
+            var body = new URLSearchParams();
+            body.set('ajax', '1');
+            body.set('csrf_token', csrfToken);
+            body.set('plan_type', plan);
+            body.set('routers_count', String(routers));
+            body.set('phone', phone);
+
+            fetch(payUrl, { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: body.toString() })
+                .then(function(r){ return r.text(); })
+                .then(function(text){
+                    var res;
+                    try { res = JSON.parse(text); } catch(err) { throw new Error('Réponse serveur invalide'); }
+                    if (!res.ok) throw new Error(res.message || 'Paiement refusé');
+                    closeModal();
+                    try {
+                        var u = new URL(window.location.href);
+                        u.searchParams.set('_route', 'admin/subscription');
+                        u.searchParams.set('payment_id', String(res.payment_id));
+                        window.history.replaceState({}, '', u.pathname + '?' + u.searchParams.toString());
+                    } catch (ignore) {}
+                    openPaymentWaitPopup(res.payment_id, res.plan_label || planLabel, res.amount || amount, res.operator || '', res.ussd || '');
                 })
-                .catch(function(){});
-        }, 3000);
+                .catch(function(err){
+                    alert(err.message || 'Erreur réseau');
+                })
+                .finally(function(){
+                    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="fa fa-mobile"></i> Payer'; }
+                });
+        });
     }
-    pollPayment();
+
+    if (pendingPaymentId > 0 && typeof Swal !== 'undefined') {
+        setTimeout(function(){
+            openPaymentWaitPopup(pendingPaymentId, pendingPlanLabel || 'Forfait', pendingAmount, pendingOperator, pendingUssd);
+        }, 300);
+    }
 
     if(autoCheckout && checkoutPlan){
         setTimeout(function(){ openModal(checkoutPlan); }, 400);
@@ -758,6 +897,7 @@ body.theme-light .sub-page .sub-table > tbody > tr > td {
         if(target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 })();
+{/literal}
 </script>
 
 {include file="sections/footer.tpl"}

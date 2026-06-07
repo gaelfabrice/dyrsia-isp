@@ -52,6 +52,8 @@ function campay_save_config()
     }
 
     _log('[' . $admin['username'] . ']: CamPay ' . Lang::T('Settings Saved Successfully'), $admin['user_type']);
+    MobileMoneyGateway::deactivateOtherMobile('campay');
+    MobileMoneyGateway::syncHotspotCaptivePaymentUi();
     r2(U . 'paymentgateway/campay', 's', Lang::T('Settings Saved Successfully'));
 }
 
@@ -416,16 +418,17 @@ function campay_get_status($transaction, $user)
     }
 }
 
-function campay_admin_subscription_collect($ctx, $admin, $phone)
+function campay_admin_subscription_collect_data($ctx, $admin, $phone)
 {
     global $config;
 
     campay_validate_config();
 
+    $paymentId = (int) $ctx['payment']->id;
     $token = campay_get_token();
     if (!$token) {
-        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
-        r2(getUrl('admin/subscription'), 'e', Lang::T('Payment gateway authentication failed. Please try again.'));
+        AdminSubscription::markPaymentFailed($paymentId);
+        return ['ok' => false, 'message' => Lang::T('Payment gateway authentication failed. Please try again.')];
     }
 
     $baseUrl = ($config['campay_environment'] === 'prod')
@@ -441,8 +444,8 @@ function campay_admin_subscription_collect($ctx, $admin, $phone)
 
     $amountError = campay_validate_collect_amount($phone, $ctx['amount']);
     if ($amountError) {
-        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
-        r2(getUrl('admin/subscription'), 'e', $amountError);
+        AdminSubscription::markPaymentFailed($paymentId);
+        return ['ok' => false, 'message' => $amountError];
     }
 
     $payload = [
@@ -472,24 +475,52 @@ function campay_admin_subscription_collect($ctx, $admin, $phone)
     curl_close($ch);
 
     if ($curlError) {
-        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
-        r2(getUrl('admin/subscription'), 'e', Lang::T('Connection error. Please try again.'));
+        AdminSubscription::markPaymentFailed($paymentId);
+        return ['ok' => false, 'message' => Lang::T('Connection error. Please try again.')];
     }
 
     $result = json_decode($response, true);
     if ($httpCode !== 200 || empty($result['reference'])) {
-        AdminSubscription::markPaymentFailed((int) $ctx['payment']->id);
+        AdminSubscription::markPaymentFailed($paymentId);
         $errorMsg = $result['message'] ?? $result['detail'] ?? $response;
-        r2(getUrl('admin/subscription'), 'e', Lang::T('Failed to initiate payment.') . ' ' . $errorMsg);
+        return ['ok' => false, 'message' => Lang::T('Failed to initiate payment.') . ' ' . $errorMsg];
     }
 
-    AdminSubscription::setCampayReference((int) $ctx['payment']->id, $result['reference']);
-    r2(
-        getUrl('admin/subscription') . '&payment_id=' . (int) $ctx['payment']->id,
-        'i',
-        Lang::T('Payment request sent to your phone.') . ' ' .
-        Lang::T('Please confirm the payment on your mobile device.')
-    );
+    AdminSubscription::setCampayReference($paymentId, $result['reference']);
+
+    $operator = (string) ($result['operator'] ?? '');
+    $ussd = (string) ($result['ussd_code'] ?? '');
+    if ($operator === '' || $ussd === '') {
+        $info = MobileMoneyGateway::operatorInfoForPhone($phone, 'campay');
+        if ($operator === '') {
+            $operator = $info['operator'];
+        }
+        if ($ussd === '') {
+            $ussd = $info['ussd'];
+        }
+    }
+
+    MobileMoneyGateway::rememberSubscriptionUssd($paymentId, $operator, $ussd);
+
+    return [
+        'ok' => true,
+        'payment_id' => $paymentId,
+        'operator' => $operator,
+        'ussd' => $ussd,
+        'amount' => (float) $ctx['amount'],
+        'plan_label' => (string) $ctx['plan_label'],
+        'phone' => $phone,
+    ];
+}
+
+function campay_admin_subscription_collect($ctx, $admin, $phone)
+{
+    $result = campay_admin_subscription_collect_data($ctx, $admin, $phone);
+    if (!$result['ok']) {
+        r2(getUrl('admin/subscription'), 'e', $result['message']);
+    }
+    MobileMoneyGateway::rememberSubscriptionUssd((int) $result['payment_id'], $result['operator'], $result['ussd']);
+    r2(getUrl('admin/subscription') . '&payment_id=' . (int) $result['payment_id']);
 }
 
 function campay_admin_subscription_check_status($paymentId, $adminId)

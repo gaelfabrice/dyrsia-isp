@@ -44,7 +44,7 @@
             color: var(--muted); margin-bottom: 8px;
         }
         .field { margin-bottom: 18px; }
-        input[type="text"], input[type="email"] {
+        input[type="text"], input[type="email"], select {
             width: 100%; padding: 12px 14px;
             border-radius: 10px; border: 1px solid var(--line);
             background: #0f172a; color: var(--text); font-size: 15px;
@@ -106,11 +106,23 @@
                     <label for="business_name">ISP / Business Name</label>
                     <input type="text" id="business_name" name="business_name" placeholder="e.g. Mombasa Fiber" required maxlength="150">
                 </div>
+                <div class="field">
+                    <label for="country_code">Pays / Mobile Money</label>
+                    <select id="country_code" name="country_code" required>
+                        <option value="">— Choisir un pays —</option>
+                        {foreach $provision_countries as $country}
+                            <option value="{$country.code}">{$country.name} — {$country.payment_label}</option>
+                        {/foreach}
+                    </select>
+                    <p style="margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.45">
+                        Seuls le Gabon (MyPVit) et le Cameroun (CamPay) disposent d'une API Mobile Money active.
+                    </p>
+                </div>
                 <div class="row2">
                     <div class="field">
                         <label for="subdomain">Desired Subdomain</label>
                         <div class="subdomain-wrap">
-                            <input type="text" id="subdomain" name="subdomain" placeholder="wizfiber" pattern="[a-zA-Z0-9][a-zA-Z0-9-]*" required maxlength="63">
+                            <input type="text" id="subdomain" name="subdomain" placeholder="wizfiber" pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*" required maxlength="63">
                             <span class="suffix">{$tenant_domain_suffix}</span>
                         </div>
                     </div>
@@ -145,25 +157,63 @@
                 this.value = this.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
             });
         }
+        function parseJsonResponse(text) {
+            var t = (text || '').trim();
+            if (!t) return null;
+            try { return JSON.parse(t); } catch (e1) {}
+            var start = t.indexOf('{');
+            var end = t.lastIndexOf('}');
+            if (start >= 0 && end > start) {
+                try { return JSON.parse(t.slice(start, end + 1)); } catch (e2) {}
+            }
+            return null;
+        }
+        function serverErrorMessage(response, text) {
+            if (response && (response.status === 502 || response.status === 504 || response.status === 503)) {
+                return 'Le serveur web a expiré (HTTP ' + response.status + '). Réessayez dans une minute — l\'instance a peut-être quand même été créée.';
+            }
+            if (response && response.status >= 500) {
+                return 'Erreur serveur (HTTP ' + response.status + '). Réessayez ou contactez le support.';
+            }
+            if (text && /<!DOCTYPE|<html/i.test(text)) {
+                return 'Le serveur a renvoyé une page HTML au lieu de JSON. Réessayez — si le problème persiste, contactez le support.';
+            }
+            return 'Réponse serveur invalide. Réessayez ou contactez le support.';
+        }
         if (form && btn) {
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
+                var country = document.getElementById('country_code');
+                if (country && !country.value) {
+                    if (status) status.textContent = 'Veuillez choisir un pays avec API Mobile Money (Gabon ou Cameroun).';
+                    return;
+                }
                 btn.disabled = true;
                 var label = btn.querySelector('.btn-label');
                 if (label) label.textContent = 'Provisioning Environment… ◯';
-                if (status) status.textContent = 'Cloning Database & Configuring Security…';
+                if (status) status.textContent = 'Création en cours… Cela peut prendre jusqu\'à 60 secondes.';
                 var data = new FormData(form);
                 data.append('ajax', '1');
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function(){ controller.abort(); }, 120000);
                 fetch(form.action, {
                     method: 'POST',
                     body: data,
-                    credentials: 'same-origin'
+                    credentials: 'same-origin',
+                    signal: controller.signal
                 }).then(function (response) {
-                    return response.json();
+                    return response.text().then(function (text) {
+                        var res = parseJsonResponse(text);
+                        if (!res) {
+                            throw new Error(serverErrorMessage(response, text));
+                        }
+                        return res;
+                    });
                 }).then(function (res) {
+                    clearTimeout(timeoutId);
                     if (res.status === 'success') {
                         if (status) {
-                            status.innerHTML = 'Instance created. Username: <strong>' + res.username + '</strong> Password: <strong>' + res.password + '</strong><br><a style="color:#93c5fd" href="' + res.redirect + '">Open dashboard</a>';
+                            status.innerHTML = 'Instance créée. Username: <strong>' + res.username + '</strong> Password: <strong>' + res.password + '</strong><br><a style="color:#93c5fd" href="' + res.redirect + '">Ouvrir le dashboard</a>';
                         }
                         window.location.href = res.redirect;
                         return;
@@ -171,10 +221,15 @@
                     btn.disabled = false;
                     if (label) label.textContent = 'Create Environment →';
                     if (status) status.textContent = res.message || 'Provisioning failed.';
-                }).catch(function () {
+                }).catch(function (err) {
+                    clearTimeout(timeoutId);
                     btn.disabled = false;
                     if (label) label.textContent = 'Create Environment →';
-                    if (status) status.textContent = 'Provisioning failed. Please check the server response and try again.';
+                    if (status) {
+                        status.textContent = (err && err.name === 'AbortError')
+                            ? 'Délai dépassé (plus de 2 minutes). Le serveur met du temps à créer l\'instance — réessayez avec un autre sous-domaine.'
+                            : (err.message || 'Provisioning failed. Please check the server response and try again.');
+                    }
                 });
             });
         }

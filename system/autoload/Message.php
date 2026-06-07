@@ -153,6 +153,7 @@ class Message
             }
             $mail->Host = $config['smtp_host'];
             $mail->SMTPAuth = true;
+            $mail->Timeout = 15;
             $mail->Username = $config['smtp_user'];
             $mail->Password = $config['smtp_pass'];
             $mail->SMTPSecure = $config['smtp_ssltls'];

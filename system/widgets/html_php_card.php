@@ -13,7 +13,7 @@ class html_php_card
         }catch(Throwable $e){
             echo $e->getMessage();
             echo "<br>";
-            echo $e->getTraceAsString();
+            echo WifiZoneSecurity::safeTraceString($e);
         }
         $content = ob_get_clean();
         $ui->assign('card_body', $content);

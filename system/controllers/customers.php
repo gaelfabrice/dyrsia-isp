@@ -1084,9 +1084,9 @@ if ($customer) {
     
     $order_pos = [
         'username' => 0,
-        'created_at' => 8,
+        'created_at' => 6,
         'balance' => 3,
-        'status' => 7
+        'status' => 5
     ];
 
     // পেজিনেশনের জন্য URL তৈরি
@@ -1213,6 +1213,20 @@ if ($f_status == 'Active') {
         DemoShowcase::injectCustomersList($ui, 30, $append_url);
     } else {
         $d = Paginator::findMany($query, ['search' => $search], 30, $append_url);
+        foreach ($d as $k => $customer) {
+            $contactPhone = trim((string) ($customer['phonenumber'] ?? ''));
+            if ($contactPhone === '') {
+                $payment = ORM::for_table('tbl_hotspot_payments')
+                    ->where('transaction_status', 'paid')
+                    ->where('voucher_code', $customer['username'])
+                    ->order_by_desc('payment_date')
+                    ->find_one();
+                if ($payment && trim((string) $payment->phone_number) !== '') {
+                    $contactPhone = trim((string) $payment->phone_number);
+                }
+            }
+            $d[$k]['contact_phone'] = $contactPhone;
+        }
         $ui->assign('d', $d);
     }
     $ui->assign('filter', $f_status); 

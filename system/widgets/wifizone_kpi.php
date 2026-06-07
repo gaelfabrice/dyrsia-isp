@@ -12,7 +12,6 @@ class wifizone_kpi
                 'sales_today' => $s['iday'],
                 'sales_month' => $s['imonth'],
                 'routers_offline' => max(0, $s['routers_total'] - $s['routers_connected']),
-                'open_tickets' => $s['open_tickets'],
             ]);
         }
         $cacheKey = 'kpi_' . ($admin['id'] ?? 0) . '_' . date('Y-m-d-H');
@@ -39,7 +38,6 @@ class wifizone_kpi
             'sales_today' => $salesTodayQ->sum('price') ?: 0,
             'sales_month' => $salesMonthQ->sum('price') ?: 0,
             'routers_offline' => 0,
-            'open_tickets' => 0,
         ];
         $routers = $routersQ->find_many();
         foreach ($routers as $r) {
@@ -53,24 +51,6 @@ class wifizone_kpi
                 fclose($fp);
             }
         }
-        try {
-            $ticketsQ = ORM::for_table('tbl_support_tickets')->where('status', 'open');
-            if ($isAdmin) {
-                $customerIds = ORM::for_table('tbl_customers')
-                    ->where('created_by', $adminId)
-                    ->select('id')
-                    ->find_array();
-                $ids = array_column($customerIds, 'id');
-                if (empty($ids)) {
-                    $kpi['open_tickets'] = 0;
-                } else {
-                    $kpi['open_tickets'] = $ticketsQ->where_in('userid', $ids)->count();
-                }
-            } else {
-                $kpi['open_tickets'] = $ticketsQ->count();
-            }
-        } catch (Exception $e) {
-        }
         WifiZoneCache::set($cacheKey, $kpi, 300);
         return $this->render($kpi);
     }
@@ -79,7 +59,7 @@ class wifizone_kpi
     {
         $cur = WifiZoneCore::config('currency_code', 'USD');
         $box = function ($color, $icon, $label, $value) {
-            return '<div class="col-md-3 col-sm-6"><div class="info-box ' . $color . '">'
+            return '<div class="col-md-4 col-sm-6"><div class="info-box ' . $color . '">'
                 . '<span class="info-box-icon"><i class="' . $icon . '"></i></span>'
                 . '<div class="info-box-content"><span class="info-box-text">' . htmlspecialchars($label) . '</span>'
                 . '<span class="info-box-number">' . htmlspecialchars((string) $value) . '</span></div></div></div>';
@@ -88,7 +68,6 @@ class wifizone_kpi
             . $box('bg-aqua', 'ion ion-person', Lang::T('Active_Customers'), (int) $kpi['active_customers'])
             . $box('bg-green', 'ion ion-cash', Lang::T('Sales Today'), $cur . ' ' . number_format($kpi['sales_today'], 2))
             . $box('bg-yellow', 'ion ion-wifi', Lang::T('Routers_Offline'), (int) $kpi['routers_offline'])
-            . $box('bg-red', 'ion ion-help-buoy', Lang::T('Open Tickets'), (int) $kpi['open_tickets'])
             . '</div></div>';
     }
 }

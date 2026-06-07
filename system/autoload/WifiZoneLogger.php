@@ -5,7 +5,7 @@ class WifiZoneLogger
     public static function logPluginError($plugin, Throwable $e)
     {
         global $UPLOAD_PATH, $config;
-        $line = date('Y-m-d H:i:s') . " [$plugin] " . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n---\n";
+        $line = date('Y-m-d H:i:s') . " [$plugin] " . WifiZoneSecurity::formatExceptionForLog($e) . "\n---\n";
         $file = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'plugin_errors.log';
         @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
 

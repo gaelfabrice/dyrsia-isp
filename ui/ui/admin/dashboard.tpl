@@ -1,109 +1,313 @@
 {include file="sections/header.tpl"}
 
-{function showWidget pos=0}
-    {foreach $widgets as $w}
-        {if $w['position'] == $pos}
-            {$w['content']}
-        {/if}
-    {/foreach}
-{/function}
-
-{assign dtipe value="dashboard_`$tipeUser`"}
-
-<div class="wz-orbit-page">
-    <div class="wz-orbit-hero">
-        <div class="wz-orbit-hero-copy">
-            <span class="wz-orbit-kicker">{Lang::T('Command Center')}</span>
-            <h2>{Lang::T('Dashboard')}</h2>
+<div class="wz-cc">
+    <div class="wz-cc-top">
+        <div>
+            <h1>{Lang::T('Command Center')}</h1>
             <p>{Lang::T('A clear, fast and ergonomic control room for customers, services, network and business activity.')}</p>
+            <div class="wz-cc-actions">
+                <a href="{Text::url('customers/add')}" class="btn btn-primary btn-sm"><i class="fa fa-user-plus"></i> {Lang::T('New Customer')}</a>
+                <a href="{Text::url('plan/recharge')}" class="btn btn-default btn-sm"><i class="fa fa-bolt"></i> {Lang::T('Recharge')}</a>
+                {if !$admin_subscription || $admin_subscription->status neq 'trial'}
+                <a href="{Text::url('routers/add')}" class="btn btn-default btn-sm"><i class="fa fa-server"></i> {Lang::T('Add Router')}</a>
+                {/if}
+            </div>
         </div>
-        <div class="wz-orbit-actions">
-            <span class="btn btn-default"><i class="fa fa-calendar"></i> {$start_date} &nbsp; {$current_date}</span>
-            {if !$admin_subscription || $admin_subscription->status neq 'trial'}
-                <a href="{Text::url('routers/add')}" class="btn btn-default"><i class="fa fa-server"></i> {Lang::T('Add Router')}</a>
-            {/if}
-            <a href="{Text::url('customers/add')}" class="btn btn-primary"><i class="fa fa-user-plus"></i> {Lang::T('New Customer')}</a>
-            <a href="{Text::url('plan/recharge')}" class="btn btn-default"><i class="fa fa-bolt"></i> {Lang::T('Recharge')}</a>
+        <div class="wz-cc-date">
+            <i class="fa fa-calendar"></i>
+            <span>{$start_date|date_format:"%d %b %Y"} — {$end_date|date_format:"%d %b %Y"}</span>
         </div>
     </div>
 
     {if $demo_showcase_active|default:false}
-        <div class="alert alert-info" style="margin:18px 0;border-radius:12px;">
-            <strong><i class="fa fa-eye"></i> Mode démonstration</strong> — Données fictives générées pour la présentation. Aucun routeur réel n'est synchronisé.
-        </div>
+    <div class="alert alert-info" style="border-radius:12px;margin-bottom:16px">
+        <strong><i class="fa fa-eye"></i> Mode démonstration</strong> — Données fictives pour la présentation.
+    </div>
+    {/if}
+
+    {if $cron_stale|default:false}
+    <div class="wz-cc-warn">
+        <i class="fa fa-exclamation-triangle"></i>
+        {Lang::T('Cron has not run for over 1 hour. Please check your setup.')}
+    </div>
     {/if}
 
     {if $admin_subscription}
-        <style>
-            {literal}
-            .subscription-status-card{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;border-radius:14px;margin:18px 0;border:1px solid rgba(148,163,184,.25);box-shadow:0 8px 22px rgba(15,23,42,.08)}
-            .subscription-status-card.trial{background:#fff7ed;border-color:#fed7aa;color:#7c2d12}
-            .subscription-status-card.active{background:#ecfdf5;border-color:#bbf7d0;color:#064e3b}
-            .subscription-status-card.grace{background:#fffbeb;border-color:#fde68a;color:#78350f}
-            .subscription-status-card.expired{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
-            .subscription-badge{display:inline-block;padding:5px 12px;border-radius:999px;font-weight:800;font-size:12px;text-transform:uppercase;background:rgba(0,0,0,.08)}
-            .subscription-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-            @media(max-width:767px){.subscription-status-card{display:block}.subscription-actions{margin-top:12px}}
-            {/literal}
-        </style>
-        <div class="subscription-status-card {$admin_subscription->status}">
+    <div class="wz-cc-card wz-cc-subscription" style="margin-bottom:16px;border-color:{if $admin_subscription->status eq 'active'}rgba(34,197,94,.35){elseif $admin_subscription->status eq 'trial'}rgba(249,115,22,.35){else}rgba(239,68,68,.35){/if}">
+        <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center">
             <div>
-                <span class="subscription-badge">
-                    {if $admin_subscription->status eq 'trial'}Trial{elseif $admin_subscription->status eq 'active'}Active{elseif $admin_subscription->status eq 'grace'}Grace{else}Expired{/if}
-                </span>
-                <div style="margin-top:8px">
-            {if $admin_subscription->status eq 'trial'}
-                <strong>Mode Démo ({$admin_demo_trial_days|default:5} jours)</strong> — {$admin_subscription_days_remaining} jour(s) restant(s). Ajout de routeur non autorisé pendant la période d'essai.
-            {elseif $admin_subscription->status eq 'active'}
-                <strong>Abonnement actif</strong> — Plan {$admin_subscription->plan_type|upper}, expire le {$admin_subscription->subscription_end}.
-            {elseif $admin_subscription->status eq 'grace'}
-                <strong>Période de grâce</strong> — expire le {$admin_subscription->grace_end}.
-            {else}
-                <strong>Abonnement expiré</strong> — veuillez souscrire pour activer le compte complet.
-            {/if}
-                </div>
+                <strong>{if $admin_subscription->status eq 'trial'}Mode Démo{elseif $admin_subscription->status eq 'active'}Abonnement actif{else}Abonnement{/if}</strong>
+                {if $admin_subscription->status eq 'trial'}
+                — {$admin_subscription_days_remaining} jour(s) restant(s)
+                {/if}
             </div>
-            <div class="subscription-actions">
-                <a href="{Text::url('admin/subscription')}" class="btn btn-primary"><i class="fa fa-credit-card"></i> Payer / Souscrire</a>
-            </div>
+            <a href="{Text::url('admin/subscription')}" class="btn btn-primary btn-sm"><i class="fa fa-credit-card"></i> Payer / Souscrire</a>
         </div>
+    </div>
     {/if}
 
-    {assign rows explode(".", $_c[$dtipe])}
-    {assign pos 1}
-    {foreach $rows as $cols}
-        {if $cols == 12}
-            <div class="row wz-orbit-row">
-                <div class="col-md-12 wz-orbit-col">
-                    {showWidget widgets=$widgets pos=$pos}
+    <div class="wz-kpi-grid">
+        <div class="wz-kpi-card">
+            <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Administrators')}</span><div class="wz-kpi-icon"><i class="fa fa-user-secret"></i></div></div>
+            <div class="wz-kpi-value">{$total_admin|default:0}</div>
+            <div class="wz-kpi-sub">{Lang::T('Total administrators')}</div>
+        </div>
+        <div class="wz-kpi-card">
+            <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Active Customers')}</span><div class="wz-kpi-icon"><i class="fa fa-user-check"></i></div></div>
+            <div class="wz-kpi-value">{$active_customers|default:0}</div>
+            <div class="wz-kpi-sub">
+                {if ($customer_growth|default:0) >= 0}
+                <span class="wz-trend-up"><i class="fa fa-arrow-up"></i> +{$customer_growth|default:0} vs last month</span>
+                {else}
+                <span class="wz-trend-down"><i class="fa fa-arrow-down"></i> {$customer_growth|default:0} vs last month</span>
+                {/if}
+            </div>
+        </div>
+        <div class="wz-kpi-card">
+            <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Sales Today')}</span><div class="wz-kpi-icon"><i class="fa fa-shopping-cart"></i></div></div>
+            <div class="wz-kpi-value">{$currency|default:'XAF'} {$sales_today|default:0|number_format:0}</div>
+            <div class="wz-kpi-sub">{Lang::T('Daily revenue')}</div>
+        </div>
+        <div class="wz-kpi-card">
+            <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Network Status')}</span><div class="wz-kpi-icon"><i class="fa fa-server"></i></div></div>
+            <div class="wz-kpi-value">{$offline_routers|default:0}</div>
+            <div class="wz-kpi-sub">
+                {Lang::T('Routers offline')} ·
+                {if ($offline_routers|default:0) == 0}{Lang::T('All operational')}{else}{Lang::T('Check connection')}{/if}
+            </div>
+        </div>
+    </div>
+
+    <div class="wz-cc-grid-2">
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-wifi"></i> Services Status</div>
+            <div class="wz-service-row">
+                <span><i class="fa fa-wifi"></i> Hotspot</span>
+                <span>
+                    <span class="wz-badge-active">Active: {$hotspot_active|default:0}</span>
+                    <span class="wz-badge-expired">Expired: {$hotspot_expired|default:0}</span>
+                </span>
+            </div>
+            <div class="wz-service-row">
+                <span><i class="fa fa-sitemap"></i> PPPoE</span>
+                <span>
+                    <span class="wz-badge-active">Active: {$pppoe_active|default:0}</span>
+                    <span class="wz-badge-expired">Expired: {$pppoe_expired|default:0}</span>
+                </span>
+            </div>
+            <div class="wz-service-row">
+                <span><i class="fa fa-bar-chart"></i> Total Clients</span>
+                <span>
+                    <span class="wz-badge-active">Active: {$total_active|default:0}</span>
+                    <span class="wz-badge-expired">Expired: {$total_expired|default:0}</span>
+                </span>
+            </div>
+            <div class="wz-progress"><div class="wz-progress-fill" style="width:{$network_usage|default:0}%"></div></div>
+            <div class="wz-kpi-sub" style="margin-top:8px">{Lang::T('Network usage')}: {$network_usage|default:0}% {Lang::T('of capacity')}</div>
+        </div>
+
+        {if $_c['disable_voucher'] != 'yes'}
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-ticket"></i> {Lang::T('Vouchers')} Stock</div>
+            {if $voucher_stock|@count > 0}
+            <table class="wz-voucher-table">
+                <thead><tr><th>{Lang::T('Package Name')}</th><th>Unused</th><th>Used</th><th>Total</th></tr></thead>
+                <tbody>
+                    {foreach $voucher_stock as $v}
+                    <tr>
+                        <td>{$v.package|escape}</td>
+                        <td>{$v.unused}</td>
+                        <td>{$v.used}</td>
+                        <td>{$v.unused + $v.used}</td>
+                    </tr>
+                    {/foreach}
+                    <tr class="wz-voucher-total">
+                        <td><strong>{Lang::T('Total Stock')}</strong></td>
+                        <td><strong>{$total_unused|default:0}</strong></td>
+                        <td><strong>{$total_used|default:0}</strong></td>
+                        <td><strong>{($total_unused|default:0)+($total_used|default:0)}</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+            {else}
+            <p class="wz-cc-empty">{Lang::T('No vouchers available')}</p>
+            {/if}
+        </div>
+        {/if}
+    </div>
+
+    <div class="wz-cc-grid-2">
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-link"></i> Hotspot MAC Update</div>
+            <div class="wz-mac-form">
+                <input type="text" id="macAddress" class="wz-cc-input" placeholder="MAC Address (AA:BB:CC:DD:EE:FF)">
+                <input type="text" id="macUsername" class="wz-cc-input" placeholder="{Lang::T('Usernames')}">
+                <button type="button" id="updateMacBtn" class="wz-cc-btn"><i class="fa fa-save"></i> Update MAC</button>
+            </div>
+            <div id="macResult" class="wz-mac-result"></div>
+        </div>
+
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-sitemap"></i> {Lang::T('Network')}</div>
+            <div class="wz-service-row">{Lang::T('Primary Router')}: <span class="wz-badge-active">{$network_summary.primary_router|default:'—'|escape}</span></div>
+            <div class="wz-service-row">{Lang::T('Routers')}: <span class="wz-badge-active">{$network_summary.routers_label|default:'0 / 0 online'|escape}</span></div>
+            <div class="wz-service-row">DNS: <span class="wz-badge-active">{$network_summary.dns_servers|default:'8.8.8.8 / 1.1.1.1'|escape}</span></div>
+            <div class="wz-service-row">{Lang::T('Gateway Status')}:
+                {if $network_summary.gateway_online|default:false}
+                <span class="wz-badge-success"><i class="fa fa-circle"></i> Online</span>
+                {else}
+                <span class="wz-badge-warning"><i class="fa fa-circle"></i> {Lang::T('Check connection')}</span>
+                {/if}
+            </div>
+        </div>
+    </div>
+
+    <div class="wz-cc-grid-2">
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-bell"></i> {Lang::T('Notification')}</div>
+            <div class="wz-service-row">{Lang::T('Email Notification')}: <span class="wz-badge-{if $notification_status.email|default:false}active{else}warning{/if}">{if $notification_status.email|default:false}{Lang::T('Enabled')}{else}{Lang::T('Not configured')}{/if}</span></div>
+            <div class="wz-service-row">{Lang::T('Sms notification')}: <span class="wz-badge-{if $notification_status.sms|default:false}active{else}warning{/if}">{if $notification_status.sms|default:false}{Lang::T('Enabled')}{else}{Lang::T('Not configured')}{/if}</span></div>
+            <div class="wz-service-row">{Lang::T('Telegram notification')}: <span class="wz-badge-{if $notification_status.telegram|default:false}active{else}expired{/if}">{if $notification_status.telegram|default:false}{Lang::T('Enabled')}{else}{Lang::T('Disabled')}{/if}</span></div>
+            <a href="{Text::url('settings/notifications')}" class="wz-cc-btn wz-cc-btn-muted" style="width:100%;margin-top:12px;text-align:center;display:block;text-decoration:none"><i class="fa fa-cog"></i> {Lang::T('Configure Alerts')}</a>
+        </div>
+
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-sitemap"></i> {Lang::T('ISP Reseller Plan')}</div>
+            <div class="wz-service-row">{Lang::T('Reseller Plan')}: <span class="wz-badge-active">{$reseller_plan|default:'Standard'|escape}</span></div>
+            <div class="wz-service-row">{Lang::T('Commission Rate')}: <span class="wz-badge-active">{$commission_rate|default:10|string_format:"%.0f"}%</span></div>
+            <div class="wz-service-row">{Lang::T('Active Resellers')}: <span class="wz-badge-active">{$active_resellers|default:0}</span></div>
+            <div class="wz-service-row">{Lang::T('Total Commission')}: <span class="wz-badge-active">{$currency|default:'XAF'} {$total_commission|default:0|number_format:0}</span></div>
+        </div>
+    </div>
+
+    <div class="wz-cc-grid-2">
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-area-chart"></i> Network Traffic (7 jours)</div>
+            <div class="wz-chart-box"><canvas id="trafficChart"></canvas></div>
+        </div>
+        <div class="wz-cc-card">
+            <div class="wz-cc-card-title"><i class="fa fa-pie-chart"></i> Service Distribution</div>
+            <div class="wz-chart-box"><canvas id="serviceChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="wz-cc-card">
+        <div class="wz-cc-card-title"><i class="fa fa-history"></i> Activity Log</div>
+        {if $activity_logs|@count > 0}
+            {foreach $activity_logs as $log}
+            <div class="wz-timeline-item">
+                <div class="wz-timeline-time"><i class="fa fa-clock-o"></i> {$log.time_ago|escape}</div>
+                <div class="wz-timeline-icon">
+                    <i class="fa {if $log.type eq 'login'}fa-sign-in{elseif $log.type eq 'logout'}fa-sign-out{elseif $log.type eq 'error'}fa-exclamation-triangle{else}fa-info{/if}"></i>
+                </div>
+                <div class="wz-timeline-text">
+                    <strong>{$log.username|escape}</strong> {$log.message|escape}
+                    {if $log.sid}<span class="wz-badge-active" style="font-size:10px;margin-left:6px">{$log.sid|escape}</span>{/if}
                 </div>
             </div>
-            {assign pos value=$pos+1}
-        {else}
-            {assign colss explode(",", $cols)}
-            <div class="row wz-orbit-row">
-                {foreach $colss as $c}
-                    <div class="col-md-{$c} wz-orbit-col">
-                        {showWidget widgets=$widgets pos=$pos}
-                    </div>
-                    {assign pos value=$pos+1}
+            {/foreach}
+            <div class="wz-pagination">
+                {if $current_page > 1}<a class="wz-page-btn" href="{$dashboard_log_base_url}&log_page={$prev_page}"><i class="fa fa-chevron-left"></i> Prev</a>{/if}
+                {foreach $pagination_pages as $page}
+                <a class="wz-page-btn {if $page.active}active{/if}" href="{$dashboard_log_base_url}&log_page={$page.num}">{$page.num}</a>
                 {/foreach}
+                {if $current_page < $total_pages}<a class="wz-page-btn" href="{$dashboard_log_base_url}&log_page={$next_page}">Next <i class="fa fa-chevron-right"></i></a>{/if}
             </div>
+            <div class="wz-log-meta">
+                {$total_entries|default:0} entries · Page {$current_page|default:1} / {$total_pages|default:1}
+            </div>
+        {else}
+            <p class="wz-cc-empty">{Lang::T('No activity logs found')}</p>
         {/if}
-    {/foreach}
+    </div>
+
+    <div class="wz-cc-footer">
+        DYRSIA Powered by Dyrsia{if $app_version|default:''} · Version: {$app_version|escape}{/if}
+    </div>
 </div>
 
-{if $_c['new_version_notify'] != 'disable'}
-    <script>
-        window.addEventListener('DOMContentLoaded', function() {
-            $.getJSON("./version.json?" + Math.random(), function(data) {
-                var localVersion = data.version;
-                $('#version').html('Version: ' + localVersion);
-            }).fail(function() {
-                $('#version').html('Version: DYRSIA ISP');
+<script>
+var WZ_CC = {
+    csrf: '{$csrf_token|escape:'javascript'}',
+    updateMacUrl: '{Text::url('dashboard/update-mac')|escape:'javascript'}',
+    traffic: {
+        labels: {$traffic_labels|@json_encode nofilter},
+        download: {$traffic_download|@json_encode nofilter},
+        upload: {$traffic_upload|@json_encode nofilter}
+    },
+    services: {
+        hotspot_active: {$hotspot_active|default:0},
+        hotspot_expired: {$hotspot_expired|default:0},
+        pppoe_active: {$pppoe_active|default:0},
+        pppoe_expired: {$pppoe_expired|default:0}
+    }
+};
+{literal}
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof Chart !== 'undefined') {
+        var gridColor = document.body.classList.contains('theme-light') ? 'rgba(15,23,42,0.08)' : 'rgba(148,163,184,0.12)';
+        var textColor = document.body.classList.contains('theme-light') ? '#64748b' : '#94a3b8';
+        var tc = document.getElementById('trafficChart');
+        if (tc) {
+            new Chart(tc.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: WZ_CC.traffic.labels,
+                    datasets: [
+                        { label: 'Download (MB)', data: WZ_CC.traffic.download, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.15)', fill: true, tension: 0.35, pointBackgroundColor: '#3B82F6' },
+                        { label: 'Upload (MB)', data: WZ_CC.traffic.upload, borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.12)', fill: true, tension: 0.35, pointBackgroundColor: '#8B5CF6' }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: textColor } } }, scales: { x: { grid: { color: gridColor }, ticks: { color: textColor } }, y: { grid: { color: gridColor }, ticks: { color: textColor }, beginAtZero: true } } }
             });
+        }
+        var sc = document.getElementById('serviceChart');
+        if (sc) {
+            new Chart(sc.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Hotspot Active', 'Hotspot Expired', 'PPPoE Active', 'PPPoE Expired'],
+                    datasets: [{ data: [WZ_CC.services.hotspot_active, WZ_CC.services.hotspot_expired, WZ_CC.services.pppoe_active, WZ_CC.services.pppoe_expired], backgroundColor: ['#22C55E', '#EF4444', '#3B82F6', '#64748B'], borderWidth: 0 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 11 } } } } }
+            });
+        }
+    }
+
+    var macBtn = document.getElementById('updateMacBtn');
+    if (macBtn) {
+        macBtn.addEventListener('click', function() {
+            var mac = (document.getElementById('macAddress').value || '').trim();
+            var username = (document.getElementById('macUsername').value || '').trim();
+            var resultDiv = document.getElementById('macResult');
+            if (!mac || !username) {
+                resultDiv.innerHTML = '<span class="wz-mac-error"><i class="fa fa-times-circle"></i> Please fill both MAC Address and Username</span>';
+                return;
+            }
+            macBtn.disabled = true;
+            fetch(WZ_CC.updateMacUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'csrf_token=' + encodeURIComponent(WZ_CC.csrf) + '&mac=' + encodeURIComponent(mac) + '&username=' + encodeURIComponent(username)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    resultDiv.innerHTML = '<span class="wz-mac-ok"><i class="fa fa-check-circle"></i> ' + (data.message || 'Updated') + '</span>';
+                    document.getElementById('macAddress').value = '';
+                    document.getElementById('macUsername').value = '';
+                } else {
+                    resultDiv.innerHTML = '<span class="wz-mac-error"><i class="fa fa-times-circle"></i> ' + (data.message || 'Update failed') + '</span>';
+                }
+            })
+            .catch(function() {
+                resultDiv.innerHTML = '<span class="wz-mac-error"><i class="fa fa-times-circle"></i> Network error</span>';
+            })
+            .finally(function() { macBtn.disabled = false; });
         });
-    </script>
-{/if}
+    }
+});
+{/literal}
+</script>
 
 {include file="sections/footer.tpl"}

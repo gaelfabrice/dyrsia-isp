@@ -23,6 +23,45 @@ function plan_scoped_router_query($admin)
     return $query;
 }
 
+function plan_list_apply_filters($query, $admin, $search, $router, $plan, $type, $status = null)
+{
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $query->where('tbl_user_recharges.admin_id', $admin['id']);
+    }
+    if ($search != '') {
+        $query->where_raw(
+            '(`tbl_user_recharges`.`username` LIKE ? OR `tbl_customers`.`fullname` LIKE ? OR `tbl_customers`.`phonenumber` LIKE ? OR `tbl_user_recharges`.`routers` LIKE ?)',
+            ["%$search%", "%$search%", "%$search%", "%$search%"]
+        );
+    }
+    if (!empty($router)) {
+        $query->where('tbl_user_recharges.routers', $router);
+    }
+    if (!empty($plan)) {
+        $query->where('tbl_user_recharges.plan_id', $plan);
+    }
+    if (!empty($type)) {
+        $query->where('tbl_user_recharges.type', $type);
+    }
+    if (!empty($status) && $status != '-') {
+        $query->where('tbl_user_recharges.status', $status);
+    }
+    return $query;
+}
+
+function plan_list_base_query($admin, $search, $router, $plan, $type, $status = null, $withSelect = true)
+{
+    $query = ORM::for_table('tbl_user_recharges')
+        ->left_outer_join('tbl_customers', ['tbl_user_recharges.customer_id', '=', 'tbl_customers.id']);
+    if ($withSelect) {
+        $query->select('tbl_user_recharges.*')
+            ->select('tbl_customers.fullname', 'fullname')
+            ->select('tbl_customers.address', 'address')
+            ->select('tbl_customers.phonenumber', 'phonenumber');
+    }
+    return plan_list_apply_filters($query, $admin, $search, $router, $plan, $type, $status);
+}
+
 function plan_allowed_voucher_generators($admin)
 {
     if ($admin['user_type'] == 'SuperAdmin') {
@@ -480,7 +519,12 @@ if ($admin['user_type'] != 'SuperAdmin') {
 
                 if ($_app_stage != 'demo' && file_exists($dvc)) {
                     require_once $dvc;
-                    (new $p['device'])->remove_customer($c, $p);
+                    try {
+                        (new $p['device'])->remove_customer($c, $p);
+                    } catch (Throwable $e) {
+                        r2(getUrl('plan/list'), 'e', WifiZoneSecurity::safeExceptionMessage($e));
+                        exit;
+                    }
                 }
             }
 
@@ -505,7 +549,12 @@ if ($admin['user_type'] != 'SuperAdmin') {
             if ($_app_stage != 'demo') {
                 if (file_exists($dvc)) {
                     require_once $dvc;
-                    (new $p['device'])->remove_customer($c, $p);
+                    try {
+                        (new $p['device'])->remove_customer($c, $p);
+                    } catch (Throwable $e) {
+                        r2(getUrl('plan/list'), 'e', WifiZoneSecurity::safeExceptionMessage($e));
+                        exit;
+                    }
                 } else {
                     throw new Exception(Lang::T("Devices Not Found"));
                 }
@@ -559,7 +608,12 @@ if ($admin['user_type'] != 'SuperAdmin') {
                         if (file_exists($dvc)) {
                             require_once $dvc;
                             $p['plan_expired'] = 0;
-                            (new $p['device'])->remove_customer($customer, $p);
+                            try {
+                                (new $p['device'])->remove_customer($customer, $p);
+                            } catch (Throwable $e) {
+                                r2(getUrl('plan/list'), 'e', WifiZoneSecurity::safeExceptionMessage($e));
+                                exit;
+                            }
                         } else {
                             throw new Exception(Lang::T("Devices Not Found"));
                         }
@@ -973,13 +1027,16 @@ if ($admin['user_type'] != 'SuperAdmin') {
                             $connection = $routerHost !== '' ? @fsockopen($routerHost, $routerPort, $errno, $errstr, 2) : false;
                             if ($connection) {
                                 fclose($connection);
+                                $loginUsername = HotspotCustomer::generateUsername(10);
                                 $voucherCustomer = [
                                     'fullname' => 'Voucher',
                                     'email' => '',
-                                    'username' => $d->code,
-                                    'password' => $d->code,
+                                    'username' => $loginUsername,
+                                    'password' => HotspotCustomer::defaultPassword(),
                                 ];
                                 (new $selectedPlan['device'])->add_customer($voucherCustomer, $selectedPlan);
+                                $d->user = $loginUsername;
+                                $d->save();
                             } else {
                                 _log('Voucher MikroTik sync skipped [' . $d->code . ']: router unreachable', $admin['user_type'], $admin['id']);
                             }
@@ -1142,11 +1199,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Agent', 'Sales'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
-        $ui->assign('xfooter', $select2_customer);
-        $ui->assign('_title', Lang::T('Refill Account'));
-        run_hook('view_refill'); #HOOK
-        $ui->display('admin/plan/refill.tpl');
-
+        r2(getUrl('plan/list') . '&open_refill=1');
         break;
 
     case 'refill-post':
@@ -1167,10 +1220,10 @@ if ($admin['user_type'] != 'SuperAdmin') {
                 Package::createInvoice($in);
                 $ui->display('admin/plan/invoice.tpl');
             } else {
-                r2(getUrl('plan/refill'), 'e', "Failed to refill account");
+                r2(getUrl('plan/list'), 'e', "Failed to refill account");
             }
         } else {
-            r2(getUrl('plan/refill'), 'e', Lang::T('Voucher Not Valid'));
+            r2(getUrl('plan/list'), 'e', Lang::T('Voucher Not Valid'));
         }
         break;
     case 'deposit':
@@ -1341,50 +1394,14 @@ if (empty($show) || $show == '') {
             $ui->assign('plans', []);
         }
 
-        // মূল কুয়েরি শুরু (এখানে ফোন নাম্বারের লজিক দেওয়া হয়েছে)
-        $query = ORM::for_table('tbl_user_recharges')
-            ->left_outer_join('tbl_customers', array('tbl_user_recharges.customer_id', '=', 'tbl_customers.id'))
-            ->select('tbl_user_recharges.*')
-            ->select('tbl_customers.fullname', 'fullname')
-            ->select('tbl_customers.address', 'address')
-            ->select('tbl_customers.phonenumber', 'phonenumber'); // ফোন নাম্বার সিলেক্ট করা হলো
+        // মূল কুয়েরি
+        $active_count = (int) plan_list_base_query($admin, $search, $router, $plan, $type, 'on', false)->count();
+        $expired_count = (int) plan_list_base_query($admin, $search, $router, $plan, $type, 'off', false)->count();
+        $ui->assign('active_count', $active_count);
+        $ui->assign('expired_count', $expired_count);
+        $ui->assign('total_count', $active_count + $expired_count);
 
-// Admin wise filter
-if ($admin['user_type'] != 'SuperAdmin') {
-
-    // শুধু নিজের add করা user দেখবে
-    $query->where('tbl_user_recharges.admin_id', $admin['id']);
-
-}
-
-        // --- এখান থেকে পরিবর্তন শুরু ---
-        if ($search != '') {
-            // একসাথে ইউজারনেম, ফুল নেম এবং ফোন নাম্বার সার্চ করার জন্য where_raw ব্যবহার করা হলো
-            $query->where_raw('(`tbl_user_recharges`.`username` LIKE ? OR `tbl_customers`.`fullname` LIKE ? OR `tbl_customers`.`phonenumber` LIKE ?)', 
-                ["%$search%", "%$search%", "%$search%"]
-            );
-        }
-        // --- পরিবর্তন শেষ --
-        
-        if (!empty($router)) {
-            $query->where('tbl_user_recharges.routers', $router);
-        }
-        
-        if (!empty($plan)) {
-            $query->where('tbl_user_recharges.plan_id', $plan);
-        }
-
-        // স্ট্যাটাস ফিল্টার
-        if (!empty($status) && $status != '-') {
-            $query->where('tbl_user_recharges.status', $status);
-        }
-
-        // টাইপ ফিল্টার (Hotspot / PPPoE)
-        if (!empty($type)) {
-            $query->where('tbl_user_recharges.type', $type);
-        }
-
-        // সর্টিং
+        $query = plan_list_base_query($admin, $search, $router, $plan, $type, $status);
         $query->order_by_desc('tbl_user_recharges.id');
 
         // প্যাগিনেশন এবং ডাটা ফেচ (এখানে ডায়নামিক $show ব্যবহার করা হয়েছে)
@@ -1400,6 +1417,14 @@ if ($admin['user_type'] != 'SuperAdmin') {
         run_hook('view_list_billing'); #HOOK
         
         $ui->assign('d', $d);
+        if ($_c['disable_voucher'] != 'yes') {
+            $ui->assign('xfooter', $select2_customer);
+            $ui->assign('voucher_refill_enabled', true);
+            $ui->assign('open_refill', _get('open_refill') == '1');
+        } else {
+            $ui->assign('voucher_refill_enabled', false);
+            $ui->assign('open_refill', false);
+        }
         $ui->display('admin/plan/active.tpl');
         break;
 }

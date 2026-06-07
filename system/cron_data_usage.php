@@ -101,7 +101,14 @@ foreach ($routers as $router) {
         $json = json_encode($currentCounters);
         $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
         $stmt->execute([$metaKey, $json, $json]);
+        $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
+        $statusJson = json_encode(['ok' => true, 'at' => $currentTime]);
+        $stmt->execute([$statusKey, $statusJson, $statusJson]);
     } catch (Exception $e) {
+        $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
+        $statusJson = json_encode(['ok' => false, 'at' => $currentTime, 'error' => $e->getMessage()]);
+        $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
+        $stmt->execute([$statusKey, $statusJson, $statusJson]);
         continue;
     }
 }

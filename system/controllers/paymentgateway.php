@@ -47,20 +47,12 @@ switch ($action) {
         break;
     default:
         if (_post('save') == 'actives') {
-            $pgs = '';
+            $pgs = [];
             if (is_array($_POST['pgs'])) {
-                $pgs = implode(',', $_POST['pgs']);
+                $pgs = MobileMoneyGateway::normalizeActives($_POST['pgs']);
             }
-            $d = ORM::for_table('tbl_appconfig')->where('setting', 'payment_gateway')->find_one();
-            if ($d) {
-                $d->value = $pgs;
-                $d->save();
-            } else {
-                $d = ORM::for_table('tbl_appconfig')->create();
-                $d->setting = 'payment_gateway';
-                $d->value = $pgs;
-                $d->save();
-            }
+            MobileMoneyGateway::saveActives($pgs);
+            MobileMoneyGateway::syncHotspotCaptivePaymentUi();
             r2(getUrl('paymentgateway'), 's', Lang::T('Payment Gateway saved successfully'));
         }
 
@@ -84,14 +76,25 @@ switch ($action) {
                 r2(getUrl('paymentgateway'), 'w', Lang::T('Payment Gateway Not Found'));
             } else {
                 $files = scandir($PAYMENTGATEWAY_PATH);
+                $pgs = [];
                 foreach ($files as $file) {
-                    if (pathinfo($file, PATHINFO_EXTENSION) == 'php') {
+                    if (pathinfo($file, PATHINFO_EXTENSION) == 'php' && substr($file, -strlen('_secret.php')) !== '_secret.php') {
                         $pgs[] = str_replace('.php', '', $file);
                     }
                 }
+                $pgRows = [];
+                foreach ($pgs as $pgName) {
+                    $pgRows[] = [
+                        'name' => $pgName,
+                        'is_mobile' => in_array($pgName, MobileMoneyGateway::MOBILE_GATEWAYS, true),
+                    ];
+                }
                 $ui->assign('_title', 'Payment Gateway Settings');
                 $ui->assign('pgs', $pgs);
-                $ui->assign('actives', explode(',', $config['payment_gateway']));
+                $ui->assign('pg_rows', $pgRows);
+                $ui->assign('actives', MobileMoneyGateway::activeList());
+                $ui->assign('mobile_gateways', MobileMoneyGateway::MOBILE_GATEWAYS);
+                $ui->assign('active_mobile_gateway', MobileMoneyGateway::activeMobile());
                 $ui->display('admin/paymentgateway/list.tpl');
             }
         }

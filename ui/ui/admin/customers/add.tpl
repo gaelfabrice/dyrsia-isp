@@ -182,14 +182,6 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="col-md-3 control-label">{Lang::T('District')}</label>
-                        <div class="col-md-9">
-                            <input type="text" class="form-control" id="district" name="district"
-                                value="{$d['district']}">
-                            <small class="form-text text-muted">{Lang::T('District')}</small>
-                        </div>
-                    </div>
-                    <div class="form-group">
                         <label class="col-md-3 control-label">{Lang::T('State')}</label>
                         <div class="col-md-9">
                             <input type="text" class="form-control" id="state" name="state" value="{$d['state']}">

@@ -4,10 +4,6 @@
     <div class="col-sm-4 col-md-4">
         <div class="box box-{if $d['status']=='Active'}primary{else}danger{/if}">
             <div class="box-body box-profile">
-                <img class="profile-user-img img-responsive img-circle"
-                    onclick="window.location.href = '{$app_url}/{$UPLOAD_PATH}{$d['photo']}'"
-                    src="{$app_url}/{$UPLOAD_PATH}{$d['photo']}.thumb.jpg"
-                    onerror="this.src='{$app_url}/{$UPLOAD_PATH}/user.default.jpg'" alt="avatar">
                 <h3 class="profile-username text-center">{$d['fullname']}</h3>
                 <ul class="list-group list-group-unbordered">
                     <li class="list-group-item">
@@ -26,9 +22,6 @@
                     <li class="list-group-item">{Lang::nl2br($d['address'])}</li>
                     <li class="list-group-item">
                         <b>{Lang::T('City')}</b> <span class="pull-right">{$d['city']}</span>
-                    </li>
-                    <li class="list-group-item">
-                        <b>{Lang::T('District')}</b> <span class="pull-right">{$d['district']}</span>
                     </li>
                     <li class="list-group-item">
                         <b>{Lang::T('State')}</b> <span class="pull-right">{$d['state']}</span>

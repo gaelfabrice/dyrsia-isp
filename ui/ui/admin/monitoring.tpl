@@ -5,7 +5,7 @@
         <div class="wz-orbit-hero-copy">
             <span class="wz-orbit-kicker">{Lang::T('Monitoring')}</span>
             <h2>{Lang::T('Network & Customer Monitoring')}</h2>
-            <p>{Lang::T('A calmer view for customer volume, internet service split, online sessions and support tickets.')}</p>
+            <p>{Lang::T('Monitoring_subtitle')}</p>
         </div>
     </div>
 
@@ -38,12 +38,6 @@
             <a href="index.php?_route=plugin/pppoe_online_ui" class="small-box bg-maroon">
                 <div class="inner"><h3>{$p_act}</h3><p>PPPOE online</p></div>
                 <div class="icon"><i class="ion ion-radio-waves"></i></div>
-            </a>
-        </div>
-        <div class="col-md-4 col-sm-6 wz-orbit-col">
-            <a href="{Text::url('support')}" class="small-box bg-yellow">
-                <div class="inner"><h3>{$open_tickets}</h3><p>Open Tickets</p></div>
-                <div class="icon"><i class="ion ion-help-buoy"></i></div>
             </a>
         </div>
     </div>

@@ -24,7 +24,13 @@ system/paymentgateway/**
 !system/paymentgateway/index.html
 !system/paymentgateway/.gitignore
 !system/paymentgateway/campay.php
+!system/paymentgateway/mypvit.php
+!system/paymentgateway/mypvit_secret.php
+!system/paymentgateway/ui/campay.tpl
+!system/paymentgateway/ui/mypvit.tpl
 !system/plugin/hotspot_pg-campay.php
+!system/plugin/hotspot_pg-mypvit.php
+!system/plugin/hotspot_pay.php
 !system/plugin/ui/
 system/plugin/ui/*
 !system/plugin/ui/index.html

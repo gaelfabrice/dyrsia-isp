@@ -48,6 +48,17 @@ class Csrf
         return $token;
     }
 
+    /** Token de session réutilisable (ne régénère pas à chaque page). */
+    public static function getToken()
+    {
+        if (isset($_SESSION['csrf_token'], $_SESSION['csrf_token_time'])) {
+            if (time() - (int) $_SESSION['csrf_token_time'] <= self::$tokenExpiration) {
+                return (string) $_SESSION['csrf_token'];
+            }
+        }
+        return self::generateAndStoreToken();
+    }
+
     public static function clearToken()
     {
         unset($_SESSION['csrf_token'], $_SESSION['csrf_token_time']);

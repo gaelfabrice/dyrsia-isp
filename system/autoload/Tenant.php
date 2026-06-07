@@ -182,6 +182,17 @@ class Tenant
         return $map;
     }
 
+    /** Carte tenant_id => sous-domaine (slug). */
+    public static function tenantSlugsMap()
+    {
+        self::ensureSchema();
+        $map = [];
+        foreach (ORM::for_table('tbl_tenants')->find_many() as $t) {
+            $map[(int) $t->id] = $t->slug;
+        }
+        return $map;
+    }
+
     public static function ensureSchema()
     {
         ORM::raw_execute("CREATE TABLE IF NOT EXISTS tbl_tenants (
@@ -197,7 +208,91 @@ class Tenant
             KEY idx_admin_user (admin_user_id),
             KEY idx_email (email)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        self::ensureTenantCountryColumns();
         self::ensureTenantIsolationColumns();
+    }
+
+    public static function ensureTenantCountryColumns()
+    {
+        try {
+            $db = ORM::get_db();
+            if (!$db) {
+                return;
+            }
+            $columns = [
+                'country_code' => "VARCHAR(2) NULL DEFAULT NULL AFTER email",
+                'timezone' => "VARCHAR(64) NULL DEFAULT NULL AFTER country_code",
+                'mobile_gateway' => "VARCHAR(20) NULL DEFAULT NULL AFTER timezone",
+            ];
+            foreach ($columns as $name => $definition) {
+                $exists = $db->query("SHOW COLUMNS FROM tbl_tenants LIKE " . $db->quote($name))->fetchAll(PDO::FETCH_ASSOC);
+                if (empty($exists)) {
+                    ORM::raw_execute("ALTER TABLE tbl_tenants ADD COLUMN `$name` $definition");
+                }
+            }
+            ORM::raw_execute(
+                "UPDATE tbl_tenants SET country_code = 'GA', timezone = 'Africa/Libreville', mobile_gateway = 'mypvit'
+                 WHERE country_code IS NULL OR country_code = ''"
+            );
+        } catch (Exception $e) {
+            // ignore
+        }
+    }
+
+    /**
+     * Applique le fuseau horaire et le profil Mobile Money du tenant courant.
+     */
+    public static function applyLocaleConfig($tenant = null)
+    {
+        global $config;
+        if ($tenant === null) {
+            $tenant = self::current();
+        }
+        if (!$tenant) {
+            unset($config['tenant_mobile_gateway'], $config['tenant_country_code'], $config['tenant_country_name']);
+            return;
+        }
+
+        $row = is_array($tenant) ? $tenant : $tenant->as_array();
+        if (!empty($row['timezone'])) {
+            $config['timezone'] = $row['timezone'];
+            date_default_timezone_set($row['timezone']);
+        }
+
+        $country = MobileMoneyCountry::resolve($row['country_code'] ?? '');
+        if (!$country) {
+            unset($config['tenant_mobile_gateway'], $config['tenant_country_code'], $config['tenant_country_name']);
+            return;
+        }
+
+        $config['tenant_country_code'] = $country['code'];
+        $config['tenant_country_name'] = $country['name'];
+        $config['tenant_mobile_gateway'] = $country['gateway'];
+        $config['country_code_phone'] = $country['phone_prefix'];
+        if ($country['gateway'] === 'mypvit') {
+            $config['mypvit_phone_prefix'] = $country['phone_prefix'];
+        }
+    }
+
+    public static function updateTenantTimezone($tenantId, $timezone)
+    {
+        self::ensureSchema();
+        $timezone = trim((string) $timezone);
+        if ($timezone === '') {
+            return false;
+        }
+        $tenant = self::findById((int) $tenantId);
+        if (!$tenant) {
+            return false;
+        }
+        $tenant->timezone = $timezone;
+        $tenant->updated_at = date('Y-m-d H:i:s');
+        $tenant->save();
+        if (self::current() && (int) self::current()['id'] === (int) $tenant->id) {
+            self::$current['timezone'] = $timezone;
+            self::applyLocaleConfig(self::$current);
+        }
+        return true;
     }
 
     public static function ensureTenantIsolationColumns()
@@ -303,11 +398,17 @@ class Tenant
         if (!$tenant) {
             self::$current = null;
             unset($_SESSION['tenant_id'], $_SESSION['tenant_slug']);
+            global $config;
+            if (!empty($config['timezone'])) {
+                date_default_timezone_set($config['timezone']);
+            }
+            unset($config['tenant_mobile_gateway'], $config['tenant_country_code'], $config['tenant_country_name']);
             return;
         }
         self::$current = $tenant->as_array();
         $_SESSION['tenant_id'] = (int) $tenant->id;
         $_SESSION['tenant_slug'] = $tenant->slug;
+        self::applyLocaleConfig(self::$current);
     }
 
     public static function current()
@@ -350,9 +451,10 @@ class Tenant
     }
 
     /**
-     * @return array{tenant: object, admin: object, password: string}
+     * @param array{skip_notifications?: bool} $options
+     * @return array{tenant: object, admin: object, password: string, notification?: array}
      */
-    public static function provision($businessName, $slug, $email, $signupIntent = 'demo')
+    public static function provision($businessName, $slug, $email, $signupIntent = 'demo', $countryCode = '', array $options = [])
     {
         self::ensureSchema();
         global $config;
@@ -360,6 +462,12 @@ class Tenant
         $businessName = trim($businessName);
         $slug = self::normalizeSlug($slug);
         $email = trim(strtolower($email));
+
+        $countryCheck = MobileMoneyCountry::validateForProvision($countryCode);
+        if (!$countryCheck['ok']) {
+            throw new InvalidArgumentException($countryCheck['message']);
+        }
+        $country = $countryCheck['country'];
 
         if ($businessName === '' || strlen($businessName) < 2) {
             throw new InvalidArgumentException(Lang::T('ISP / Business name is required'));
@@ -395,7 +503,10 @@ class Tenant
 
         $password = self::generatePassword();
         $passwordHash = Password::_crypt($password);
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set($country['timezone']);
         $now = date('Y-m-d H:i:s');
+        date_default_timezone_set($previousTimezone);
 
         $admin = ORM::for_table('tbl_users')->create();
         $admin->username = $username;
@@ -420,6 +531,9 @@ class Tenant
         $tenant->business_name = $businessName;
         $tenant->admin_user_id = (int) $admin->id();
         $tenant->email = $email;
+        $tenant->country_code = $country['code'];
+        $tenant->timezone = $country['timezone'];
+        $tenant->mobile_gateway = $country['gateway'];
         $tenant->status = 'active';
         $tenant->created_at = $now;
         $tenant->updated_at = $now;
@@ -430,6 +544,40 @@ class Tenant
         $admin->save();
 
         $loginUrl = self::dashboardUrl($slug);
+        $notification = [
+            'business_name' => $businessName,
+            'slug' => $slug,
+            'email' => $email,
+            'username' => $username,
+            'password' => $password,
+            'login_url' => $loginUrl,
+        ];
+
+        if (empty($options['skip_notifications'])) {
+            self::sendProvisionWelcomeNotifications($notification);
+        }
+
+        return [
+            'tenant' => $tenant,
+            'admin' => $admin,
+            'password' => $password,
+            'notification' => $notification,
+        ];
+    }
+
+    /** Email + Telegram après création d'instance (peut être appelé en différé). */
+    public static function sendProvisionWelcomeNotifications(array $data): void
+    {
+        $businessName = (string) ($data['business_name'] ?? '');
+        $slug = (string) ($data['slug'] ?? '');
+        $email = (string) ($data['email'] ?? '');
+        $username = (string) ($data['username'] ?? '');
+        $password = (string) ($data['password'] ?? '');
+        $loginUrl = (string) ($data['login_url'] ?? '');
+        if ($email === '' || $username === '') {
+            return;
+        }
+
         $brandName = 'ISP DYRSIA';
         $safeBusinessName = htmlspecialchars($businessName, ENT_QUOTES, 'UTF-8');
         $safeSlug = htmlspecialchars($slug, ENT_QUOTES, 'UTF-8');
@@ -513,12 +661,6 @@ HTML;
             );
         } catch (Throwable $e) {
         }
-
-        return [
-            'tenant' => $tenant,
-            'admin' => $admin,
-            'password' => $password,
-        ];
     }
 
     public static function loginAdmin($adminId)

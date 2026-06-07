@@ -80,96 +80,334 @@ function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u')
     }
 }
 
+function reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType = '')
+{
+    $params = [$startDate . ' 00:00:00', $endDate . ' 23:59:59'];
+    $sql = " FROM api_data_usage u WHERE u.log_date >= ? AND u.log_date <= ?";
+    reports_data_usage_apply_scope($sql, $params, $admin, 'u');
+    if (!empty($targetUsername)) {
+        $sql .= " AND u.username = ?";
+        $params[] = $targetUsername;
+    }
+    if (!empty($routerFilter)) {
+        $sql .= " AND u.router_name = ?";
+        $params[] = $routerFilter;
+    }
+    if (!empty($serviceType) && in_array($serviceType, ['Hotspot', 'PPPoE', 'Others'], true)) {
+        $sql .= " AND u.username IN (SELECT username FROM tbl_customers WHERE service_type = ?";
+        if ($admin['user_type'] != 'SuperAdmin') {
+            $sql .= " AND created_by = ?";
+            $params[] = $serviceType;
+            $params[] = $admin['id'];
+        } else {
+            $params[] = $serviceType;
+        }
+        $sql .= ")";
+    }
+    return [$sql, $params];
+}
+
+function reports_data_usage_router_status($admin)
+{
+    $routerQuery = ORM::for_table('tbl_routers')->where('enabled', 1);
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $routerQuery->where('admin_id', $admin['id']);
+    }
+    $routers = $routerQuery->find_many();
+    $db = ORM::get_db();
+    $statusList = [];
+    foreach ($routers as $router) {
+        $name = $router['name'];
+        $params = [$name];
+        $scopeSql = " AND router_name = ?";
+        if ($admin['user_type'] != 'SuperAdmin') {
+            $scopeSql .= " AND admin_id = ?";
+            $params[] = $admin['id'];
+        }
+        $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ?" . ($admin['user_type'] != 'SuperAdmin' ? " AND admin_id = ?" : ""));
+        $stmt->execute($params);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $lastSync = $row['last_sync'] ?? null;
+        $apiState = 'offline';
+        if ($lastSync) {
+            $age = time() - strtotime($lastSync);
+            if ($age <= 900) {
+                $apiState = 'online';
+            } elseif ($age <= 3600) {
+                $apiState = 'warning';
+            }
+        }
+        $metaKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $name);
+        $metaRow = ORM::for_table('api_data_usage_meta')->where('meta_key', $metaKey)->find_one();
+        $meta = $metaRow ? json_decode((string) $metaRow->meta_value, true) : null;
+        if (is_array($meta) && isset($meta['ok'])) {
+            $apiState = $meta['ok'] ? ($apiState === 'offline' ? 'warning' : $apiState) : 'offline';
+        }
+        $statusList[] = [
+            'name' => $name,
+            'ip' => $router['ip_address'],
+            'status' => $apiState,
+            'last_sync' => $lastSync ? date('d/m/Y H:i', strtotime($lastSync)) : Lang::T('Never'),
+            'last_sync_raw' => $lastSync,
+        ];
+    }
+    return $statusList;
+}
+
+function reports_daily_staff_map()
+{
+    $staff_map = [];
+    foreach (ORM::for_table('tbl_users')->find_array() as $ad) {
+        $staff_map[$ad['username']] = $ad['fullname'];
+    }
+    foreach (ORM::for_table('tbl_hotspot_resellers')->find_array() as $rs) {
+        $staff_map[$rs['username']] = $rs['fullname'];
+    }
+    return $staff_map;
+}
+
+function reports_daily_apply_filters($query, $admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $plns, $methods, $staff_map, $q = '')
+{
+    $query->whereRaw(
+        "UNIX_TIMESTAMP(CONCAT(`tbl_transactions`.`recharged_on`,' ',`tbl_transactions`.`recharged_time`)) >= " . strtotime("$sd $ts")
+    )->whereRaw(
+        "UNIX_TIMESTAMP(CONCAT(`tbl_transactions`.`recharged_on`,' ',`tbl_transactions`.`recharged_time`)) <= " . strtotime("$ed $te")
+    );
+
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $query->where('tbl_transactions.admin_id', $admin['id']);
+    }
+
+    if (count($tps) > 0) {
+        $query->where_in('tbl_transactions.type', $tps);
+    }
+
+    if (count($mts) > 0) {
+        $cond = [];
+        $param = [];
+        foreach ($mts as $mt) {
+            $cond[] = "`tbl_transactions`.`method` LIKE ?";
+            $param[] = "%$mt%";
+            if (isset($staff_map[$mt]) && !empty($staff_map[$mt])) {
+                $cond[] = "`tbl_transactions`.`method` LIKE ?";
+                $param[] = "%" . $staff_map[$mt] . "%";
+            }
+        }
+        if (!empty($cond)) {
+            $query->where_raw("(" . implode(" OR ", $cond) . ")", $param);
+        }
+    }
+
+    if (count($rts) > 0) {
+        $query->where_in('tbl_transactions.routers', $rts);
+    }
+    if (count($plns) > 0) {
+        $query->where_in('tbl_transactions.plan_name', $plns);
+    }
+
+    if ($q !== '') {
+        $query->where_raw(
+            "(`tbl_transactions`.`username` LIKE ? OR `tbl_transactions`.`plan_name` LIKE ? OR `tbl_transactions`.`method` LIKE ? OR `tbl_customers`.`fullname` LIKE ? OR `tbl_customers`.`phonenumber` LIKE ?)",
+            ["%$q%", "%$q%", "%$q%", "%$q%", "%$q%"]
+        );
+    }
+
+    return $query;
+}
+
+function reports_daily_sum_query($admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $plns, $methods, $staff_map, $q = '')
+{
+    $dr_query = ORM::for_table('tbl_transactions')
+        ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) >= " . strtotime("$sd $ts"))
+        ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) <= " . strtotime("$ed $te"));
+
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $dr_query->where('admin_id', $admin['id']);
+    }
+    if (count($tps) > 0) {
+        $dr_query->where_in('type', $tps);
+    }
+    if (count($mts) > 0) {
+        $cond = [];
+        $param = [];
+        foreach ($mts as $mt) {
+            $cond[] = "`method` LIKE ?";
+            $param[] = "%$mt%";
+            if (isset($staff_map[$mt]) && !empty($staff_map[$mt])) {
+                $cond[] = "`method` LIKE ?";
+                $param[] = "%" . $staff_map[$mt] . "%";
+            }
+        }
+        if (!empty($cond)) {
+            $dr_query->where_raw("(" . implode(" OR ", $cond) . ")", $param);
+        }
+    }
+    if (count($rts) > 0) {
+        $dr_query->where_in('routers', $rts);
+    }
+    if (count($plns) > 0) {
+        $dr_query->where_in('plan_name', $plns);
+    }
+    if ($q !== '') {
+        $dr_query->where_raw(
+            "(`username` LIKE ? OR `plan_name` LIKE ? OR `method` LIKE ?)",
+            ["%$q%", "%$q%", "%$q%"]
+        );
+    }
+
+    return $dr_query;
+}
+
+function reports_data_usage_api_payload($admin)
+{
+    $db = ORM::get_db();
+    $search = _req('q');
+    $routerFilter = _req('router');
+    $serviceType = _req('service_type');
+    $startDate = _req('start_date', date('Y-01-01'));
+    $endDate = _req('end_date', date('Y-m-d'));
+    $targetUsername = $search;
+    if (!empty($search)) {
+        $customerQuery = ORM::for_table('tbl_customers')
+            ->where_raw("(`username` = ? OR `fullname` LIKE ? OR `phonenumber` LIKE ?)", [$search, "%$search%", "%$search%"]);
+        if ($admin['user_type'] != 'SuperAdmin') {
+            $customerQuery->where('created_by', $admin['id']);
+        }
+        $customer = $customerQuery->find_one();
+        if ($customer) {
+            $targetUsername = $customer['username'];
+        }
+    }
+
+    [$baseFrom, $baseParams] = reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType);
+
+    // Summary KPIs
+    $stmt = $db->prepare("SELECT COALESCE(SUM(u.download_bytes),0) AS dl, COALESCE(SUM(u.upload_bytes),0) AS ul, COUNT(DISTINCT u.username) AS unique_users, COUNT(DISTINCT CASE WHEN u.status = 'Connected' THEN u.username END) AS active_clients" . $baseFrom);
+    $stmt->execute($baseParams);
+    $summaryRow = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $totalDl = (double) ($summaryRow['dl'] ?? 0);
+    $totalUl = (double) ($summaryRow['ul'] ?? 0);
+    $uniqueUsers = (int) ($summaryRow['unique_users'] ?? 0);
+    $activeClients = (int) ($summaryRow['active_clients'] ?? 0);
+
+    $stmt = $db->prepare("SELECT MAX(hourly_bytes) AS peak_bytes FROM (SELECT SUM(u.total_bytes) AS hourly_bytes" . $baseFrom . " GROUP BY DATE(u.log_date), HOUR(u.log_date)) t");
+    $stmt->execute($baseParams);
+    $peakRow = $stmt->fetch(PDO::FETCH_ASSOC);
+    $peakBytes = (double) ($peakRow['peak_bytes'] ?? 0);
+    $peakMbps = $peakBytes > 0 ? round(($peakBytes * 8) / 3600000, 2) : 0;
+
+    $customerTotal = ORM::for_table('tbl_customers');
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $customerTotal->where('created_by', $admin['id']);
+    }
+    $totalCustomers = (int) $customerTotal->count();
+    $saturation = $totalCustomers > 0 ? round(min(100, ($activeClients / $totalCustomers) * 100), 1) : 0;
+
+    // Chart by day
+    $stmt = $db->prepare("SELECT DATE(u.log_date) AS log_day, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes" . $baseFrom . " GROUP BY DATE(u.log_date) ORDER BY log_day ASC");
+    $stmt->execute($baseParams);
+    $chartLabels = [];
+    $chartDownload = [];
+    $chartUpload = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $chartLabels[] = $row['log_day'];
+        $chartDownload[] = round(((double) $row['dl_bytes']) / 1048576, 2);
+        $chartUpload[] = round(((double) $row['ul_bytes']) / 1048576, 2);
+    }
+
+    // Top 5 users
+    $stmt = $db->prepare("SELECT u.username, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, MAX(c.fullname) AS fullname" . $baseFrom . " LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci GROUP BY u.username ORDER BY dl_bytes DESC LIMIT 5");
+    $stmt->execute($baseParams);
+    $topUsers = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $topUsers[] = [
+            'username' => $row['username'],
+            'fullname' => $row['fullname'] ?: '—',
+            'download_formatted' => reports_data_usage_format((double) $row['dl_bytes']),
+            'total_formatted' => reports_data_usage_format((double) $row['dl_bytes'] + (double) $row['ul_bytes']),
+        ];
+    }
+
+    // Top 5 routers
+    $stmt = $db->prepare("SELECT u.router_name, SUM(u.total_bytes) AS ttl_bytes, SUM(u.download_bytes) AS dl_bytes" . $baseFrom . " GROUP BY u.router_name ORDER BY ttl_bytes DESC LIMIT 5");
+    $stmt->execute($baseParams);
+    $topRouters = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $topRouters[] = [
+            'name' => $row['router_name'],
+            'traffic_formatted' => reports_data_usage_format((double) $row['ttl_bytes']),
+            'download_formatted' => reports_data_usage_format((double) $row['dl_bytes']),
+        ];
+    }
+
+    // Top 5 services (Hotspot / PPPoE / plan actif)
+    $stmt = $db->prepare("SELECT COALESCE(NULLIF(c.service_type, ''), 'Autre') AS service_name, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci GROUP BY service_name ORDER BY ttl_bytes DESC LIMIT 5");
+    $stmt->execute($baseParams);
+    $topServices = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $topServices[] = [
+            'name' => $row['service_name'],
+            'traffic_formatted' => reports_data_usage_format((double) $row['ttl_bytes']),
+        ];
+    }
+
+    // Detail rows
+    $stmt = $db->prepare("SELECT u.username, DATE(u.log_date) AS log_day, MAX(u.status) AS current_status, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes, MAX(u.router_name) AS router_name" . $baseFrom . " GROUP BY u.username, DATE(u.log_date) ORDER BY log_day DESC, u.username ASC LIMIT 500");
+    $stmt->execute($baseParams);
+    $formattedData = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $formattedData[] = [
+            'username' => $row['username'],
+            'router' => $row['router_name'],
+            'status' => $row['current_status'],
+            'date' => $row['log_day'],
+            'metrics' => [
+                'download' => reports_data_usage_format($row['dl_bytes']),
+                'upload' => reports_data_usage_format($row['ul_bytes']),
+                'total' => reports_data_usage_format($row['ttl_bytes']),
+                'raw_download_mb' => round(((double) $row['dl_bytes']) / 1048576, 2),
+                'raw_upload_mb' => round(((double) $row['ul_bytes']) / 1048576, 2),
+            ],
+        ];
+    }
+
+    return [
+        'status' => 'success',
+        'resolved_username' => $targetUsername,
+        'summary' => [
+            'download' => reports_data_usage_format($totalDl),
+            'upload' => reports_data_usage_format($totalUl),
+            'combined' => reports_data_usage_format($totalDl + $totalUl),
+            'download_bytes' => $totalDl,
+            'upload_bytes' => $totalUl,
+            'peak_mbps' => $peakMbps,
+            'active_clients' => $activeClients,
+            'unique_users' => $uniqueUsers,
+            'saturation_pct' => $saturation,
+        ],
+        'chart' => [
+            'labels' => $chartLabels,
+            'download_mb' => $chartDownload,
+            'upload_mb' => $chartUpload,
+        ],
+        'top_users' => $topUsers,
+        'top_routers' => $topRouters,
+        'top_services' => $topServices,
+        'routers_status' => reports_data_usage_router_status($admin),
+        'data' => $formattedData,
+    ];
+}
+
 switch ($action) {
     case 'data-usage-api':
         reports_data_usage_install();
         header('Content-Type: application/json');
-        $db = ORM::get_db();
         if (_get('get_top_users') == 1) {
-            $params = [];
-            $sql = "SELECT u.username,
-                           SUM(u.download_bytes) as total_dl_bytes,
-                           SUM(u.upload_bytes) as total_ul_bytes,
-                           MAX(u.status) as last_status,
-                           MAX(u.log_date) as last_log,
-                           c.fullname,
-                           c.phonenumber
-                    FROM api_data_usage u
-                    LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci
-                    WHERE u.log_date >= DATE_SUB(NOW(), INTERVAL 1 DAY)";
-            reports_data_usage_apply_scope($sql, $params, $admin, 'u');
-            $sql .= " GROUP BY u.username, c.fullname, c.phonenumber ORDER BY total_dl_bytes DESC LIMIT 10";
-            $stmt = $db->prepare($sql);
-            $stmt->execute($params);
-            $topUsers = [];
-            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $totalDl = (double) $row['total_dl_bytes'];
-                $topUsers[] = [
-                    'username' => $row['username'],
-                    'fullname' => !empty($row['fullname']) ? $row['fullname'] : 'N/A',
-                    'phonenumber' => !empty($row['phonenumber']) ? $row['phonenumber'] : 'N/A',
-                    'download_formatted' => reports_data_usage_format($totalDl),
-                    'download_raw_mb' => round(($totalDl / 1048576), 2),
-                    'status' => $row['last_status'],
-                    'date' => date('h:i A', strtotime($row['last_log']))
-                ];
-            }
-            echo json_encode(['status' => 'success', 'top_users' => $topUsers]);
+            $payload = reports_data_usage_api_payload($admin);
+            echo json_encode(['status' => 'success', 'top_users' => $payload['top_users']]);
             exit;
         }
-        $search = _req('q');
-        $routerFilter = _req('router');
-        $startDate = _req('start_date', date('Y-01-01'));
-        $endDate = _req('end_date', date('Y-m-d'));
-        $targetUsername = $search;
-        if (!empty($search)) {
-            $customerQuery = ORM::for_table('tbl_customers')
-                ->where_raw("(`username` = ? OR `fullname` LIKE ? OR `phonenumber` LIKE ?)", [$search, "%$search%", "%$search%"]);
-            if ($admin['user_type'] != 'SuperAdmin') {
-                $customerQuery->where('created_by', $admin['id']);
-            }
-            $customer = $customerQuery->find_one();
-            if ($customer) {
-                $targetUsername = $customer['username'];
-            }
-        }
-        $params = [$startDate . ' 00:00:00', $endDate . ' 23:59:59'];
-        $sql = "SELECT u.username,
-                       DATE(u.log_date) as log_day,
-                       MAX(u.status) as current_status,
-                       SUM(u.download_bytes) as dl_bytes,
-                       SUM(u.upload_bytes) as ul_bytes,
-                       SUM(u.total_bytes) as ttl_bytes
-                FROM api_data_usage u
-                WHERE u.log_date >= ? AND u.log_date <= ?";
-        reports_data_usage_apply_scope($sql, $params, $admin, 'u');
-        if (!empty($targetUsername)) {
-            $sql .= " AND u.username = ?";
-            $params[] = $targetUsername;
-        }
-        if (!empty($routerFilter)) {
-            $sql .= " AND u.router_name = ?";
-            $params[] = $routerFilter;
-        }
-        $sql .= " GROUP BY u.username, DATE(u.log_date) ORDER BY log_day DESC";
-        $stmt = $db->prepare($sql);
-        $stmt->execute($params);
-        $formattedData = [];
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $formattedData[] = [
-                'username' => $row['username'],
-                'status' => $row['current_status'],
-                'date' => $row['log_day'],
-                'metrics' => [
-                    'download' => reports_data_usage_format($row['dl_bytes']),
-                    'upload' => reports_data_usage_format($row['ul_bytes']),
-                    'total' => reports_data_usage_format($row['ttl_bytes']),
-                    'raw_download_mb' => round(($row['dl_bytes'] / 1048576), 2),
-                    'raw_upload_mb' => round(($row['ul_bytes'] / 1048576), 2)
-                ]
-            ];
-        }
-        echo json_encode(['status' => 'success', 'resolved_username' => $targetUsername, 'data' => $formattedData]);
+        echo json_encode(reports_data_usage_api_payload($admin));
         exit;
 
     case 'data-usage':
@@ -184,6 +422,7 @@ switch ($action) {
         }
         $ui->assign('routers', $routerQuery->find_many());
         $ui->assign('admins', $admins);
+        $ui->assign('service_types', ['Hotspot', 'PPPoE', 'Others']);
         $ui->assign('_title', Lang::T('Data Usage'));
         $ui->display('admin/reports/data-usage.tpl');
         break;
@@ -205,13 +444,16 @@ switch ($action) {
         $ts = _req('ts', '00:00:00');
         $te = _req('te', '23:59:59');
         $types = ORM::for_table('tbl_transactions')->getEnum('type');
-        $tps = !empty($_GET['tps']) ? $_GET['tps'] : $types;
+        $tpSel = _req('tp');
+        $rtSel = _req('rt');
+        $mtSel = _req('mt');
+        $tps = ($tpSel !== '' && $tpSel !== null) ? [$tpSel] : (!empty($_GET['tps']) ? (array) $_GET['tps'] : $types);
         $plans = array_column(ORM::for_table('tbl_transactions')->select('plan_name')->distinct('plan_name')->find_array(), 'plan_name');
-        $plns = !empty($_GET['plns']) ? $_GET['plns'] : $plans;
+        $plns = !empty($_GET['plns']) ? (array) $_GET['plns'] : $plans;
         $methods = array_column(ORM::for_table('tbl_transactions')->rawQuery("SELECT DISTINCT SUBSTRING_INDEX(`method`, ' - ', 1) as method FROM tbl_transactions;")->findArray(), 'method');
-        $mts = !empty($_GET['mts']) ? $_GET['mts'] : $methods;
+        $mts = ($mtSel !== '' && $mtSel !== null) ? [$mtSel] : (!empty($_GET['mts']) ? (array) $_GET['mts'] : $methods);
         $routers = array_column(ORM::for_table('tbl_transactions')->select('routers')->distinct('routers')->find_array(), 'routers');
-        $rts = !empty($_GET['rts']) ? $_GET['rts'] : $routers;
+        $rts = ($rtSel !== '' && $rtSel !== null) ? [$rtSel] : (!empty($_GET['rts']) ? (array) $_GET['rts'] : $routers);
         $result = [];
         switch ($data) {
             case 'type':
@@ -319,6 +561,43 @@ switch ($action) {
                         $result['labels'][] = "$rt ($count)";
                     }
                 }
+                break;
+            case 'revenue':
+                $query = ORM::for_table('tbl_transactions')
+                    ->select_expr('recharged_on', 'day')
+                    ->select_expr('SUM(price)', 'revenue')
+                    ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) >= " . strtotime("$sd $ts"))
+                    ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) <= " . strtotime("$ed $te"))
+                    ->group_by('recharged_on')
+                    ->order_by_asc('recharged_on');
+                if ($admin['user_type'] != 'SuperAdmin') {
+                    $query->where('admin_id', $admin['id']);
+                }
+                if (count($tps) > 0) {
+                    $query->where_in('type', $tps);
+                }
+                if (count($mts) > 0 && count($mts) != count($methods)) {
+                    $w = [];
+                    $v = [];
+                    foreach ($mts as $mt) {
+                        $w[] = 'method';
+                        $v[] = "$mt - %";
+                    }
+                    $query->where_likes($w, $v);
+                }
+                if (count($rts) > 0) {
+                    $query->where_in('routers', $rts);
+                }
+                if (count($plns) > 0) {
+                    $query->where_in('plan_name', $plns);
+                }
+                $labels = [];
+                $datas = [];
+                foreach ($query->find_array() as $row) {
+                    $labels[] = date('d M', strtotime($row['day']));
+                    $datas[] = round((float) $row['revenue'], 2);
+                }
+                $result = ['labels' => $labels, 'data' => $datas];
                 break;
             case 'line':
                 $query = ORM::for_table('tbl_transactions')
@@ -428,6 +707,79 @@ switch ($action) {
         }
         echo json_encode($result);
         die();
+    case 'csv':
+        $types = ORM::for_table('tbl_transactions')->getEnum('type');
+        $methods = array_column(ORM::for_table('tbl_transactions')->rawQuery("SELECT DISTINCT SUBSTRING_INDEX(`method`, ' - ', 1) as method FROM tbl_transactions;")->findArray(), 'method');
+        $routers = array_column(ORM::for_table('tbl_transactions')->select('routers')->distinct('routers')->find_array(), 'routers');
+        $plans = array_column(ORM::for_table('tbl_transactions')->select('plan_name')->distinct('plan_name')->find_array(), 'plan_name');
+        $reset_day = $config['reset_day'] ?: 1;
+        if (date('d') >= $reset_day) {
+            $start_date = date('Y-m-' . $reset_day);
+        } else {
+            $start_date = date('Y-m-' . $reset_day, strtotime('-1 MONTH'));
+        }
+        $tps = !empty($_GET['tps']) ? (array) $_GET['tps'] : $types;
+        if (!empty($_GET['tp'])) {
+            $tps = [$_GET['tp']];
+        }
+        $mts = !empty($_GET['mts']) ? (array) $_GET['mts'] : $methods;
+        if (!empty($_GET['mt']) && $_GET['mt'] !== '') {
+            $mts = [$_GET['mt']];
+        }
+        $rts = !empty($_GET['rts']) ? (array) $_GET['rts'] : $routers;
+        if (!empty($_GET['rt']) && $_GET['rt'] !== '') {
+            $rts = [$_GET['rt']];
+        }
+        $plns = !empty($_GET['plns']) ? (array) $_GET['plns'] : $plans;
+        $sd = _req('sd', $start_date);
+        $ed = _req('ed', $mdate);
+        $ts = _req('ts', '00:00:00');
+        $te = _req('te', '23:59:59');
+        $q = trim((string) _req('q'));
+        $staff_map = reports_daily_staff_map();
+        $query = ORM::for_table('tbl_transactions')
+            ->select('tbl_transactions.*')
+            ->select('tbl_customers.fullname', 'fullname')
+            ->select('tbl_customers.address', 'address')
+            ->select('tbl_customers.phonenumber', 'phonenumber')
+            ->left_outer_join('tbl_customers', ['tbl_transactions.username', '=', 'tbl_customers.username'])
+            ->order_by_desc('tbl_transactions.id');
+        reports_daily_apply_filters($query, $admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $plns, $methods, $staff_map, $q);
+        $rows = $query->find_array();
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="transactions_' . date('Y-m-d_His') . '.csv"');
+        $out = fopen('php://output', 'w');
+        fputcsv($out, [
+            Lang::T('Username'),
+            Lang::T('Full Name'),
+            Lang::T('Address'),
+            Lang::T('Phone Number'),
+            Lang::T('Type'),
+            Lang::T('Plan Name'),
+            Lang::T('Plan Price'),
+            Lang::T('Created On'),
+            Lang::T('Expires On'),
+            Lang::T('Method'),
+            Lang::T('Routers'),
+        ]);
+        foreach ($rows as $row) {
+            fputcsv($out, [
+                $row['username'],
+                $row['fullname'] ?? '',
+                $row['address'] ?? '',
+                $row['phonenumber'] ?? '',
+                $row['type'],
+                $row['plan_name'],
+                $row['price'],
+                Lang::dateAndTimeFormat($row['recharged_on'], $row['recharged_time']),
+                Lang::dateAndTimeFormat($row['expiration'], $row['time']),
+                $row['method'],
+                $row['routers'],
+            ]);
+        }
+        fclose($out);
+        exit;
+
     case 'by-date':
     case 'activation':
         $q = (_post('q') ? _post('q') : _get('q'));
@@ -542,111 +894,57 @@ switch ($action) {
         $methods = array_column(ORM::for_table('tbl_transactions')->rawQuery("SELECT DISTINCT SUBSTRING_INDEX(`method`, ' - ', 1) as method FROM tbl_transactions;")->findArray(), 'method');
         $routers = array_column(ORM::for_table('tbl_transactions')->select('routers')->distinct('routers')->find_array(), 'routers');
         $plans = array_column(ORM::for_table('tbl_transactions')->select('plan_name')->distinct('plan_name')->find_array(), 'plan_name');
-        
+
         $reset_day = $config['reset_day'];
-        if (empty($reset_day)) { $reset_day = 1; }
-        
-        if (date("d") >= $reset_day) {
+        if (empty($reset_day)) {
+            $reset_day = 1;
+        }
+        if (date('d') >= $reset_day) {
             $start_date = date('Y-m-' . $reset_day);
         } else {
-            $start_date = date('Y-m-' . $reset_day, strtotime("-1 MONTH"));
+            $start_date = date('Y-m-' . $reset_day, strtotime('-1 MONTH'));
         }
-        
-        $tps = !empty($_GET['tps']) ? $_GET['tps'] : $types;
-        $mts = !empty($_GET['mts']) ? $_GET['mts'] : $methods;
-        $rts = !empty($_GET['rts']) ? $_GET['rts'] : $routers;
-        $plns = !empty($_GET['plns']) ? $_GET['plns'] : $plans;
+
         $sd = _req('sd', $start_date);
         $ed = _req('ed', $mdate);
         $ts = _req('ts', '00:00:00');
         $te = _req('te', '23:59:59');
-        $urlquery = str_replace('_route=reports', '', $_SERVER['QUERY_STRING']);
+        $q = trim((string) _req('q'));
 
-        // --- স্টাফদের ডাটা আগে লোড করছি যাতে ফিল্টারে Fullname ব্যবহার করা যায় ---
+        $tpSel = _req('tp');
+        $rtSel = _req('rt');
+        $mtSel = _req('mt');
+        $tps = ($tpSel !== '' && $tpSel !== null) ? [$tpSel] : (!empty($_GET['tps']) ? (array) $_GET['tps'] : $types);
+        $rts = ($rtSel !== '' && $rtSel !== null) ? [$rtSel] : (!empty($_GET['rts']) ? (array) $_GET['rts'] : $routers);
+        $mts = ($mtSel !== '' && $mtSel !== null) ? [$mtSel] : (!empty($_GET['mts']) ? (array) $_GET['mts'] : $methods);
+        $plns = !empty($_GET['plns']) ? (array) $_GET['plns'] : $plans;
+
+        $urlquery = str_replace('_route=reports', '', $_SERVER['QUERY_STRING'] ?? '');
+        $staff_map = reports_daily_staff_map();
+
         $all_staff = [];
-        $staff_map = []; // ইউজারনেম দিয়ে ফুল নেম খোঁজার জন্য
         foreach (ORM::for_table('tbl_users')->find_array() as $ad) {
             $all_staff[] = ['username' => $ad['username'], 'fullname' => $ad['fullname'] . ' (Admin)'];
-            $staff_map[$ad['username']] = $ad['fullname'];
         }
         foreach (ORM::for_table('tbl_hotspot_resellers')->find_array() as $rs) {
             $all_staff[] = ['username' => $rs['username'], 'fullname' => $rs['fullname'] . ' (Reseller)'];
-            $staff_map[$rs['username']] = $rs['fullname'];
         }
 
-        // --- ডাটা লোড করার মূল কুয়েরি ---
         $query = ORM::for_table('tbl_transactions')
             ->select('tbl_transactions.*')
             ->select('tbl_customers.fullname', 'fullname')
             ->select('tbl_customers.address', 'address')
             ->select('tbl_customers.phonenumber', 'phonenumber')
-            ->left_outer_join('tbl_customers', array('tbl_transactions.username', '=', 'tbl_customers.username'))
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`tbl_transactions`.`recharged_on`,' ',`tbl_transactions`.`recharged_time`)) >= " . strtotime("$sd $ts"))
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`tbl_transactions`.`recharged_on`,' ',`tbl_transactions`.`recharged_time`)) <= " . strtotime("$ed $te"))
+            ->left_outer_join('tbl_customers', ['tbl_transactions.username', '=', 'tbl_customers.username'])
             ->order_by_desc('tbl_transactions.id');
-            
-            if ($admin['user_type'] != 'SuperAdmin') {
-    $query->where('tbl_transactions.admin_id', $admin['id']);
-}
+        reports_daily_apply_filters($query, $admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $plns, $methods, $staff_map, $q);
 
-        if (count($tps) > 0) {
-            $query->where_in('tbl_transactions.type', $tps);
-        }
-        
-        // --- আপডেট করা ফিল্টার: Username এবং Fullname দুটি দিয়েই খুঁজবে ---
-        if (count($mts) > 0) {
-            $cond = [];
-            $param = [];
-            foreach ($mts as $mt) {
-                // ১. প্রথমে ইউজারনেম বা পেমেন্ট মেথড দিয়ে খুঁজবে
-                $cond[] = "`tbl_transactions`.`method` LIKE ?";
-                $param[] = "%$mt%";
-                
-                // ২. যদি ড্রপডাউনে স্টাফ সিলেক্ট করা হয়, তবে তার Fullname দিয়েও খুঁজবে
-                if (isset($staff_map[$mt]) && !empty($staff_map[$mt])) {
-                    $cond[] = "`tbl_transactions`.`method` LIKE ?";
-                    $param[] = "%" . $staff_map[$mt] . "%";
-                }
-            }
-            if (!empty($cond)) {
-                $query->where_raw("(" . implode(" OR ", $cond) . ")", $param);
-            }
-        }
-        
-        if (count($rts) > 0) {
-            $query->where_in('tbl_transactions.routers', $rts);
-        }
-        if (count($plns) > 0) {
-            $query->where_in('tbl_transactions.plan_name', $plns);
-        }
+        $searchParams = $q !== '' ? ['q' => $q] : [];
+        $total_transactions = (int) $query->count();
+        $d = Paginator::findMany($query, $searchParams, 5, $urlquery);
+        $dr = (float) reports_daily_sum_query($admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $plns, $methods, $staff_map, $q)->sum('price');
 
-        // ডাটা লোড
-        $d = Paginator::findMany($query, [], 100, $urlquery);
-        
-        // --- টোটাল প্রাইস ($dr) এর হিসাব ---
-        $dr_query = ORM::for_table('tbl_transactions')
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) >= " . strtotime("$sd $ts"))
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) <= " . strtotime("$ed $te"));
-
-        if (count($mts) > 0) {
-            $cond_dr = []; 
-            $param_dr = [];
-            foreach ($mts as $mt) {
-                $cond_dr[] = "`method` LIKE ?";
-                $param_dr[] = "%$mt%";
-                
-                if (isset($staff_map[$mt]) && !empty($staff_map[$mt])) {
-                    $cond_dr[] = "`method` LIKE ?";
-                    $param_dr[] = "%" . $staff_map[$mt] . "%";
-                }
-            }
-            if (!empty($cond_dr)) {
-                $dr_query->where_raw("(" . implode(" OR ", $cond_dr) . ")", $param_dr);
-            }
-        }
-        $dr = $dr_query->sum('price');
-
-        // --- ভিউ টেমপ্লেটে ডাটা পাঠানো ---
+        $ui->assign('_title', Lang::T('Reports_Analytics'));
         $ui->assign('all_staff', $all_staff);
         $ui->assign('methods', $methods);
         $ui->assign('types', $types);
@@ -657,13 +955,19 @@ switch ($action) {
         $ui->assign('ed', $ed);
         $ui->assign('ts', $ts);
         $ui->assign('te', $te);
+        $ui->assign('tp_sel', $tpSel);
+        $ui->assign('rt_sel', $rtSel);
+        $ui->assign('mt_sel', $mtSel);
         $ui->assign('mts', $mts);
         $ui->assign('tps', $tps);
         $ui->assign('rts', $rts);
         $ui->assign('plns', $plns);
+        $ui->assign('q', $q);
         $ui->assign('d', $d);
         $ui->assign('dr', $dr);
+        $ui->assign('total_transactions', $total_transactions);
         $ui->assign('mdate', $mdate);
+        $ui->assign('currency', $_c['currency_code'] ?? 'XAF');
         run_hook('view_daily_reports');
         $ui->display('admin/reports/list.tpl');
         break;

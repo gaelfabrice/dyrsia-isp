@@ -18,12 +18,24 @@
                     <div class="form-group">
                         <label class="col-md-2 control-label">{Lang::T('Timezone')}</label>
                         <div class="col-md-6">
-                            <select name="tzone" id="tzone" class="form-control">
-                                {foreach $tlist as $value => $label}
-                                    <option value="{$value}" {if $_c['timezone'] eq $value}selected="selected" {/if}>
-                                        {$label}</option>
-                                {/foreach}
-                            </select>
+                            {if $can_edit_timezone}
+                                <select name="tzone" id="tzone" class="form-control">
+                                    {foreach $tlist as $value => $label}
+                                        <option value="{$value}" {if $effective_timezone eq $value}selected="selected" {/if}>
+                                            {$label}</option>
+                                    {/foreach}
+                                </select>
+                                <span class="help-block">Réservé au SuperAdmin. Si une instance ISP est active, le fuseau est aussi enregistré pour ce tenant.</span>
+                            {else}
+                                <input type="hidden" name="tzone" value="{$effective_timezone}">
+                                <p class="form-control-static" style="padding-top:7px">
+                                    <strong>{$effective_timezone}</strong>
+                                    {if $tenant_country_name neq ''}
+                                        <span class="text-muted"> — {$tenant_country_name}</span>
+                                    {/if}
+                                </p>
+                                <span class="help-block">Défini à la création de l'instance selon le pays. Seul le SuperAdmin peut le modifier.</span>
+                            {/if}
                         </div>
                     </div>
                     <div class="form-group">

@@ -1,3 +1,4 @@
+{if $wz_use_page_shell|default:false}</div>{/if}
 </section>
 </div>
 

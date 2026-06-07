@@ -324,7 +324,9 @@ switch ($do) {
         run_hook('customer_view_login'); #HOOK
         $csrf_token = Csrf::generateAndStoreToken();
         if (!isset($routes['1']) && empty($_GET['nux-mac']) && empty($_GET['nux-ip']) && empty($_GET['nux-router'])) {
+            AdminSubscription::ensureSchema();
             $ui->assign('_title', Lang::T('Welcome'));
+            $ui->assign('isp_settings', AdminSubscription::settings());
             $ui->display('customer/landing.tpl');
             exit;
         }

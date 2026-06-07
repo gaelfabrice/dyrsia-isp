@@ -241,7 +241,6 @@ class DemoShowcase
             'pppoe_online' => $pppoeOnline,
             'ftth_online' => $ftthOnline,
             'staff_count' => mt_rand(1, 4),
-            'open_tickets' => mt_rand(0, 4),
             'network_revenue' => mt_rand(120000, 680000),
             'dataset' => $dataset,
         ];
@@ -311,7 +310,6 @@ class DemoShowcase
         $ui->assign('p_all', $s['p_act'] + $s['p_exp'] + $s['ftth_act'] + $s['ftth_exp']);
         $ui->assign('h_act', $s['hotspot_online']);
         $ui->assign('p_act', $s['pppoe_online'] + $s['ftth_online']);
-        $ui->assign('open_tickets', $s['open_tickets']);
     }
 
     public static function applyFinance($ui)

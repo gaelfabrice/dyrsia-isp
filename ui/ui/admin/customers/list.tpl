@@ -1,15 +1,4 @@
 {include file="sections/header.tpl"}
-<style>
-    .dataTables_wrapper .dataTables_paginate .paginate_button {
-        display: inline-block;
-        padding: 5px 10px;
-        margin-right: 5px;
-        border: 1px solid #ccc;
-        background-color: #fff;
-        color: #333;
-        cursor: pointer;
-    }
-</style>
 
 <div class="row">
     <div class="col-sm-12">
@@ -99,14 +88,11 @@
                             <tr>
                                 <th><input type="checkbox" id="select-all"></th>
                                 <th>{Lang::T('Username')}</th>
-                                <th>Photo</th>
                                 <th>{Lang::T('Account Type')}</th>
                                 <th>{Lang::T('Full Name')}</th>
                                 <th>{Lang::T('Balance')}</th>
                                 <th>{Lang::T('Contact')}</th>
                                 <th>{Lang::T('Package')}</th>
-                                <th>{Lang::T('Service Type')}</th>
-                                <th>PPPOE</th>
                                 <th>{Lang::T('Status')}</th>
                                 <th>{Lang::T('Created On')}</th>
                                 <th>{Lang::T('Manage')}</th>
@@ -118,38 +104,19 @@
                                 <td><input type="checkbox" name="customer_ids[]" value="{$ds['id']}"></td>
                                 <td onclick="window.location.href = '{Text::url('customers/view/', $ds['id'])}'"
                                     style="cursor:pointer;">{$ds['username']}</td>
-                                <td>
-                                    <a href="{$app_url}/{$UPLOAD_PATH}{$ds['photo']}" target="photo">
-                                        <img src="{$app_url}/{$UPLOAD_PATH}{$ds['photo']}.thumb.jpg" width="32" alt="">
-                                    </a>
-                                </td>
                                 <td>{$ds['account_type']}</td>
                                 <td onclick="window.location.href = '{Text::url('customers/view/', $ds['id'])}'"
                                     style="cursor: pointer;">{$ds['fullname']}</td>
                                 <td>{Lang::moneyFormat($ds['balance'])}</td>
-                                <td align="center">
-                                    {if $ds['phonenumber']}
-                                    <a href="tel:{$ds['phonenumber']}" class="btn btn-default btn-xs"
-                                        title="{$ds['phonenumber']}"><i class="glyphicon glyphicon-earphone"></i></a>
-                                    {/if}
-                                    {if $ds['email']}
-                                    <a href="mailto:{$ds['email']}" class="btn btn-default btn-xs"
-                                        title="{$ds['email']}"><i class="glyphicon glyphicon-envelope"></i></a>
-                                    {/if}
-                                    {if $ds['coordinates']}
-                                    <a href="https://www.google.com/maps/dir//{$ds['coordinates']}/" target="_blank"
-                                        class="btn btn-default btn-xs" title="{$ds['coordinates']}"><i
-                                            class="glyphicon glyphicon-map-marker"></i></a>
+                                <td>
+                                    {if $ds['contact_phone']}
+                                    <a href="tel:{$ds['contact_phone']}">{$ds['contact_phone']}</a>
+                                    {elseif $ds['phonenumber']}
+                                    <a href="tel:{$ds['phonenumber']}">{$ds['phonenumber']}</a>
                                     {/if}
                                 </td>
                                 <td align="center" api-get-text="{Text::url('autoload/plan_is_active/')}{$ds['id']}">
                                     <span class="label label-default">&bull;</span>
-                                </td>
-                                <td>{$ds['service_type']}</td>
-                                <td>
-                                    {$ds['pppoe_username']}
-                                    {if !empty($ds['pppoe_username']) && !empty($ds['pppoe_ip'])}:{/if}
-                                    {$ds['pppoe_ip']}
                                 </td>
                                 <td>{Lang::T($ds['status'])}</td>
                                 <td>{Lang::dateTimeFormat($ds['created_at'])}</td>

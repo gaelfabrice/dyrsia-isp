@@ -13,6 +13,7 @@
                         <strong><i class="fa fa-info-circle"></i> CamPay</strong> permet d'accepter les paiements 
                         <strong>MTN Mobile Money</strong> et <strong>Orange Money</strong> au Cameroun.
                         <br><small>Créez un compte sur <a href="https://www.campay.net" target="_blank">campay.net</a> pour obtenir vos credentials.</small>
+                        <br><small><strong>Note :</strong> CamPay et MyPVit ne peuvent pas être actifs simultanément.</small>
                     </div>
 
                     <div class="form-group">

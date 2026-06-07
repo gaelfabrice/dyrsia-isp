@@ -202,15 +202,69 @@ class AdminSubscription
         return self::ensureTrial((int) $adminId);
     }
 
+    public static function defaultSettings()
+    {
+        return [
+            'business_price' => 5000.0,
+            'pro_price_per_router' => 2000.0,
+        ];
+    }
+
+    public static function settingLabels()
+    {
+        return [
+            'business_price' => 'Forfait Business',
+            'pro_price_per_router' => 'Forfait Pro',
+        ];
+    }
+
+    public static function settingLabel($key)
+    {
+        $labels = self::settingLabels();
+        return $labels[$key] ?? $key;
+    }
+
     public static function settings()
     {
         self::ensureSchema();
+        $settings = self::defaultSettings();
         $rows = ORM::for_table('isp_settings')->find_many();
-        $settings = [];
         foreach ($rows as $row) {
             $settings[$row->setting_key] = (float) $row->setting_value;
         }
         return $settings;
+    }
+
+    public static function settingsUpdatedAt()
+    {
+        self::ensureSchema();
+        $row = ORM::for_table('isp_settings')->order_by_desc('updated_at')->find_one();
+        return $row ? (string) $row->updated_at : '';
+    }
+
+    /** Vide les templates Smarty liés aux tarifs ISP (après modification SuperAdmin). */
+    public static function clearPricingUiCache($smarty = null)
+    {
+        global $ui;
+        $smarty = $smarty ?? $ui ?? null;
+        if (!$smarty instanceof Smarty) {
+            return;
+        }
+        foreach ([
+            'customer/landing.tpl',
+            'admin/subscription.tpl',
+            'admin/dashboard.tpl',
+            'admin/superadmin/isp-settings.tpl',
+        ] as $tpl) {
+            try {
+                $smarty->clearCompiledTemplate($tpl);
+            } catch (Throwable $e) {
+            }
+        }
+        try {
+            $smarty->clearCompiledTemplate();
+        } catch (Throwable $e) {
+        }
     }
 
     public static function updateSetting($key, $value, $updatedBy)
@@ -228,6 +282,7 @@ class AdminSubscription
         $setting->updated_by = (int) $updatedBy;
         $setting->updated_at = date('Y-m-d H:i:s');
         $setting->save();
+        self::clearPricingUiCache();
         return true;
     }
 

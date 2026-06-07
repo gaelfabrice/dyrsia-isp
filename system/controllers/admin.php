@@ -70,14 +70,54 @@ switch ($do) {
         $ui->assign('subscription_payments', AdminSubscription::paymentsForAdmin((int) $admin['id']));
         $ui->assign('router_count', AdminSubscription::routerCount((int) $admin['id']));
         $ui->assign('admin_phone', trim((string) ($admin['phone'] ?? '')));
-        $ui->assign('pending_payment_id', (int) (_get('payment_id') ?? 0));
+        $pendingPaymentId = (int) (_get('payment_id') ?? 0);
+        $pendingOperator = '';
+        $pendingUssd = '';
+        $pendingAmount = 0;
+        $pendingPlanLabel = '';
+        if ($pendingPaymentId > 0) {
+            $pendingPay = AdminSubscription::getPaymentForAdmin($pendingPaymentId, (int) $admin['id']);
+            if ($pendingPay && $pendingPay->status === 'pending') {
+                $pendingAmount = (float) $pendingPay->amount;
+                $pendingUssdData = MobileMoneyGateway::takeSubscriptionUssd($pendingPaymentId);
+                $pendingOperator = $pendingUssdData['operator'];
+                $pendingUssd = $pendingUssdData['ussd'];
+                if ($pendingOperator === '' || $pendingUssd === '') {
+                    $ussdFallback = MobileMoneyGateway::operatorInfoForPhone($admin['phone'] ?? '', MobileMoneyGateway::activeMobile());
+                    if ($pendingOperator === '') {
+                        $pendingOperator = $ussdFallback['operator'];
+                    }
+                    if ($pendingUssd === '') {
+                        $pendingUssd = $ussdFallback['ussd'];
+                    }
+                }
+                $pendingInvoice = $pendingPay->invoice_id
+                    ? ORM::for_table('admin_subscription_invoices')->find_one((int) $pendingPay->invoice_id)
+                    : null;
+                if ($pendingInvoice) {
+                    $pendingPlanLabel = AdminSubscription::planLabel($pendingInvoice->plan_type);
+                }
+            } else {
+                $pendingPaymentId = 0;
+            }
+        }
+        if ($pendingPaymentId > 0) {
+            unset($_SESSION['notify'], $_SESSION['ntype']);
+        }
+        $ui->assign('pending_payment_id', $pendingPaymentId);
+        $ui->assign('pending_operator', $pendingOperator);
+        $ui->assign('pending_ussd_code', $pendingUssd);
+        $ui->assign('pending_amount', $pendingAmount);
+        $ui->assign('pending_plan_label', $pendingPlanLabel);
         $ui->assign('subscription_verify_url', getUrl('admin/subscription-verify'));
+        $ui->assign('subscription_pay_url', getUrl('admin/subscription-pay'));
         global $config;
-        $ui->assign('campay_configured', !empty($config['campay_username']) && !empty($config['campay_password']));
+        $ui->assign('campay_configured', MobileMoneyGateway::isConfigured());
+        $ui->assign('mobile_payment_gateway', MobileMoneyGateway::activeMobile());
         $adminPhoneLocal = preg_replace('/^237/', '', trim((string) ($admin['phone'] ?? '')));
         $ui->assign('admin_phone_local', $adminPhoneLocal);
-        $csrf_token = Csrf::generateAndStoreToken();
-        $ui->assign('csrf_token', $csrf_token);
+        $ui->assign('csrf_token', Csrf::getToken());
+        $ui->assign('isp_settings_updated_at', AdminSubscription::settingsUpdatedAt());
         $ui->display('admin/subscription.tpl');
         break;
 
@@ -85,21 +125,39 @@ switch ($do) {
     case 'subscription-post':
         _admin();
         if ($admin['user_type'] !== 'Admin') {
+            if (_post('ajax') == '1') {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'message' => Lang::T('You do not have permission to access this page')]);
+                exit;
+            }
             _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
         }
+        $isAjax = _post('ajax') == '1';
         $csrf_token = _post('csrf_token');
         if (!Csrf::check($csrf_token)) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'message' => Lang::T('Invalid or Expired CSRF Token') . '.']);
+                exit;
+            }
             r2(getUrl('admin/subscription'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
         }
         global $PAYMENTGATEWAY_PATH;
-        require_once $PAYMENTGATEWAY_PATH . DIRECTORY_SEPARATOR . 'campay.php';
+        if (!MobileMoneyGateway::requireFile()) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'message' => Lang::T('Payment gateway not configured. Please contact admin')]);
+                exit;
+            }
+            r2(getUrl('admin/subscription'), 'e', Lang::T('Payment gateway not configured. Please contact admin'));
+        }
         try {
             $phone = trim(_post('phone'));
             if ($phone === '') {
                 $phone = trim((string) ($admin['phone'] ?? ''));
             }
             if ($phone === '') {
-                r2(getUrl('admin/subscription'), 'e', Lang::T('Phone number is required for Mobile Money payment'));
+                throw new InvalidArgumentException(Lang::T('Phone number is required for Mobile Money payment'));
             }
             if (strlen(preg_replace('/\D/', '', $phone)) >= 9) {
                 $adminRow = ORM::for_table('tbl_users')->find_one((int) $admin['id']);
@@ -113,8 +171,18 @@ switch ($do) {
                 _post('plan_type'),
                 _post('routers_count')
             );
-            campay_admin_subscription_collect($ctx, $admin, $phone);
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(MobileMoneyGateway::adminSubscriptionCollectData($ctx, $admin, $phone));
+                exit;
+            }
+            MobileMoneyGateway::adminSubscriptionCollect($ctx, $admin, $phone);
         } catch (Exception $e) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'message' => $e->getMessage()]);
+                exit;
+            }
             r2(getUrl('admin/subscription'), 'e', $e->getMessage());
         }
         break;
@@ -144,10 +212,13 @@ switch ($do) {
             echo json_encode(['ok' => false, 'message' => Lang::T('You do not have permission to access this page')]);
             exit;
         }
-        global $PAYMENTGATEWAY_PATH;
-        require_once $PAYMENTGATEWAY_PATH . DIRECTORY_SEPARATOR . 'campay.php';
+        if (!MobileMoneyGateway::requireFile()) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'message' => Lang::T('Payment gateway not configured')]);
+            exit;
+        }
         header('Content-Type: application/json');
-        echo json_encode(campay_admin_subscription_check_status((int) _get('payment_id'), (int) $admin['id']));
+        echo json_encode(MobileMoneyGateway::adminSubscriptionCheckStatus((int) _get('payment_id'), (int) $admin['id']));
         exit;
 
     case 'post':

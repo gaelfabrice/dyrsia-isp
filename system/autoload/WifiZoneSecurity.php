@@ -152,6 +152,39 @@ class WifiZoneSecurity
         if ($identifier === '') {
             $identifier = 'unknown';
         }
+        if (!self::rateLimitAllowed($scope, $identifier, $maxHits, $windowSeconds)) {
+            return false;
+        }
+        self::rateLimitHit($scope, $identifier, $maxHits, $windowSeconds);
+        return true;
+    }
+
+    /** Vérifie la limite sans incrémenter le compteur. */
+    public static function rateLimitAllowed(string $scope, string $identifier, int $maxHits, int $windowSeconds): bool
+    {
+        if ($identifier === '') {
+            $identifier = 'unknown';
+        }
+        $now = time();
+        $row = ORM::for_table('wifizone_rate_limit')
+            ->where('scope', $scope)
+            ->where('identifier', $identifier)
+            ->find_one();
+        if (!$row) {
+            return true;
+        }
+        if (($now - (int) $row->window_start) >= $windowSeconds) {
+            return true;
+        }
+        return (int) $row->hits < $maxHits;
+    }
+
+    /** Enregistre une tentative (incrémente le compteur). */
+    public static function rateLimitHit(string $scope, string $identifier, int $maxHits, int $windowSeconds): void
+    {
+        if ($identifier === '') {
+            $identifier = 'unknown';
+        }
         $now = time();
         $row = ORM::for_table('wifizone_rate_limit')
             ->where('scope', $scope)
@@ -164,20 +197,16 @@ class WifiZoneSecurity
             $row->hits = 1;
             $row->window_start = $now;
             $row->save();
-            return true;
+            return;
         }
         if (($now - (int) $row->window_start) >= $windowSeconds) {
             $row->hits = 1;
             $row->window_start = $now;
             $row->save();
-            return true;
+            return;
         }
-        if ((int) $row->hits >= $maxHits) {
-            return false;
-        }
-        $row->hits = (int) $row->hits + 1;
+        $row->hits = min($maxHits, (int) $row->hits + 1);
         $row->save();
-        return true;
     }
 
     public static function clientIp(): string
@@ -203,11 +232,27 @@ class WifiZoneSecurity
         if (trim(_post('website')) !== '') {
             return Lang::T('Invalid request');
         }
+        return null;
+    }
+
+    public static function checkProvisionRateLimit(): ?string
+    {
+        if (self::isTrustedLocalRequest()) {
+            return null;
+        }
         $ip = self::clientIp();
-        if (!self::rateLimit('provision_submit', $ip, 5, 3600)) {
+        if (!self::rateLimitAllowed('provision_submit', $ip, 8, 3600)) {
             return Lang::T('Too_many_attempts__Please_try_again_later_');
         }
         return null;
+    }
+
+    public static function recordProvisionAttempt(): void
+    {
+        if (self::isTrustedLocalRequest()) {
+            return;
+        }
+        self::rateLimitHit('provision_submit', self::clientIp(), 8, 3600);
     }
 
     public static function sendSecurityHeaders(): void
@@ -253,5 +298,103 @@ class WifiZoneSecurity
             return null;
         }
         return (int) ($admin['id'] ?? 0);
+    }
+
+    /**
+     * Stack trace without function arguments (prevents leaking router passwords in UI/logs).
+     */
+    public static function safeTraceString(\Throwable $e): string
+    {
+        $lines = [];
+        foreach ($e->getTrace() as $i => $frame) {
+            $file = $frame['file'] ?? '[internal]';
+            $line = (int) ($frame['line'] ?? 0);
+            $class = $frame['class'] ?? '';
+            $type = $frame['type'] ?? '';
+            $func = $frame['function'] ?? '';
+            $call = $class !== '' ? $class . $type . $func : $func;
+            $lines[] = '#' . $i . ' ' . $file . '(' . $line . '): ' . $call . '(...)';
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Strip credentials that may appear in legacy traces or exception messages.
+     */
+    public static function redactSecrets(string $text): string
+    {
+        $text = preg_replace(
+            '/(?:Mikrotik(?:Hotspot|Pppoe)?::getClient|->getClient)\([^)]*\)/',
+            'Mikrotik::getClient(...)',
+            $text
+        ) ?? $text;
+        $text = preg_replace(
+            '/\(\s*[\'"][^\'"]+[\'"]\s*,\s*[\'"][^\'"]+[\'"]\s*,\s*[\'"][^\'"]+[\'"]\s*\)/',
+            '(...)',
+            $text
+        ) ?? $text;
+        $text = preg_replace(
+            '/\(\s*[\'"][^\'"]+[\'"]\s*,\s*[\'"][^\'"]+[\'"]\s*\)/',
+            '(...)',
+            $text
+        ) ?? $text;
+
+        return $text;
+    }
+
+    public static function safeExceptionMessage(\Throwable $e): string
+    {
+        return self::redactSecrets($e->getMessage());
+    }
+
+    public static function formatExceptionForLog(\Throwable $e): string
+    {
+        return self::safeExceptionMessage($e) . "\n" . self::safeTraceString($e);
+    }
+
+    public static function formatExceptionForDisplay(\Throwable $e): string
+    {
+        global $_app_stage;
+        $msg = htmlspecialchars(self::safeExceptionMessage($e), ENT_QUOTES, 'UTF-8');
+        if (($_app_stage ?? 'Live') !== 'Live') {
+            $trace = htmlspecialchars(self::safeTraceString($e), ENT_QUOTES, 'UTF-8');
+            return $msg . '<br><pre>' . $trace . '</pre>';
+        }
+
+        return $msg;
+    }
+
+    public static function logException(\Throwable $e, string $logFile): void
+    {
+        @file_put_contents(
+            $logFile,
+            date('c') . ' ' . self::formatExceptionForLog($e) . "\n---\n",
+            FILE_APPEND | LOCK_EX
+        );
+        if (function_exists('_log')) {
+            try {
+                _log('[Crash] ' . self::formatExceptionForLog($e), 'Error');
+            } catch (\Throwable $ignored) {
+            }
+        }
+        if (class_exists('Message')) {
+            try {
+                Message::sendTelegram("Sistem Error.\n" . self::formatExceptionForLog($e));
+            } catch (\Throwable $ignored) {
+            }
+        }
+    }
+
+    public static function renderExceptionPage(\Throwable $e, $ui): void
+    {
+        if (empty($_SESSION['aid'])) {
+            $ui->display('customer/error.tpl');
+            exit;
+        }
+        $ui->assign('error_message', self::formatExceptionForDisplay($e));
+        $ui->assign('error_title', 'wifizones Crash');
+        $ui->display('admin/error.tpl');
+        exit;
     }
 }

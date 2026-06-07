@@ -1,0 +1,463 @@
+/**
+ * Design system admin — aligné sur reports/data-usage
+ * Wrapper .wz-page injecté dans header.tpl (sauf dashboard, finance, data-usage)
+ */
+body.wz-command {
+    --wz-p-bg: transparent;
+    --wz-p-card: rgba(15, 23, 42, 0.92);
+    --wz-p-text: #f8fafc;
+    --wz-p-heading: #ffffff;
+    --wz-p-muted: #94a3b8;
+    --wz-p-line: rgba(148, 163, 184, 0.18);
+    --wz-p-brand: #2563eb;
+    --wz-p-brand2: #0891b2;
+    --wz-p-success: #10b981;
+    --wz-p-warning: #f59e0b;
+    --wz-p-danger: #ef4444;
+    --wz-p-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+    --wz-p-radius: 16px;
+}
+
+body.wz-command.theme-light {
+    --wz-p-card: #ffffff;
+    --wz-p-text: #1e293b;
+    --wz-p-heading: #0f172a;
+    --wz-p-muted: #64748b;
+    --wz-p-line: #e2e8f0;
+    --wz-p-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
+}
+
+/* ── Shell page (équivalent .du-page) ── */
+body.wz-command .content.wz-admin-content {
+    padding: 0 15px 28px !important;
+    font-family: Inter, system-ui, sans-serif;
+    color: var(--wz-p-text);
+    background: transparent !important;
+}
+
+body.wz-command .wz-page {
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Arial, sans-serif;
+    color: var(--wz-p-text);
+    margin: 0;
+    padding: 0 0 8px;
+    box-sizing: border-box;
+}
+
+body.wz-command .wz-page *,
+body.wz-command .wz-page *::before,
+body.wz-command .wz-page *::after {
+    box-sizing: border-box;
+}
+
+/* Pages avec design custom interne (orbit / finance) */
+body.wz-command .wz-page:has(> .wz-orbit-page),
+body.wz-command .wz-page:has(> .rx-page),
+body.wz-command .wz-page:has(> .rv-page) {
+    padding: 0;
+    margin: 0;
+}
+
+/* ── Titre de page (content-header) style hero Data Usage ── */
+body.wz-command .content-wrapper:has(.wz-page) > .content-header {
+    padding: 12px 15px 4px !important;
+    background: transparent !important;
+    border: 0 !important;
+}
+
+body.wz-command.wz-page-dashboard .content-wrapper > .content-header,
+body.wz-command .content-wrapper:has(.du-page) > .content-header,
+body.wz-command .content-wrapper:has(.ra-page) > .content-header,
+body.wz-command .content-wrapper:has(.ac-page) > .content-header,
+body.wz-command .content-wrapper:has(.au-page) > .content-header,
+body.wz-command .content-wrapper:has(.wz-cc) > .content-header,
+body.wz-command .content-wrapper:has(.wz-orbit-page) > .content-header,
+body.wz-command .content-wrapper:has(.rx-page) > .content-header,
+body.wz-command .content-wrapper:has(.rv-page) > .content-header {
+    display: none !important;
+}
+
+body.wz-command .content-wrapper:has(.wz-page) > .content-header > h1 {
+    margin: 0;
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 26px !important;
+    font-weight: 800 !important;
+    color: var(--wz-p-heading) !important;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+
+body.wz-command .content-wrapper:has(.wz-page) > .content-header > h1 small {
+    display: block;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: var(--wz-p-muted) !important;
+    margin-top: 6px;
+}
+
+/* ── Panels & boxes dans .wz-page ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .panel,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .box {
+    background: var(--wz-p-card) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    border-radius: var(--wz-p-radius) !important;
+    box-shadow: var(--wz-p-shadow) !important;
+    color: var(--wz-p-text) !important;
+    margin-bottom: 18px;
+    overflow: hidden;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .panel-heading,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .box-header {
+    background: transparent !important;
+    border-bottom: 1px solid var(--wz-p-line) !important;
+    color: var(--wz-p-heading) !important;
+    font-weight: 800 !important;
+    font-size: 15px !important;
+    padding: 16px 18px !important;
+    border-radius: 0 !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .panel-body,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .box-body {
+    padding: 18px !important;
+    color: var(--wz-p-text) !important;
+    background: transparent !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .panel-footer,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .box-footer {
+    background: transparent !important;
+    border-top: 1px solid var(--wz-p-line) !important;
+    color: var(--wz-p-muted) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .panel-primary,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .box-primary {
+    border-color: var(--wz-p-line) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .panel-primary > .panel-heading,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .box-primary > .box-header {
+    background: transparent !important;
+    color: var(--wz-p-heading) !important;
+    border-color: var(--wz-p-line) !important;
+}
+
+/* ── Grilles bootstrap ── */
+body.wz-command .wz-page .row {
+    margin-left: -10px;
+    margin-right: -10px;
+}
+
+body.wz-command .wz-page .row > [class*="col-"] {
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
+/* ── Forms ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .form-control,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) select.form-control,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) textarea.form-control,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .select2-container--bootstrap .select2-selection,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .select2-container--default .select2-selection {
+    border-radius: 10px !important;
+    border: 1px solid var(--wz-p-line) !important;
+    background: rgba(2, 6, 23, 0.55) !important;
+    color: var(--wz-p-text) !important;
+    font-family: Inter, system-ui, sans-serif !important;
+    font-size: 14px !important;
+    box-shadow: none !important;
+    min-height: 40px;
+}
+
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .form-control,
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) select.form-control,
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) textarea.form-control,
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .select2-container--bootstrap .select2-selection,
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .select2-container--default .select2-selection {
+    background: #f8fafc !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .form-control:focus,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .select2-container--bootstrap.select2-container--focus .select2-selection,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .select2-container--default.select2-container--focus .select2-selection {
+    border-color: var(--wz-p-brand) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) label,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .control-label {
+    color: var(--wz-p-muted) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .input-group-addon {
+    background: rgba(2, 6, 23, 0.35) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    color: var(--wz-p-muted) !important;
+    border-radius: 10px 0 0 10px !important;
+}
+
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .input-group-addon {
+    background: #f1f5f9 !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .help-block {
+    color: var(--wz-p-muted) !important;
+}
+
+/* ── Boutons ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-primary {
+    background: linear-gradient(135deg, var(--wz-p-brand), var(--wz-p-brand2)) !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+    color: #fff !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-default,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-secondary {
+    background: rgba(30, 41, 59, 0.65) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    color: var(--wz-p-text) !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}
+
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-default {
+    background: #f8fafc !important;
+    color: var(--wz-p-text) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-success,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-danger,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-warning,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-info {
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .btn-xs {
+    border-radius: 8px !important;
+    padding: 4px 10px !important;
+}
+
+/* ── Tableaux ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table {
+    color: var(--wz-p-text) !important;
+    border-collapse: collapse;
+    background: transparent !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > thead > tr > th,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > thead > tr > td {
+    background: rgba(2, 6, 23, 0.2) !important;
+    border-bottom: 1px solid var(--wz-p-line) !important;
+    color: var(--wz-p-muted) !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 14px !important;
+    border-top: 0 !important;
+}
+
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > thead > tr > th {
+    background: #f8fafc !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > tbody > tr > td,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > tbody > tr > th {
+    border-top: 1px solid var(--wz-p-line) !important;
+    padding: 12px 14px !important;
+    vertical-align: middle !important;
+    background: transparent !important;
+    color: var(--wz-p-text) !important;
+}
+
+/* Corrige la 1ère colonne grise AdminLTE */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > tbody > tr > td:first-child,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > tbody > tr > th:first-child,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table > thead > tr > th:first-child {
+    background: transparent !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table-striped > tbody > tr:nth-of-type(odd) {
+    background: rgba(148, 163, 184, 0.04) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table-hover > tbody > tr:hover {
+    background: rgba(59, 130, 246, 0.08) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table-responsive {
+    border: 0 !important;
+    border-radius: 12px;
+    overflow-x: auto;
+}
+
+/* DataTables */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_paginate .paginate_button {
+    border-radius: 8px !important;
+    border: 1px solid var(--wz-p-line) !important;
+    background: var(--wz-p-card) !important;
+    color: var(--wz-p-muted) !important;
+    margin: 0 2px;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+    background: rgba(37, 99, 235, 0.15) !important;
+    color: #93c5fd !important;
+    border-color: rgba(59, 130, 246, 0.35) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_filter input,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_length select,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_info {
+    border-radius: 10px !important;
+    color: var(--wz-p-muted) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_filter input,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_length select {
+    border: 1px solid var(--wz-p-line) !important;
+    background: rgba(2, 6, 23, 0.55) !important;
+    color: var(--wz-p-text) !important;
+}
+
+/* ── Tabs ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .nav-tabs {
+    border-bottom: 1px solid var(--wz-p-line) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .nav-tabs > li > a {
+    border-radius: 10px 10px 0 0 !important;
+    color: var(--wz-p-muted) !important;
+    font-weight: 600 !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .nav-tabs > li.active > a {
+    background: var(--wz-p-card) !important;
+    border-color: var(--wz-p-line) !important;
+    color: var(--wz-p-heading) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .nav-tabs-custom {
+    background: var(--wz-p-card) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    border-radius: var(--wz-p-radius) !important;
+    box-shadow: var(--wz-p-shadow) !important;
+}
+
+/* ── Alerts ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .alert {
+    border-radius: 12px !important;
+    border-width: 1px !important;
+    font-weight: 500;
+}
+
+/* ── Labels & badges ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .label {
+    border-radius: 999px !important;
+    font-weight: 700 !important;
+    padding: 4px 10px !important;
+}
+
+/* ── Modals ── */
+body.wz-command .modal-content {
+    background: var(--wz-p-card) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    border-radius: var(--wz-p-radius) !important;
+    color: var(--wz-p-text) !important;
+    box-shadow: var(--wz-p-shadow) !important;
+}
+
+body.wz-command .modal-header {
+    border-bottom: 1px solid var(--wz-p-line) !important;
+    background: transparent !important;
+}
+
+body.wz-command .modal-footer {
+    border-top: 1px solid var(--wz-p-line) !important;
+    background: transparent !important;
+}
+
+body.wz-command .modal-title {
+    color: var(--wz-p-heading) !important;
+    font-weight: 800 !important;
+}
+
+/* ── Filtres / barre recherche (style du-filters) ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .md-whiteframe-z1 {
+    background: var(--wz-p-card) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    border-radius: var(--wz-p-radius) !important;
+    box-shadow: var(--wz-p-shadow) !important;
+    padding: 18px !important;
+    margin-bottom: 18px !important;
+    color: var(--wz-p-text) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) hr {
+    border-color: var(--wz-p-line) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .well {
+    background: rgba(2, 6, 23, 0.25) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    border-radius: 12px !important;
+    color: var(--wz-p-text) !important;
+}
+
+body.wz-command.theme-light .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .well {
+    background: #f8fafc !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .small-box {
+    border-radius: var(--wz-p-radius) !important;
+    box-shadow: var(--wz-p-shadow) !important;
+    overflow: hidden;
+    border: 1px solid var(--wz-p-line) !important;
+}
+
+/* ── Pagination bootstrap ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .pagination > li > a,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .pagination > li > span {
+    background: var(--wz-p-card) !important;
+    border: 1px solid var(--wz-p-line) !important;
+    color: var(--wz-p-muted) !important;
+    border-radius: 8px !important;
+    margin: 0 2px;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .pagination > .active > a {
+    background: rgba(37, 99, 235, 0.15) !important;
+    border-color: rgba(59, 130, 246, 0.35) !important;
+    color: #93c5fd !important;
+}
+
+/* ── Callouts / bs-callout ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .bs-callout {
+    background: var(--wz-p-card) !important;
+    border-color: var(--wz-p-line) !important;
+    color: var(--wz-p-text) !important;
+    border-radius: 12px !important;
+}
+
+/* data-usage : variables partagées */
+body.wz-command .du-page {
+    --du-bg: var(--wz-p-bg);
+    --du-card: var(--wz-p-card);
+    --du-text: var(--wz-p-text);
+    --du-heading: var(--wz-p-heading);
+    --du-muted: var(--wz-p-muted);
+    --du-line: var(--wz-p-line);
+    --du-brand: var(--wz-p-brand);
+    --du-brand2: var(--wz-p-brand2);
+    --du-shadow: var(--wz-p-shadow);
+}

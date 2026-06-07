@@ -116,43 +116,8 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         }
     }
 
-    $voucherCode = hotspot_cleanMac($mac_address);
-    $username = $voucherCode;
-    $password = $voucherCode;
     $formattedPhone = Lang::phoneFormat($phone);
-
-    $serverHost = $_SERVER['HTTP_HOST'] ?? 'hotspot.local';
-    $email = ($serverHost === 'localhost') ? "$phone@$serverHost.com" : "$phone@$serverHost";
-
-    $customer = ORM::for_table('tbl_customers')
-        ->where_raw('(username = ? OR phonenumber = ?)', [$username, $formattedPhone])
-        ->find_one();
-
-    if (!$customer) {
-        $customer = ORM::for_table('tbl_customers')->create();
-        $customer->username = $username;
-        $customer->password = $password;
-        $customer->fullname = $fullname !== '' ? $fullname : 'Hotspot User';
-        $customer->address = $address !== '' ? $address : 'N/A';
-        $customer->phonenumber = $formattedPhone;
-        $customer->email = $email;
-        $customer->pppoe_password = '0';
-        $customer->service_type = 'Hotspot';
-        $customer->status = 'Active';
-    } else {
-        $customer->username = $username;
-        $customer->password = $password;
-        if ($fullname !== '') {
-            $customer->fullname = $fullname;
-        }
-        if ($address !== '') {
-            $customer->address = $address;
-        }
-        if ($phone !== '') {
-            $customer->phonenumber = $formattedPhone;
-        }
-    }
-    $customer->save();
+    $customer = HotspotCustomer::findOrCreate($phone, $fullname, $address);
 
     if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator)) {
         _log('[CamPay Hotspot] Activation failed for trx ' . $trx->transaction_ref);
@@ -161,7 +126,7 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 
     $expiration = ORM::for_table('tbl_user_recharges')
         ->where('plan_id', $planid)
-        ->where('username', $customer['username'])
+        ->where('customer_id', $customer->id)
         ->where('status', 'on')
         ->find_one();
 
@@ -169,11 +134,11 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     if ($expiration) {
         $expired = $expiration->expiration . ' ' . date('h:i A', strtotime($expiration->time));
         if (function_exists('hotspot_sendMessage')) {
-            hotspot_sendMessage($phone, $expiration->namebp, $voucherCode, $expiration->expiration);
+            hotspot_sendMessage($phone, $expiration->namebp, $customer->username, $expiration->expiration);
         }
     }
 
-    $trx->voucher_code = $username;
+    $trx->voucher_code = $customer->username;
     $trx->payment_method = 'CamPay - ' . $operator;
     $trx->payment_date = date('Y-m-d H:i:s');
     $trx->transaction_status = 'paid';
@@ -269,15 +234,12 @@ function hotspot_processPayment_campay($data)
         }
     }
 
-    $username = hotspot_cleanMac($mac_address);
     $formattedPhone = Lang::phoneFormat($phone);
-    $customerCheck = ORM::for_table('tbl_customers')
-        ->where_raw('(username = ? OR phonenumber = ?)', [$username, $formattedPhone])
-        ->find_one();
+    $customerCheck = ORM::for_table('tbl_customers')->where('phonenumber', $formattedPhone)->find_one();
 
     if ($customerCheck) {
         $activePlan = ORM::for_table('tbl_user_recharges')
-            ->where('username', $customerCheck->username)
+            ->where('customer_id', $customerCheck->id)
             ->where('status', 'on')
             ->find_one();
         if ($activePlan) {

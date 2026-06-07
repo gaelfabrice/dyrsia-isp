@@ -336,16 +336,7 @@ try {
     die();
 } catch (Throwable $e) {
     Message::sendTelegram(
-        "Sistem Error.\n" .
-            $e->getMessage() . "\n" .
-            $e->getTraceAsString()
-    );
-    show_radius_result(['Reply-Message' => 'Command Failed : ' . $action], 401);
-} catch (Exception $e) {
-    Message::sendTelegram(
-        "Sistem Error.\n" .
-            $e->getMessage() . "\n" .
-            $e->getTraceAsString()
+        "Sistem Error.\n" . WifiZoneSecurity::formatExceptionForLog($e)
     );
     show_radius_result(['Reply-Message' => 'Command Failed : ' . $action], 401);
 }

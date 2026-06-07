@@ -60,15 +60,8 @@ if ($pluginFn === 'hotspot_voucher_check' && !function_exists('hotspot_voucher_c
             echo json_encode(['success' => false, 'message' => 'Forfait du voucher introuvable']);
             exit;
         }
-        $password = '123456';
-        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-        do {
-            $username = '';
-            for ($i = 0; $i < 8; $i++) {
-                $username .= $alphabet[random_int(0, strlen($alphabet) - 1)];
-            }
-            $exists = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
-        } while ($exists);
+        $password = HotspotCustomer::defaultPassword();
+        $username = HotspotCustomer::generateUsername(10);
         $customer = ORM::for_table('tbl_customers')->create();
         $customer->username = $username;
         $customer->password = $password;
@@ -178,7 +171,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
     }
 }
 
-if ($pluginFn === 'hotspot_verify' && function_exists('hotspot_pg_campay_sync_transaction')) {
+if ($pluginFn === 'hotspot_verify') {
     $reference = trim((string) ($_GET['reference'] ?? ''));
     if ($reference !== '') {
         $pendingCampay = ORM::for_table('tbl_hotspot_payments')
@@ -186,8 +179,16 @@ if ($pluginFn === 'hotspot_verify' && function_exists('hotspot_pg_campay_sync_tr
             ->where('payment_gateway', 'campay')
             ->where('transaction_status', 'pending')
             ->find_one();
-        if ($pendingCampay) {
+        if ($pendingCampay && function_exists('hotspot_pg_campay_sync_transaction')) {
             hotspot_pg_campay_sync_transaction($pendingCampay);
+        }
+        $pendingMypvit = ORM::for_table('tbl_hotspot_payments')
+            ->where('payment_gateway', 'mypvit')
+            ->where('transaction_status', 'pending')
+            ->where_raw('(transaction_ref = ? OR transaction_id = ?)', [$reference, $reference])
+            ->find_one();
+        if ($pendingMypvit && function_exists('hotspot_pg_mypvit_sync_transaction')) {
+            hotspot_pg_mypvit_sync_transaction($pendingMypvit);
         }
     }
 }

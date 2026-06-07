@@ -8,9 +8,9 @@
 try {
     require_once 'init.php';
 } catch (Throwable $e) {
-    die($e->getMessage() . '<br><pre>' . $e->getTraceAsString() . '</pre>');
+    die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
 } catch (Exception $e) {
-    die($e->getMessage() . '<br><pre>' . $e->getTraceAsString() . '</pre>');
+    die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
 }
 
 function _notify($msg, $type = 'e')
@@ -56,7 +56,17 @@ $ui->assign('_system_menu', 'dashboard');
 if (!isset($_SESSION['csrf_token'])) {
     Csrf::generateAndStoreToken();
 }
-$ui->assign('csrf_token', $_SESSION['csrf_token']);
+$ui->assign('csrf_token', Csrf::getToken());
+try {
+    AdminSubscription::ensureSchema();
+    $ispSettings = AdminSubscription::settings();
+    $ui->assign('isp_settings', $ispSettings);
+    $ui->assign('subscription_settings', $ispSettings);
+    $ui->assign('isp_settings_updated_at', AdminSubscription::settingsUpdatedAt());
+} catch (Throwable $e) {
+    $ui->assign('isp_settings', AdminSubscription::defaultSettings());
+    $ui->assign('subscription_settings', AdminSubscription::defaultSettings());
+}
 $ui->registerPlugin('function', 'csrf_field', function () {
     return csrf_field();
 });
@@ -116,6 +126,7 @@ if ($handler == '') {
 
 Tenant::restoreFromSession();
 $currentTenant = Tenant::current();
+Tenant::applyLocaleConfig($currentTenant);
 if ($currentTenant) {
     $ui->assign('wifizone_tenant', $currentTenant);
     $ui->assign('wifizone_tenant_slug', $currentTenant['slug']);
@@ -215,51 +226,20 @@ try {
         }
     }
 } catch (Throwable $e) {
-    file_put_contents(__DIR__ . '/../system/uploads/runtime_error.log', date('c') . ' ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n---\n", FILE_APPEND);
-    if (function_exists('_log')) {
-        try {
-            _log('[Crash] ' . $e->getMessage() . "\n" . $e->getTraceAsString(), 'Error');
-        } catch (Throwable $ignored) {
+    WifiZoneSecurity::logException($e, __DIR__ . '/../system/uploads/runtime_error.log');
+    $isProvisionAjax = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
+        && (_post('ajax') == '1')
+        && (($routes[0] ?? '') === 'provision');
+    if ($isProvisionAjax) {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
         }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'status' => 'error',
+            'message' => Lang::T('Provisioning failed') . ': ' . WifiZoneSecurity::formatExceptionForDisplay($e),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
     }
-    try {
-        Message::sendTelegram(
-            "Sistem Error.\n" .
-                $e->getMessage() . "\n" .
-                $e->getTraceAsString()
-        );
-    } catch (Throwable $ignored) {
-    }
-    if (empty($_SESSION['aid'])) {
-        $ui->display('customer/error.tpl');
-        die();
-    }
-    $ui->assign("error_message", $e->getMessage() . '<br><pre>' . $e->getTraceAsString() . '</pre>');
-    $ui->assign("error_title", "wifizones Crash");
-    $ui->display('admin/error.tpl');
-    die();
-} catch (Exception $e) {
-    file_put_contents(__DIR__ . '/../system/uploads/runtime_error.log', date('c') . ' ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n---\n", FILE_APPEND);
-    if (function_exists('_log')) {
-        try {
-            _log('[Crash] ' . $e->getMessage() . "\n" . $e->getTraceAsString(), 'Error');
-        } catch (Throwable $ignored) {
-        }
-    }
-    try {
-        Message::sendTelegram(
-            "Sistem Error.\n" .
-                $e->getMessage() . "\n" .
-                $e->getTraceAsString()
-        );
-    } catch (Throwable $ignored) {
-    }
-    if (empty($_SESSION['aid'])) {
-        $ui->display('customer/error.tpl');
-        die();
-    }
-    $ui->assign("error_message", $e->getMessage() . '<br><pre>' . $e->getTraceAsString() . '</pre>');
-    $ui->assign("error_title", "wifizones Crash");
-    $ui->display('admin/error.tpl');
-    die();
+    WifiZoneSecurity::renderExceptionPage($e, $ui);
 }

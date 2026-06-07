@@ -241,8 +241,7 @@ class Package
                             "Router: $router_name\n" .
                             "Customer: u$c[username]\n" .
                             "Plan: p$p[name_plan]\n" .
-                            $e->getMessage() . "\n" .
-                            $e->getTraceAsString()
+                            WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 } catch (Exception $e) {
                     Message::sendTelegram(
@@ -250,8 +249,7 @@ class Package
                             "Router: $router_name\n" .
                             "Customer: u$c[username]\n" .
                             "Plan: p$p[name_plan]\n" .
-                            $e->getMessage() . "\n" .
-                            $e->getTraceAsString()
+                            WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 }
             }
@@ -357,8 +355,7 @@ class Package
                             "Router: $router_name\n" .
                             "Customer: u$c[username]\n" .
                             "Plan: p$p[name_plan]\n" .
-                            $e->getMessage() . "\n" .
-                            $e->getTraceAsString()
+                            WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 } catch (Exception $e) {
                     Message::sendTelegram(
@@ -366,8 +363,7 @@ class Package
                             "Router: $router_name\n" .
                             "Customer: u$c[username]\n" .
                             "Plan: p$p[name_plan]\n" .
-                            $e->getMessage() . "\n" .
-                            $e->getTraceAsString()
+                            WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 }
             }

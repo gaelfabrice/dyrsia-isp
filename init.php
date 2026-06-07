@@ -499,7 +499,7 @@ function wifizone_register_activity_logging()
 
     set_exception_handler(function ($e) {
         _log(
-            '[Exception] ' . $e->getMessage() . "\n" . $e->getTraceAsString(),
+            '[Exception] ' . WifiZoneSecurity::formatExceptionForLog($e),
             'Error',
             wifizone_activity_actor_id()
         );

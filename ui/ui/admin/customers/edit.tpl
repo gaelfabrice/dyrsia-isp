@@ -8,21 +8,7 @@
                 class="panel panel-{if $d['status']=='Active'}primary{else}danger{/if} panel-hovered panel-stacked mb30">
                 <div class="panel-heading">{Lang::T('Edit Contact')}</div>
                 <div class="panel-body">
-                    <center>
-                        <img src="{$app_url}/{$UPLOAD_PATH}{$d['photo']}.thumb.jpg" width="200"
-                            onerror="this.src='{$app_url}/{$UPLOAD_PATH}/user.default.jpg'" class="img-circle img-responsive"
-                            alt="Photo" onclick="return deletePhoto({$d['id']})">
-                    </center><br>
                     <input type="hidden" name="id" value="{$d['id']}">
-                    <div class="form-group">
-                        <label class="col-md-3 col-xs-12 control-label">{Lang::T('Photo')}</label>
-                        <div class="col-md-6 col-xs-8">
-                            <input type="file" class="form-control" name="photo" accept="image/*">
-                        </div>
-                        <div class="form-group col-md-3 col-xs-4" title="Not always Working">
-                            <label class=""><input type="checkbox" checked name="faceDetect" value="yes"> {Lang::T("Face Detection")}</label>
-                        </div>
-                    </div>
                     <div class="form-group">
                         <label class="col-md-3 control-label">{Lang::T('Usernames')}</label>
                         <div class="col-md-9">
@@ -214,14 +200,6 @@
                         <div class="col-md-9">
                             <input type="text" class="form-control" id="city" name="city" value="{$d['city']}">
                             <small class="form-text text-muted">{Lang::T('City of Resident')}</small>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="col-md-3 control-label">{Lang::T('District')}</label>
-                        <div class="col-md-9">
-                            <input type="text" class="form-control" id="district" name="district"
-                                value="{$d['district']}">
-                            <small class="form-text text-muted">{Lang::T('District')}</small>
                         </div>
                     </div>
                     <div class="form-group">

@@ -7,10 +7,31 @@
                 <div class="table-responsive">
                     <table class="table table-striped table-condensed">
                         <tbody>
-                            {foreach $pgs as $pg}
+                            <tr>
+                                <td colspan="3">
+                                    <div class="alert alert-warning" style="margin:0">
+                                        CamPay et MyPVit sont exclusifs : une seule passerelle mobile peut être active.
+                                        {if $active_mobile_gateway}
+                                            Actuelle : <strong>{$active_mobile_gateway|ucwords}</strong>
+                                        {/if}
+                                    </div>
+                                </td>
+                            </tr>
+                            {foreach $pg_rows as $pgRow}
+                                {assign var=pg value=$pgRow.name}
                                 <tr>
-                                    <td width="10" align="center" valign="center"><input type="checkbox" name="pgs[]"
-                                            {if in_array($pg, $actives)}checked{/if} value="{$pg}"></td>
+                                    <td width="10" align="center" valign="center">
+                                        {if $pgRow.is_mobile}
+                                            <input type="radio" name="mobile_pg" value="{$pg}"
+                                                {if $pg eq $active_mobile_gateway}checked{/if}
+                                                onclick="document.getElementById('pg_{$pg}').checked = true; clearOtherMobile('{$pg}');">
+                                            <input type="checkbox" name="pgs[]" id="pg_{$pg}" class="mobile-pg-checkbox" data-mobile="1"
+                                                {if in_array($pg, $actives)}checked{/if} value="{$pg}" style="display:none">
+                                        {else}
+                                            <input type="checkbox" name="pgs[]"
+                                                {if in_array($pg, $actives)}checked{/if} value="{$pg}">
+                                        {/if}
+                                    </td>
                                     <td><a href="{Text::url('paymentgateway/')}{$pg}"
                                             class="btn btn-block btn-{if in_array($pg, $actives)}info{else}default{/if} text-left">{ucwords($pg)}</a>
                                     </td>
@@ -32,10 +53,24 @@
                         </tbody>
                     </table>
                 </div>
-                <div class="panel-footer"><button type="submit" class="btn btn-primary btn-block" name="save"
-                        value="actives">{Lang::T('Save Changes')}</button></div>
+                <div class="panel-footer">
+                    <button type="submit" class="btn btn-primary btn-block" name="save"
+                        value="actives">{Lang::T('Save Changes')}</button>
+                </div>
             </div>
         </div>
     </div>
 </form>
+<script>
+function clearOtherMobile(active) {
+    document.querySelectorAll('.mobile-pg-checkbox').forEach(function (el) {
+        el.checked = el.value === active;
+    });
+}
+document.querySelectorAll('input[name="mobile_pg"]').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+        if (this.checked) clearOtherMobile(this.value);
+    });
+});
+</script>
 {include file="sections/footer.tpl"}

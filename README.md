@@ -1,115 +1,198 @@
-[![ReadMeSupportPalestine](https://raw.githubusercontent.com/Safouene1/support-palestine-banner/master/banner-project.svg)](https://s.id/standwithpalestine)
+# WifiZone / DYRSIA ISP
 
-# wifizones - PHP Mikrotik Billing
+Plateforme PHP/MySQL de gestion ISP, Hotspot et MikroTik. Elle permet de gérer clients, routeurs, forfaits, vouchers, paiements Mobile Money, instances administrateur et abonnements multi-tenant.
 
-![wifizones](install/img/logo.png)
+Basée sur [phpwifizones](https://github.com/hotspotbilling/phpwifizones), adaptée et brandée pour **DYRSIA**.
 
-## Feature
+## Fonctionnalités
 
-- Voucher Generator and Print
-- [Freeradius](https://github.com/hotspotbilling/phpwifizones/wiki/FreeRadius)
-- Self registration
-- User Balance
-- Auto Renewal Package using Balance
-- Multi Router Mikrotik
-- Hotspot & PPPOE
-- Easy Installation
-- Multi Language
-- Payment Gateway
-- SMS validation for login
-- Whatsapp Notification to Consumer
-- Telegram Notification for Admin
+### Gestion ISP & Hotspot
 
-See [How it Works / Cara Kerja](https://github.com/hotspotbilling/phpwifizones/wiki/How-It-Works---Cara-kerja)
+- Tableau de bord administrateur (KPI, graphiques, actions rapides)
+- Clients actifs, vouchers, recharges et forfaits Hotspot / PPPoE / VPN
+- Routeurs MikroTik, pools IP, monitoring réseau
+- Rapports journaliers, consommation data, export CSV
+- Portail client et provisionnement d’instances ISP
 
-## Payment Gateway And Plugin
+### Multi-instance (tenant)
 
-- [Payment Gateway List](https://github.com/orgs/hotspotbilling/repositories?q=payment+gateway)
-- [Plugin List](https://github.com/orgs/hotspotbilling/repositories?q=plugin)
+- Isolation des données par administrateur / instance ISP
+- Sous-domaines dédiés (`slug.localhost` en dev)
+- Création d’instance avec période d’essai et email d’accès
+- Abonnements admin : trial, actif, grâce, expiré, facturation
 
-You can download payment gateway and Plugin from Plugin Manager
+### Paiements
 
-## System Requirements
+- **CamPay** — Mobile Money (hotspot + abonnements admin, USSD + confirmation)
+- **MyPVit** — passerelle Mobile Money additionnelle
+- Gestion des gateways depuis l’interface admin
 
-Most current web servers with PHP & MySQL installed will be capable of running wifizones
+### SuperAdmin
 
-Minimum Requirements
+- Gestion des administrateurs (liste, édition, suppression)
+- Instances ISP, abonnements, paramètres globaux
+- Impersonation de comptes (mode démo / support)
 
-- Linux or Windows OS
-- Minimum PHP Version 8.2
-- Both PDO & MySQLi Support
-- PHP-GD2 Image Library
-- PHP-CURL
-- PHP-ZIP
-- PHP-Mbstring
-- MySQL Version 4.1.x and above
+### Interface admin
 
-can be Installed in Raspberry Pi Device.
+- Thème sombre / clair
+- Pages modernisées : Dashboard, Active Customers, Daily Reports, Data Usage, Administrator Users
+- Sidebar restructurée, recherche et pagination sur les listes principales
 
-The problem with windows is hard to set cronjob, better Linux
+## Prérequis
 
-## Changelog
+- PHP **8.2+** (7.4+ possible selon environnement)
+- MySQL ou MariaDB
+- Extensions : `pdo`, `pdo_mysql`, `mysqli`, `gd`, `mbstring`, `zip`, `curl`, `openssl`
+- Apache avec `mod_rewrite` **ou** serveur PHP intégré + `router.php`
 
-[CHANGELOG.md](CHANGELOG.md)
+## Installation locale
 
-## Documentation projet (WifiZone)
+### 1. Configuration
 
-- [README-CORRECTIONS.md](README-CORRECTIONS.md) — détail des bugs corrigés (mai 2026)
-- [README-AMELIORATIONS.md](README-AMELIORATIONS.md) — suggestions de fonctionnalités à intégrer
+```bash
+cp config.sample.php config.php
+# ou
+cp .env.example .env
+```
 
-## Installation
+Exemple de variables (`.env` ou `config.php`) :
 
-[Installation instructions](https://github.com/hotspotbilling/phpwifizones/wiki)
+```text
+APP_URL=http://127.0.0.1:8080
+APP_STAGE=Dev
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=wifizones
+DB_USERNAME=root
+DB_PASSWORD=
+```
 
-## Freeradius
+### 2. Base de données
 
-Support [Freeradius with Database](https://github.com/hotspotbilling/phpwifizones/wiki/FreeRadius)
+Créer la base, puis ouvrir l’application : l’installateur web guide la première configuration si `config.php` est absent.
 
-## Community Support
+### 3. Lancer le serveur de développement
 
-- [Github Discussion](https://github.com/hotspotbilling/phpwifizones/discussions)
-- [Telegram Group](https://t.me/phpmixbill)
+```bash
+bash scripts/dev-server.sh
+```
 
-## Technical Support
+Par défaut : [http://127.0.0.1:8080](http://127.0.0.1:8080)
 
-This Software is Free and Open Source, Without any Warranty.
+Admin : `http://127.0.0.1:8080/?_route=admin`
 
-Even if the software is free, but Technical Support is not,
-Technical Support Start from Rp 500.000 or $50
+Port alternatif :
 
-If you chat me for any technical support,
-you need to pay,
+```bash
+PORT=8000 bash scripts/dev-server.sh
+```
 
-ask anything for free in the [discussion](/hotspotbilling/phpwifizones/discussions) page or [Telegram Group](https://t.me/phpwifizones)
+## Structure du projet
 
-Contact me at [Telegram](https://t.me/ibnux)
+```text
+.
+├── index.php              # Point d'entrée web
+├── init.php               # Bootstrap, autoload, constantes
+├── router.php             # Router pour php -S
+├── config.sample.php      # Modèle de configuration
+├── system/
+│   ├── autoload/          # Classes métier (Tenant, Mikrotik, Package…)
+│   ├── controllers/       # Routes admin / client / API
+│   ├── devices/           # Drivers Mikrotik, Radius…
+│   ├── paymentgateway/    # CamPay, MyPVit…
+│   ├── plugin/            # Plugins hotspot
+│   ├── widgets/           # Widgets dashboard
+│   ├── cron_*.php         # Tâches planifiées
+│   ├── cache/             # Cache applicatif
+│   └── uploads/           # Fichiers uploadés
+├── ui/
+│   ├── ui/                # Templates Smarty (admin, customer)
+│   ├── ui/styles/         # CSS (admin-command, admin-pages, wifizones…)
+│   ├── compiled/          # Templates Smarty compilés (généré)
+│   └── cache/             # Cache Smarty (généré)
+├── scripts/
+│   ├── dev-server.sh      # Serveur local
+│   ├── build-dist.sh      # Archive de déploiement
+│   └── deploy-vps.sh      # Déploiement VPS
+├── README_DEPLOYMENT.md   # Guide GitHub / Render / Docker / cPanel
+└── Dockerfile
+```
 
-## License
+## Rôles utilisateurs
 
-GNU General Public License version 2 or later
+| Rôle        | Accès principal                                      |
+|-------------|------------------------------------------------------|
+| SuperAdmin  | Toute la plateforme, instances, abonnements          |
+| Admin       | Son instance ISP (clients, plans, routeurs…)         |
+| Agent       | Comptes rattachés (Report, Sales…)                 |
+| Customer    | Portail client                                       |
 
-see [LICENSE](LICENSE) file
+## Cron jobs
 
+| Script                         | Rôle                                      |
+|--------------------------------|-------------------------------------------|
+| `system/cron_tenant_cleanup.php` | Nettoyage tenants / abonnements         |
+| `system/cron_data_usage.php`     | Synchronisation consommation data       |
 
-## Donate to ibnux
+Exemple crontab :
 
-[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://paypal.me/ibnux)
+```bash
+*/15 * * * * php /chemin/vers/projet/system/cron_tenant_cleanup.php
+0 * * * * php /chemin/vers/projet/system/cron_data_usage.php
+```
 
-BCA: 5410454825
+## Cache & templates
 
-Mandiri: 163-000-1855-793
+Après modification des templates Smarty (`.tpl`), vider le cache compilé :
 
-a.n Ibnu Maksum
+```bash
+rm -f ui/compiled/*.php
+rm -f ui/cache/*.php
+find system/cache -type f ! -name 'index.html' -delete
+```
 
-## SPONSORS
+Les dossiers suivants doivent être **inscriptibles** par PHP :
 
-- [mixradius.com](https://mixradius.com/) Paid Services Billing Radius
-- [mlink.id](https://mlink.id)
-- [https://github.com/sonyinside](https://github.com/sonyinside)
+```text
+ui/compiled
+ui/cache
+system/cache
+system/uploads
+```
 
-## Thanks
-We appreciate all people who are participating in this project.
+## Déploiement
 
-<a href="https://github.com/hotspotbilling/phpwifizones/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=hotspotbilling/phpwifizones" />
-</a>
+Voir le guide détaillé : [README_DEPLOYMENT.md](README_DEPLOYMENT.md)
+
+- GitHub + Render (`render.yaml`, `Dockerfile`)
+- Archive cPanel : `bash scripts/build-dist.sh` → `dist/`
+- Health check : `/health.php`
+
+## Sécurité
+
+- Ne **jamais** commiter `config.php`, `.env` ou clés API réelles
+- Utiliser HTTPS en production
+- Protéger les endpoints cron avec `CRON_TOKEN`
+- Les actions sensibles (suppression admin, paiements) vérifient rôle et permissions
+
+## Dépannage
+
+| Problème                    | Piste                                              |
+|-----------------------------|----------------------------------------------------|
+| Erreur 500                  | Logs PHP, `config.php`, extensions, permissions    |
+| UI ancienne après modif     | Vider `ui/compiled` et `ui/cache`                  |
+| Connexion DB                | Host, port, utilisateur, droits distants           |
+| Hotspot / paiement local    | Vérifier `APP_URL` et port du serveur dev (8080)   |
+
+## Documentation complémentaire
+
+- [README_DEPLOYMENT.md](README_DEPLOYMENT.md) — déploiement production
+- [README_PROJECT.md](README_PROJECT.md) — notes architecture détaillées
+- [CHANGELOG.md](CHANGELOG.md) — historique des versions
+
+## Licence
+
+GNU General Public License v2 ou ultérieure — voir [LICENSE](LICENSE).
+
+Projet dérivé de [phpwifizones](https://github.com/hotspotbilling/phpwifizones) (hotspotbilling).

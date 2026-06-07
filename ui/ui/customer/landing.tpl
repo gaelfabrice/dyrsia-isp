@@ -1094,7 +1094,7 @@
                     <div class="pricing-header">
                         <h3>Forfait Business</h3>
                         <div class="pricing-price">
-                            <span class="amount">2 500 F CFA</span>
+                            <span class="amount">{$isp_settings.business_price|default:5000|number_format:0} F CFA</span>
                             <span class="period">/ mois</span>
                         </div>
                     </div>
@@ -1111,8 +1111,8 @@
                     <div class="pricing-header">
                         <h3>Forfait Pro</h3>
                         <div class="pricing-price">
-                            <span class="amount">10 000 F CFA</span>
-                            <span class="period">/ mois</span>
+                            <span class="amount">{$isp_settings.pro_price_per_router|default:2000|number_format:0} F CFA</span>
+                            <span class="period">/ routeur / mois</span>
                         </div>
                     </div>
                     <ul class="pricing-features">
@@ -1130,7 +1130,7 @@
                 <p>Entrez votre sous-domaine pour accéder à votre tableau de bord.</p>
                 <div class="field">
                     <div class="subdomain-row">
-                        <input type="text" id="admin-subdomain" placeholder="monisp" pattern="[a-z0-9-]+">
+                        <input type="text" id="admin-subdomain" placeholder="monisp" pattern="[a-z0-9\-]+">
                         <span class="subdomain-suffix" id="admin-subdomain-suffix">.dyrsia.com</span>
                     </div>
                 </div>

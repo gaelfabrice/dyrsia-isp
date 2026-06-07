@@ -24,6 +24,36 @@ function settings_scoped_router_query($admin)
     return $query;
 }
 
+function settings_users_base_query($admin)
+{
+    if ($admin['user_type'] == 'SuperAdmin') {
+        return ORM::for_table('tbl_users');
+    }
+    if ($admin['user_type'] == 'Admin') {
+        return ORM::for_table('tbl_users')->where_any_is([
+            ['user_type' => 'Report'],
+            ['user_type' => 'Agent'],
+            ['user_type' => 'Sales'],
+            ['id' => $admin['id']],
+        ]);
+    }
+    return ORM::for_table('tbl_users')->where_any_is([
+        ['id' => $admin['id']],
+        ['root' => $admin['id']],
+    ]);
+}
+
+function settings_users_apply_search($query, $search)
+{
+    if ($search != '') {
+        $query->where_raw(
+            '(`username` LIKE ? OR `email` LIKE ? OR `fullname` LIKE ? OR `phone` LIKE ?)',
+            ["%$search%", "%$search%", "%$search%", "%$search%"]
+        );
+    }
+    return $query;
+}
+
 switch ($action) {
     case 'smtp':
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
@@ -462,6 +492,16 @@ switch ($action) {
         $ui->assign('lan', $lans);
         $timezonelist = Timezone::timezoneList();
         $ui->assign('tlist', $timezonelist);
+        $canEditTimezone = ($admin['user_type'] === 'SuperAdmin');
+        $tenantRow = Tenant::findTenantForUserId((int) $admin['id']);
+        $effectiveTimezone = $config['timezone'];
+        if ($tenantRow && !empty($tenantRow['timezone'])) {
+            $effectiveTimezone = $tenantRow['timezone'];
+        }
+        $tenantCountry = $tenantRow ? MobileMoneyCountry::resolve($tenantRow['country_code'] ?? '') : null;
+        $ui->assign('can_edit_timezone', $canEditTimezone);
+        $ui->assign('effective_timezone', $effectiveTimezone);
+        $ui->assign('tenant_country_name', $tenantCountry['name'] ?? '');
         $ui->assign('xjq', ' $("#tzone").select2(); ');
         run_hook('view_localisation'); #HOOK
         $csrf_token = Csrf::generateAndStoreToken();
@@ -485,14 +525,37 @@ switch ($action) {
         $country_code_phone = _post('country_code_phone');
         $lan = _post('lan');
         run_hook('save_localisation'); #HOOK
-        if ($tzone == '' or $date_format == '' or $lan == '') {
+        if ($date_format == '' or $lan == '') {
             r2(getUrl('settings/localisation'), 'e', Lang::T('All field is required'));
-        } else {
-            $d = ORM::for_table('tbl_appconfig')->where('setting', 'timezone')->find_one();
-            $d->value = $tzone;
-            $d->save();
+        }
 
-            $d = ORM::for_table('tbl_appconfig')->where('setting', 'date_format')->find_one();
+        $isSuperAdmin = ($admin['user_type'] === 'SuperAdmin');
+        if (!$isSuperAdmin) {
+            $tenantRow = Tenant::findTenantForUserId((int) $admin['id']);
+            if ($tenantRow && !empty($tenantRow['timezone'])) {
+                $tzone = $tenantRow['timezone'];
+            } elseif ($tzone === '') {
+                $tzone = $config['timezone'];
+            }
+        } elseif ($tzone === '') {
+            r2(getUrl('settings/localisation'), 'e', Lang::T('All field is required'));
+        }
+
+        if ($isSuperAdmin && $tzone !== '') {
+            $d = ORM::for_table('tbl_appconfig')->where('setting', 'timezone')->find_one();
+            if ($d) {
+                $d->value = $tzone;
+                $d->save();
+            }
+            $config['timezone'] = $tzone;
+            date_default_timezone_set($tzone);
+            $currentTenant = Tenant::current();
+            if ($currentTenant) {
+                Tenant::updateTenantTimezone((int) $currentTenant['id'], $tzone);
+            }
+        }
+
+        $d = ORM::for_table('tbl_appconfig')->where('setting', 'date_format')->find_one();
             $d->value = $date_format;
             $d->save();
 
@@ -572,59 +635,23 @@ switch ($action) {
             $d->save();
             _log('[' . $admin['username'] . ']: ' . 'Settings Saved Successfully', $admin['user_type'], $admin['id']);
             r2(getUrl('settings/localisation'), 's', 'Settings Saved Successfully');
-        }
         break;
 
     case 'users':
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Agent'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
-        $search = _req('search');
-        if ($search != '') {
-            if ($admin['user_type'] == 'SuperAdmin') {
-                $query = ORM::for_table('tbl_users')
-                    ->where_like('username', '%' . $search . '%')
-                    ->order_by_asc('id');
-                $d = Paginator::findMany($query, ['search' => $search]);
-            } else if ($admin['user_type'] == 'Admin') {
-                $query = ORM::for_table('tbl_users')
-                    ->where_like('username', '%' . $search . '%')->where_any_is([
-                            ['user_type' => 'Report'],
-                            ['user_type' => 'Agent'],
-                            ['user_type' => 'Sales'],
-                            ['id' => $admin['id']]
-                        ])->order_by_asc('id');
-                $d = Paginator::findMany($query, ['search' => $search]);
-            } else {
-                $query = ORM::for_table('tbl_users')
-                    ->where_like('username', '%' . $search . '%')
-                    ->where_any_is([
-                        ['id' => $admin['id']],
-                        ['root' => $admin['id']]
-                    ])->order_by_asc('id');
-                $d = Paginator::findMany($query, ['search' => $search]);
-            }
-        } else {
-            if ($admin['user_type'] == 'SuperAdmin') {
-                $query = ORM::for_table('tbl_users')->order_by_asc('id');
-                $d = Paginator::findMany($query);
-            } else if ($admin['user_type'] == 'Admin') {
-                $query = ORM::for_table('tbl_users')->where_any_is([
-                    ['user_type' => 'Report'],
-                    ['user_type' => 'Agent'],
-                    ['user_type' => 'Sales'],
-                    ['id' => $admin['id']]
-                ])->order_by_asc('id');
-                $d = Paginator::findMany($query);
-            } else {
-                $query = ORM::for_table('tbl_users')
-                    ->where_any_is([
-                        ['id' => $admin['id']],
-                        ['root' => $admin['id']]
-                    ])->order_by_asc('id');
-                $d = Paginator::findMany($query);
-            }
-        }
+        $search = trim((string) _req('search'));
+
+        $total_admins = (int) settings_users_apply_search(settings_users_base_query($admin), $search)->count();
+        $superadmin_count = (int) settings_users_apply_search(settings_users_base_query($admin), $search)
+            ->where('user_type', 'SuperAdmin')->count();
+        $administrators_count = (int) settings_users_apply_search(settings_users_base_query($admin), $search)
+            ->where('user_type', 'Admin')->count();
+
+        $query = settings_users_apply_search(settings_users_base_query($admin), $search)->order_by_asc('id');
+        $d = Paginator::findMany($query, ['search' => $search]);
+
         $admins = [];
         foreach ($d as $k) {
             if (!empty($k['root'])) {
@@ -641,6 +668,11 @@ switch ($action) {
         $ui->assign('admins', $admins);
         Tenant::ensureUserTenantColumn();
         $ui->assign('tenant_names', Tenant::tenantNamesMap());
+        $ui->assign('tenant_slugs', Tenant::tenantSlugsMap());
+        $ui->assign('tenant_domain_suffix', Tenant::domainSuffix());
+        $ui->assign('total_admins', $total_admins);
+        $ui->assign('superadmin_count', $superadmin_count);
+        $ui->assign('administrators_count', $administrators_count);
         $ui->assign('d', $d);
         $ui->assign('search', $search);
         run_hook('view_list_admin'); #HOOK
@@ -770,6 +802,11 @@ switch ($action) {
         }
         $d = ORM::for_table('tbl_users')->find_one($id);
         if ($d) {
+            if ($admin['user_type'] != 'SuperAdmin') {
+                if (!in_array($d['user_type'], ['Report', 'Agent', 'Sales'], true)) {
+                    r2(getUrl('settings/users'), 'e', Lang::T('You do not have permission to access this page'));
+                }
+            }
             run_hook('delete_admin'); #HOOK
             if ($d['user_type'] == 'Admin') {
                 Tenant::deleteInstanceForAdmin((int) $d['id']);
@@ -1202,7 +1239,7 @@ switch ($action) {
             'hotspot_smtp_server'
         ];
 
-        $buildHotspotLoginHtml = function () use ($UPLOAD_PATH, &$config, $syncHotspotPlansForRouter) {
+        $buildHotspotLoginHtml = function () use ($UPLOAD_PATH, &$config) {
             $defaultLoginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
             if (file_exists($defaultLoginFile)) {
                 $html = file_get_contents($defaultLoginFile);
@@ -1215,8 +1252,78 @@ switch ($action) {
                 if ($apiUrl === '') {
                     $apiUrl = 'https://wifizones.org';
                 }
+                $hotspotRouterName = trim((string) ($config['hotspot_login_router'] ?? ''));
                 $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
                 $safeTagline = htmlspecialchars($tagline, ENT_QUOTES, 'UTF-8');
+
+                $finalizeHotspotLoginHtml = function ($html) use ($config, $hotspotRouterName, $apiUrl) {
+                    $embeddedPlans = [];
+                    try {
+                        $plansQuery = ORM::for_table('tbl_plans')
+                            ->where('type', 'Hotspot')
+                            ->where('enabled', 1);
+                        if ($hotspotRouterName !== '') {
+                            $plansQuery->where('routers', $hotspotRouterName);
+                        }
+                        foreach ($plansQuery->find_many() as $plan) {
+                            $planId = (int) ($plan['id'] ?? 0);
+                            $planName = (string) ($plan['name_plan'] ?? $plan['name'] ?? '');
+                            $price = (string) ($plan['price'] ?? '');
+                            $validity = trim((string) ($plan['validity'] ?? '') . ' ' . (string) ($plan['validity_unit'] ?? ''));
+                            $paymentLink = rtrim($apiUrl, '/') . '/index.php?_route=plugin/hotspot_pay&routername=' . rawurlencode($hotspotRouterName) . '&planid=' . $planId . '&amount=' . rawurlencode($price);
+                            $embeddedPlans[] = [
+                                'planid' => $planId,
+                                'planname' => $planName,
+                                'price' => $price,
+                                'currency' => $config['currency_code'] ?? 'Fcfa',
+                                'validity' => $validity,
+                                'paymentlink' => $paymentLink,
+                                'routername' => $hotspotRouterName,
+                            ];
+                        }
+                    } catch (Exception $e) {
+                        $embeddedPlans = [];
+                    }
+                    $embeddedPlansJs = 'const HOTSPOT_EMBEDDED_PLANS = ' . json_encode($embeddedPlans, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';';
+                    if (strpos($html, 'const HOTSPOT_EMBEDDED_PLANS') === false) {
+                        $html = str_replace(
+                            'let CLIENT_MAC = \'\';',
+                            'let CLIENT_MAC = \'\';' . "\n    " . $embeddedPlansJs,
+                            $html
+                        );
+                    } else {
+                        $html = preg_replace('/const HOTSPOT_EMBEDDED_PLANS = .*?;/s', $embeddedPlansJs, $html, 1);
+                    }
+                    $html = MobileMoneyGateway::repairHotspotLoginHtml($html);
+                    $minLines = array_filter(
+                        array_map('ltrim', preg_split('/\r\n|\r|\n/', $html)),
+                        static function ($line) {
+                            return $line !== '';
+                        }
+                    );
+
+                    return implode("\n", $minLines);
+                };
+
+                $isModernHotspotLogin = strpos($html, 'window.HOTSPOT_INLINE_MD5') !== false
+                    && strpos($html, 'function fetchHotspotEndpoint') !== false;
+
+                if ($isModernHotspotLogin) {
+                    $html = preg_replace('/<title>.*?<\/title>/is', '<title>' . $safeTitle . ' | Portail Haut Débit</title>', $html, 1);
+                    $html = preg_replace('/<span data-hotspot-title>.*?<\/span>/is', '<span data-hotspot-title>' . $safeTitle . '</span>', $html, 1);
+                    $taglineHtml = $safeTagline !== '' ? "\n        " . '<p>' . $safeTagline . '</p>' : '';
+                    $html = preg_replace('/<div class="hero">\s*<h1>(.*?)<\/h1>\s*(?:<p>.*?<\/p>)?/is', '<div class="hero">' . "\n        " . '<h1>$1</h1>' . $taglineHtml, $html, 1);
+                    $html = preg_replace('/const APP_URL = .*?;/s', 'const APP_URL = ' . json_encode(rtrim($apiUrl, '/')) . ';', $html, 1);
+                    $routerNameJs = 'const HOTSPOT_ROUTER_NAME = ' . json_encode($hotspotRouterName) . ';';
+                    if (preg_match('/const HOTSPOT_ROUTER_NAME = .*?;/s', $html)) {
+                        $html = preg_replace('/const HOTSPOT_ROUTER_NAME = .*?;/s', $routerNameJs, $html, 1);
+                    } else {
+                        $html = preg_replace('/const ROUTER_ID = .*?;/s', 'const ROUTER_ID = 2;' . "\n    " . $routerNameJs, $html, 1);
+                    }
+
+                    return $finalizeHotspotLoginHtml($html);
+                }
+
                 $html = preg_replace('/<title>.*?<\/title>/is', '<title>' . $safeTitle . ' | Portail Haut Débit</title>', $html, 1);
                 if (strpos($html, 'HOTSPOT_INLINE_MD5') === false) {
                     $md5File = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'md5.js';
@@ -1232,10 +1339,6 @@ switch ($action) {
                 $html = preg_replace('/<div class="hero">\s*<h1>(.*?)<\/h1>\s*(?:<p>.*?<\/p>)?/is', '<div class="hero">' . "\n        " . '<h1>$1</h1>' . $taglineHtml, $html, 1);
                 $html = preg_replace('/const APP_URL = .*?;/s', 'const APP_URL = ' . json_encode(rtrim($apiUrl, '/')) . ';', $html, 1);
                 $html = preg_replace('/const ROUTER_ID = .*?;/s', 'const ROUTER_ID = 2;', $html, 1);
-                $hotspotRouterName = trim((string) ($config['hotspot_login_router'] ?? ''));
-                if ($hotspotRouterName !== '') {
-                    $syncHotspotPlansForRouter($hotspotRouterName);
-                }
                 $routerNameJs = 'const HOTSPOT_ROUTER_NAME = ' . json_encode($hotspotRouterName) . ';';
                 if (preg_match('/const HOTSPOT_ROUTER_NAME = .*?;/s', $html)) {
                     $html = preg_replace('/const HOTSPOT_ROUTER_NAME = .*?;/s', $routerNameJs, $html, 1);
@@ -1283,7 +1386,7 @@ switch ($action) {
                 if (strpos($html, 'function hotspotApiBases') === false) {
                     $html = str_replace(
                         'let CLIENT_MAC = \'\';',
-                        "let CLIENT_MAC = '';\n    function hotspotApiBases() {\n        const bases = [];\n        if (APP_URL) bases.push(String(APP_URL).replace(/\\/$/, ''));\n        if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {\n            bases.push(window.location.origin);\n        }\n        return [...new Set(bases.filter(Boolean))];\n    }\n    async function fetchHotspotEndpoint(route, options) {\n        let lastError = null;\n        for (const base of hotspotApiBases()) {\n            try {\n                const response = await fetch(base + '/index.php?_route=plugin/' + route, options);\n                if (response.ok) return response;\n                lastError = new Error('HTTP ' + response.status + ' via ' + base);\n            } catch (error) {\n                lastError = error;\n            }\n        }\n        throw lastError || new Error('API hotspot indisponible');\n    }",
+                        "let CLIENT_MAC = '';\n    function hotspotApiBases() {\n        const bases = [];\n        const appBase = APP_URL ? String(APP_URL).replace(/\\/$/, '') : '';\n        const origin = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : '';\n        const isLocalPreview = /localhost|127\\.0\\.0\\.1|:8080|ngrok/i.test(origin || '');\n        if (isLocalPreview && origin) bases.push(origin);\n        if (appBase) bases.push(appBase);\n        if (!isLocalPreview && origin && origin !== appBase) bases.push(origin);\n        return [...new Set(bases.filter(Boolean))];\n    }\n    async function fetchHotspotEndpoint(route, options) {\n        let lastError = null;\n        for (const base of hotspotApiBases()) {\n            try {\n                const response = await fetch(base + '/index.php?_route=plugin/' + route, options);\n                if (response.ok) return response;\n                lastError = new Error('HTTP ' + response.status + ' via ' + base);\n            } catch (error) {\n                lastError = error;\n            }\n        }\n        throw lastError || new Error('API hotspot indisponible');\n    }",
                         $html
                     );
                 }
@@ -1317,121 +1420,12 @@ switch ($action) {
                     1
                 );
                 $html = str_replace('placeholder="Code voucher / identifiant"', 'placeholder="Identifiant"', $html);
-                if (strpos($html, 'function renderHotspotPlans') === false) {
-                    $html = str_replace(
-                        "/* ===== CHARGEMENT DES FORFAITS (API hotspot_plan) ===== */",
-                        "/* ===== CHARGEMENT DES FORFAITS (API hotspot_plan) ===== */\n    function renderHotspotPlans(plans) {\n        const container = document.getElementById('packagesList');\n        if (!container) return;\n        if (!plans || !plans.length) {\n            container.innerHTML = '<div class=\"package-item\" style=\"text-align:center;\">Aucun forfait actif pour ce routeur.</div>';\n            return;\n        }\n        container.innerHTML = plans.map(pkg => {\n            const paymentLink = pkg.paymentlink || (APP_URL + '/index.php?_route=plugin/hotspot_pay&routername=' + encodeURIComponent((typeof HOTSPOT_ROUTER_NAME !== 'undefined' && HOTSPOT_ROUTER_NAME) ? HOTSPOT_ROUTER_NAME : '$(identity)') + '&planid=' + encodeURIComponent(pkg.planid || pkg.planId || '') + '&amount=' + encodeURIComponent(pkg.price || ''));\n            const url = paymentLink + (paymentLink.indexOf('?') >= 0 ? '&' : '?') + 'mac=$(mac)&ip=$(ip)';\n            return `\n                <a class=\"package-item\" href=\"\${url}\" target=\"_self\" onclick=\"event.preventDefault(); handlePlanPayment('\${escapeHtml(pkg.planname)}', '\${pkg.price}', '\${pkg.currency || 'Fcfa'}', '\${pkg.validity}', this.href)\">\n                    <div class=\"package-name\">\n                        <b>\${escapeHtml(pkg.planname)}</b>\n                        <span class=\"package-price\">\${pkg.price} \${pkg.currency || 'Fcfa'}</span>\n                    </div>\n                    <div class=\"package-desc\">\n                        <span>⏱️ Validité: \${pkg.validity || '—'}</span>\n                        <span class=\"badge-unlimited\">♾️ ILLIMITÉ</span>\n                    </div>\n                </a>\n            `;\n        }).join('');\n    }",
-                        $html
-                    );
-                }
-                if (strpos($html, 'CAMPAY_WAIT_SECONDS') === false && strpos($html, 'function handlePlanPayment') !== false) {
-                    $campayPaymentJs = <<<'JS'
-    const CAMPAY_WAIT_SECONDS = 60;
-    function parsePaymentUrl(paymentUrl) {
-        try {
-            const url = new URL(paymentUrl, APP_URL + '/');
-            return { planid: url.searchParams.get('planid') || '', routername: url.searchParams.get('routername') || '', amount: url.searchParams.get('amount') || '' };
-        } catch (e) { return { planid: '', routername: '', amount: '' }; }
-    }
-    function normalizeLocalPhone(value) { let digits = String(value || '').replace(/\D/g, ''); if (digits.indexOf('237') === 0) digits = digits.slice(3); if (digits.indexOf('0') === 0) digits = digits.slice(1); return digits.slice(0, 9); }
-    function formatCameroonPhone(phone) { const local = normalizeLocalPhone(phone); return local.length === 9 ? '+237 ' + local.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3') : '+237 ' + local; }
-    function detectMobileOperator(phone, apiOperator, apiUssd) {
-        if (apiOperator && apiUssd) return { name: apiOperator, ussd: apiUssd };
-        const p = String(phone || '').replace(/\D/g, '');
-        if (/^(67|68)/.test(p) || /^65[0-4]/.test(p)) return { name: 'MTN', ussd: '*126#' };
-        if (/^(69|65[5-9])/.test(p)) return { name: 'Orange', ussd: '#150*50#' };
-        return { name: 'Mobile Money', ussd: '#150*50# ou *126#' };
-    }
-    function buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency) {
-        return '<div style="text-align:center;padding:6px 2px"><div style="width:58px;height:58px;margin:0 auto 18px;border:4px solid rgba(16,185,129,.18);border-top-color:#10b981;border-radius:50%;animation:campaySpin 1s linear infinite"></div><style>@keyframes campaySpin{to{transform:rotate(360deg)}}</style><p style="font-size:16px;line-height:1.5;margin:0 0 10px"><strong>Validez la transaction sur votre téléphone</strong></p><p style="font-size:14px;color:#94a3b8;margin:0 0 8px">' + escapeHtml(planName) + ' — <strong>' + escapeHtml(String(price)) + ' ' + escapeHtml(currency || 'Fcfa') + '</strong></p><p style="font-size:14px;margin:0 0 12px">Numéro: <strong>' + escapeHtml(formatCameroonPhone(phone)) + '</strong> (' + escapeHtml(operator.name) + ')</p><div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:16px;padding:14px;margin:12px 0;text-align:left"><p style="margin:0 0 8px;font-size:14px">📲 Une notification USSD va s\'afficher.<br>Confirmez avec votre <strong>code PIN</strong>.</p><p style="margin:0;font-size:14px">Sinon composez: <strong style="color:#10b981;font-size:20px">' + escapeHtml(operator.ussd) + '</strong></p></div><p id="campayCountdown" style="font-size:13px;color:#64748b;margin:14px 0 0">Temps restant: ' + secondsLeft + ' secondes…</p><p style="font-size:12px;color:#64748b;margin:8px 0 0">Ne fermez pas cette page pendant la validation.</p></div>';
-    }
-    async function pollPaymentStatus(reference, maxSeconds) {
-        const deadline = Date.now() + (maxSeconds * 1000);
-        while (Date.now() < deadline) {
-            await new Promise(function (r) { setTimeout(r, 3000); });
-            try {
-                const res = await fetchHotspotEndpoint('hotspot_verify&reference=' + encodeURIComponent(reference) + '&format=json', { headers: { 'Accept': 'application/json' } });
-                if (!res.ok) continue;
-                const data = await res.json();
-                if (data.status === 'paid' || data.status === 'failed' || data.status === 'cancelled') return data;
-            } catch (e) {}
-        }
-        return { status: 'timeout', message: 'Délai dépassé. Vérifiez votre téléphone puis réessayez.' };
-    }
-    let campayCountdownTimer = null;
-    function openUssdWaitModal(phone, operator, planName, price, currency) {
-        let secondsLeft = CAMPAY_WAIT_SECONDS;
-        Swal.fire({ title: 'Paiement en cours…', html: buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency), allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false,
-            didOpen: function () {
-                campayCountdownTimer = setInterval(function () {
-                    secondsLeft -= 1;
-                    const el = document.getElementById('campayCountdown');
-                    if (el) el.textContent = secondsLeft > 0 ? ('Temps restant: ' + secondsLeft + ' secondes…') : 'Vérification finale…';
-                    if (secondsLeft <= 0 && campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; }
-                }, 1000);
-            },
-            willClose: function () { if (campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; } }
-        });
-    }
-    async function initiateCampayPayment(params) {
-        const body = new URLSearchParams(params); body.set('ajax', '1');
-        const res = await fetchHotspotEndpoint('hotspot_pay', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: body.toString() });
-        return JSON.parse(await res.text());
-    }
-    function hotspotAssetUrl(filename) { return filename; }
-    function buildPaymentModalHtml(planName, price, currency, validity) { return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 Mobile Money · Cameroun</div><h4>Paiement sécurisé</h4><p>MTN MoMo ou Orange Money</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro de téléphone</label><div class="campay-phone-wrap"><span class="campay-phone-prefix">+237</span><input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="6XX XXX XXX" maxlength="9" /></div><div class="campay-operators"><span class="campay-op mtn"><img src="' + hotspotAssetUrl('MTN.png') + '" alt="MoMo MTN" /></span><span class="campay-op orange"><img src="' + hotspotAssetUrl('orange.png') + '" alt="Orange Money" /></span></div></div></div>'; }
-    function bindPaymentPhoneInput() { const input = document.getElementById('campayPhoneInput'); if (!input) return; input.addEventListener('input', function () { input.value = normalizeLocalPhone(input.value); }); setTimeout(function () { input.focus(); }, 80); }
-    async function handlePlanPayment(planName, price, currency, validity, paymentUrl) {
-        const meta = parsePaymentUrl(paymentUrl);
-        const result = await Swal.fire({ title: '', html: buildPaymentModalHtml(planName, price, currency, validity), showCancelButton: true, confirmButtonText: 'Payer maintenant', cancelButtonText: 'Annuler', allowOutsideClick: false, focusConfirm: false, customClass: { popup: 'campay-swal-popup', confirmButton: 'campay-swal-confirm', cancelButton: 'campay-swal-cancel' }, didOpen: bindPaymentPhoneInput, preConfirm: function () { const input = document.getElementById('campayPhoneInput'); const phone = normalizeLocalPhone(input ? input.value : ''); if (phone.length !== 9) { Swal.showValidationMessage('Entrez 9 chiffres après +237 (ex: 677123456)'); return false; } if (!/^[26]/.test(phone)) { Swal.showValidationMessage('Numéro camerounais invalide (doit commencer par 6 ou 2)'); return false; } return phone; } });
-        if (!result.isConfirmed) return;
-        const phone = normalizeLocalPhone(result.value || '');
-        let initResult;
-        try { initResult = await initiateCampayPayment({ pay: '1', type: 'gateways', payment_gateway: 'campay', phone: phone, routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : '$(identity)'), planid: meta.planid, amount: meta.amount || price, plan_name: planName, mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)', fullname: 'Client Hotspot', address: 'Hotspot' }); }
-        catch (e) { await Swal.fire({ title: 'Erreur réseau', text: 'Impossible de contacter le serveur.', icon: 'error' }); return; }
-        if (!initResult.ok) { await Swal.fire({ title: 'Paiement refusé', text: initResult.message || 'Erreur', icon: 'error' }); return; }
-        const operator = detectMobileOperator(phone, initResult.operator, initResult.ussd_code);
-        openUssdWaitModal(phone, operator, planName, price, currency);
-        const paymentResult = await pollPaymentStatus(initResult.reference, CAMPAY_WAIT_SECONDS);
-        Swal.close();
-        if (paymentResult.status === 'paid') {
-            const code = paymentResult.voucher_code && paymentResult.voucher_code !== '**********' ? paymentResult.voucher_code : (CLIENT_MAC || '');
-            await Swal.fire({ title: 'Paiement réussi !', html: 'Forfait activé. Connexion automatique…', icon: 'success', confirmButtonText: 'Se connecter' });
-            const userField = document.getElementById('loginUsername'); const pwdField = document.getElementById('loginPassword');
-            if (userField && code) userField.value = code; if (pwdField && code) pwdField.value = code; return;
-        }
-        if (paymentResult.status === 'failed') { await Swal.fire({ title: 'Paiement échoué', text: paymentResult.message || 'Transaction refusée.', icon: 'error' }); return; }
-        await Swal.fire({ title: 'En attente', html: 'Confirmation non reçue. Si vous avez validé, attendez 1 minute puis réessayez.', icon: 'warning' });
-    }
-JS;
-                    $html = preg_replace(
-                        '/\/\* ===== GESTION PAIEMENT ===== \*\/[\s\S]*?function handlePlanPayment[\s\S]*?\n    \}/',
-                        '/* ===== GESTION PAIEMENT ===== */' . "\n" . $campayPaymentJs,
-                        $html,
-                        1
-                    );
-                }
                 if (strpos($html, 'HOTSPOT_SWAL_FALLBACK') === false) {
                     $swalFallback = <<<'HTML'
 <style>.hotspot-modal-backdrop{position:fixed;inset:0;z-index:99999;background:rgba(2,6,23,.72);display:flex;align-items:center;justify-content:center;padding:18px}.hotspot-modal{width:min(92vw,380px);background:#111827;color:#f8fafc;border:1px solid rgba(16,185,129,.35);border-radius:24px;padding:22px;box-shadow:0 25px 80px rgba(0,0,0,.45);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}.hotspot-modal h3{margin:0 0 10px;font-size:20px}.hotspot-modal p{margin:0 0 14px;color:#cbd5e1;line-height:1.45}.hotspot-modal input{width:100%;box-sizing:border-box;padding:14px;border-radius:14px;border:1px solid rgba(148,163,184,.28);background:#020617;color:#fff;font-size:16px;outline:none}.hotspot-modal-error{display:none;margin-top:9px;color:#fca5a5;font-size:13px}.hotspot-modal-actions{display:flex;gap:10px;margin-top:18px}.hotspot-modal-actions button{flex:1;padding:12px;border:0;border-radius:999px;font-weight:800}.hotspot-modal-cancel{background:#374151;color:#fff}.hotspot-modal-confirm{background:linear-gradient(135deg,#10b981,#22c55e);color:#021014}</style><script>window.HOTSPOT_SWAL_FALLBACK=true;(function(){if(window.Swal&&typeof window.Swal.fire==='function')return;window.Swal={fire:function(a,b,c){return new Promise(function(resolve){var opts=typeof a==='object'?a:{title:a||'',text:b||'',icon:c||''};var backdrop=document.createElement('div');backdrop.className='hotspot-modal-backdrop';var html=String(opts.html||'').replace(/<script[\s\S]*?<\/script>/gi,'');backdrop.innerHTML='<div class="hotspot-modal"><h3></h3><p></p><div class="hotspot-modal-html"></div><input style="display:none"><div class="hotspot-modal-error"></div><div class="hotspot-modal-actions"><button type="button" class="hotspot-modal-cancel"></button><button type="button" class="hotspot-modal-confirm"></button></div></div>';var box=backdrop.firstChild,title=box.querySelector('h3'),text=box.querySelector('p'),htmlBox=box.querySelector('.hotspot-modal-html'),input=box.querySelector('input'),err=box.querySelector('.hotspot-modal-error'),cancel=box.querySelector('.hotspot-modal-cancel'),ok=box.querySelector('.hotspot-modal-confirm');title.textContent=opts.title||'';text.textContent=opts.text||opts.inputPlaceholder||'';text.style.display=text.textContent?'block':'none';htmlBox.innerHTML=html;if(opts.input){input.style.display='block';input.type=opts.input==='tel'?'tel':'text';input.placeholder=opts.inputPlaceholder||'';if(opts.inputAttributes){Object.keys(opts.inputAttributes).forEach(function(k){input.setAttribute(k,opts.inputAttributes[k]);});}}else{input.parentNode.removeChild(input);}cancel.textContent=opts.cancelButtonText||'Annuler';ok.textContent=opts.confirmButtonText||'OK';cancel.style.display=opts.showCancelButton===false?'none':'block';function close(result){document.body.removeChild(backdrop);resolve(result);}cancel.onclick=function(){close({isConfirmed:false,isDismissed:true,value:input?input.value:null});};ok.onclick=function(){var value=input?input.value:null;if(input&&typeof opts.inputValidator==='function'){var message=opts.inputValidator(value);if(message){err.textContent=message;err.style.display='block';return;}}close({isConfirmed:true,isDismissed:false,value:value});};document.body.appendChild(backdrop);setTimeout(function(){if(input)input.focus();},50);if(opts.timer){setTimeout(function(){if(document.body.contains(backdrop))close({isConfirmed:true,isDismissed:false,value:null});},opts.timer);}});}};})();</script>
 HTML;
                     $html = str_replace('</head>', $swalFallback . "\n</head>", $html);
                 }
-                $html = str_replace(
-                    "container.innerHTML = '<div style=\"text-align:center; padding:0.8rem;\">⏳ Chargement des offres...</div>';",
-                    "if (typeof HOTSPOT_EMBEDDED_PLANS !== 'undefined' && HOTSPOT_EMBEDDED_PLANS.length) {\n            renderHotspotPlans(HOTSPOT_EMBEDDED_PLANS);\n        } else {\n            container.innerHTML = '<div style=\"text-align:center; padding:0.8rem;\">⏳ Chargement des offres...</div>';\n        }",
-                    $html
-                );
-                $html = str_replace(
-                    "container.innerHTML = data.data.map(pkg => {",
-                    "renderHotspotPlans(data.data);\n            return;\n            container.innerHTML = data.data.map(pkg => {",
-                    $html
-                );
-                $html = str_replace(
-                    "container.innerHTML = '<div class=\"package-item\" style=\"text-align:center; color:#ef4444;\">⚠️ Forfaits indisponibles, vérifiez votre connexion.</div>';",
-                    "if (!(typeof HOTSPOT_EMBEDDED_PLANS !== 'undefined' && HOTSPOT_EMBEDDED_PLANS.length)) {\n                container.innerHTML = '<div class=\"package-item\" style=\"text-align:center; color:#ef4444;\">⚠️ Forfaits indisponibles, vérifiez votre connexion.</div>';\n            }",
-                    $html
-                );
                 if (strpos($html, '.btn-secondary') === false) {
                     $html = preg_replace(
                         '/<\/style>/i',
@@ -1543,17 +1537,8 @@ HTML;
                     'if (form && prepareMikrotikLogin(form)) form.submit();',
                     $html
                 );
-                // Minification légère : on retire l'indentation et les lignes vides
-                // (les sauts de ligne sont conservés → JS intact via ASI) afin de
-                // passer sous la limite d'écriture API RouterOS (~60 Ko).
-                $minLines = array_filter(
-                    array_map('ltrim', preg_split('/\r\n|\r|\n/', $html)),
-                    static function ($line) {
-                        return $line !== '';
-                    }
-                );
-                $html = implode("\n", $minLines);
-                return $html;
+                $html = MobileMoneyGateway::repairHotspotLoginHtml($html);
+                return $finalizeHotspotLoginHtml($html);
             }
             return null;
         };
@@ -1679,17 +1664,23 @@ HTML;
         }
 
         if (_post('send_mikrotik') == '1') {
-            // Déploiement réseau long (fetch + sleeps + allers-retours RouterOS) :
-            // on lève la limite PHP de 30 s pour éviter une erreur 500 (fatal timeout).
-            @set_time_limit(300);
-            @ini_set('default_socket_timeout', '15');
+            @set_time_limit(120);
+            @ini_set('default_socket_timeout', '12');
             @ignore_user_abort(true);
             $saveHotspotSettings();
             $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
             if ($routerName !== '') {
                 $syncHotspotPlansForRouter($routerName);
             }
-            $writeHotspotLoginHtml();
+            $renderedLoginHtml = $buildHotspotLoginHtml();
+            if ($renderedLoginHtml === null) {
+                r2(getUrl('settings/hotspot'), 'e', 'Login.html default file not found');
+            }
+            $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+            if (!is_dir($loginDir)) {
+                @mkdir($loginDir, 0755, true);
+            }
+            file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml);
             $mikrotik = null;
             if ($routerName !== '') {
                 $mikrotik = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
@@ -1716,26 +1707,23 @@ HTML;
                     $poolRange = $config['hotspot_pool_range'] ?: '10.5.50.2-10.5.50.254';
                     Mikrotik::setPool($client, $poolName, $poolRange);
                 }
-                $renderedLoginHtml = $buildHotspotLoginHtml();
-                if ($renderedLoginHtml === null) {
-                    r2(getUrl('settings/hotspot'), 'e', 'Login.html default file not found');
-                }
-                $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
-                if (!is_dir($loginDir)) {
-                    @mkdir($loginDir, 0755, true);
-                }
-                file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml);
+                $fetchTs = time();
                 $fetchBases = array_values(array_unique(array_filter([
                     rtrim(APP_URL, '/'),
                     rtrim((string) ($config['hotspot_api_url'] ?? ''), '/'),
                 ])));
-                $fetchTs = time();
                 $loginFetchUrls = [];
                 $assetFetchUrlsByName = [];
                 foreach ($fetchBases as $fetchBase) {
-                    $loginFetchUrls[] = $fetchBase . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs;
+                    $loginUrl = $fetchBase . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs;
+                    if (Mikrotik::isRouterFetchableUrl($loginUrl)) {
+                        $loginFetchUrls[] = $loginUrl;
+                    }
                     foreach (['MTN.png', 'orange.png'] as $assetName) {
-                        $assetFetchUrlsByName[$assetName][] = $fetchBase . '/system/uploads/mikrotik_hotspot/' . rawurlencode($assetName) . '?ts=' . $fetchTs;
+                        $assetUrl = $fetchBase . '/system/uploads/mikrotik_hotspot/' . rawurlencode($assetName) . '?ts=' . $fetchTs;
+                        if (Mikrotik::isRouterFetchableUrl($assetUrl)) {
+                            $assetFetchUrlsByName[$assetName][] = $assetUrl;
+                        }
                     }
                 }
 
@@ -1828,6 +1816,7 @@ HTML;
         }
 
         $routers = settings_scoped_router_query($admin)->order_by_asc('name')->find_many();
+        MobileMoneyGateway::syncHotspotCaptivePaymentUi();
         $ui->assign('_title', Lang::T('Hotspot Settings'));
         $ui->assign('routers', $routers);
         $ui->assign('_c', $config);

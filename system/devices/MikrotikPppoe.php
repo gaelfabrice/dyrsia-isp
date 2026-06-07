@@ -30,8 +30,7 @@ class MikrotikPppoe
     function add_customer($customer, $plan)
     {
         global $isChangePlan;
-        $mikrotik = $this->info($plan['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($plan['routers']);
         $cid = self::getIdByCustomer($customer, $client);
         $isExp = ORM::for_table('tbl_plans')->select("id")->where('plan_expired', $plan['id'])->find_one();
         if (empty($cid)) {
@@ -85,8 +84,7 @@ class MikrotikPppoe
 
     function remove_customer($customer, $plan)
     {
-        $mikrotik = $this->info($plan['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($plan['routers']);
         if (!empty($plan['plan_expired'])) {
             $p = ORM::for_table("tbl_plans")->find_one($plan['plan_expired']);
             if($p){
@@ -111,8 +109,7 @@ class MikrotikPppoe
     // customer change username
     public function change_username($plan, $from, $to)
     {
-        $mikrotik = $this->info($plan['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($plan['routers']);
         //check if customer exists
         $printRequest = new RouterOS\Request('/ppp/secret/print');
         $printRequest->setQuery(RouterOS\Query::where('name', $from));
@@ -129,8 +126,7 @@ class MikrotikPppoe
 
     function add_plan($plan)
     {
-        $mikrotik = $this->info($plan['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($plan['routers']);
 
         //Add Pool
 
@@ -182,8 +178,7 @@ class MikrotikPppoe
 
     function update_plan($old_name, $new_plan)
     {
-        $mikrotik = $this->info($new_plan['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($new_plan['routers']);
 
         $printRequest = new RouterOS\Request(
             '/ppp profile print .proplist=.id',
@@ -227,8 +222,7 @@ class MikrotikPppoe
 
     function remove_plan($plan)
     {
-        $mikrotik = $this->info($plan['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($plan['routers']);
         $printRequest = new RouterOS\Request(
             '/ppp profile print .proplist=.id',
             RouterOS\Query::where('name', $plan['name_plan'])
@@ -247,8 +241,7 @@ class MikrotikPppoe
         if ($_app_stage == 'demo') {
             return null;
         }
-        $mikrotik = $this->info($pool['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($pool['routers']);
         $addRequest = new RouterOS\Request('/ip/pool/add');
         $client->sendSync(
             $addRequest
@@ -262,8 +255,7 @@ class MikrotikPppoe
         if ($_app_stage == 'demo') {
             return null;
         }
-        $mikrotik = $this->info($new_pool['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($new_pool['routers']);
         $printRequest = new RouterOS\Request(
             '/ip pool print .proplist=.id',
             RouterOS\Query::where('name', $old_pool['pool_name'])
@@ -287,8 +279,7 @@ class MikrotikPppoe
         if ($_app_stage == 'demo') {
             return null;
         }
-        $mikrotik = $this->info($pool['routers']);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($pool['routers']);
         $printRequest = new RouterOS\Request(
             '/ip pool print .proplist=.id',
             RouterOS\Query::where('name', $pool['pool_name'])
@@ -304,8 +295,7 @@ class MikrotikPppoe
 
     function online_customer($customer, $router_name)
     {
-        $mikrotik = $this->info($router_name);
-        $client = $this->getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+        $client = $this->routerClient($router_name);
         $printRequest = new RouterOS\Request(
             '/ppp active print',
             RouterOS\Query::where('name', $customer['username'])
@@ -324,6 +314,19 @@ class MikrotikPppoe
     function info($name)
     {
         return ORM::for_table('tbl_routers')->where('name', $name)->find_one();
+    }
+
+    function routerClient($routerName)
+    {
+        $mikrotik = $this->info($routerName);
+        if (!$mikrotik) {
+            throw new Exception(Lang::T('Router not found'));
+        }
+        return Mikrotik::getClient(
+            $mikrotik['ip_address'],
+            $mikrotik['username'],
+            $mikrotik['password']
+        );
     }
 
     function getClient($ip, $user, $pass)
