@@ -940,8 +940,8 @@ class Mikrotik
 
         $urls = [];
         foreach ([
-            $bases[0] . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs,
             $bases[0] . '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs,
+            $bases[0] . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs,
         ] as $url) {
             if (self::isRouterFetchableUrl($url)) {
                 $urls[] = $url;

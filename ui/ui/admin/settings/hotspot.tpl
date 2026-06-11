@@ -379,7 +379,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (preview.dataset.suspended === '1') {
             return;
         }
-        var qs = '?title=' + encodeURIComponent(titleInput.value || preview.getAttribute('data-title') || '');
+        var qs = '&title=' + encodeURIComponent(titleInput.value || preview.getAttribute('data-title') || '');
         if (previewRouter) {
             qs += '&routername=' + encodeURIComponent(previewRouter);
         }

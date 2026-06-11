@@ -1785,7 +1785,7 @@ HTML;
                         );
                     }
                 }
-                $apiPort = (int) (parse_url($apiUrlForFetch, PHP_URL_PORT) ?: 8080);
+                $apiPort = (int) (parse_url($apiUrlForFetch, PHP_URL_PORT) ?: ((parse_url($apiUrlForFetch, PHP_URL_SCHEME) === 'https') ? 443 : 80));
                 $captiveApiUrl = rtrim($apiUrlForFetch, '/');
                 $hotspotServerName = trim((string) ($config['hotspot_name'] ?? ''));
                 $hotspotListenIp = Mikrotik::getHotspotServerAddress($client, $hotspotServerName);
@@ -1838,9 +1838,9 @@ HTML;
                         getUrl('settings/hotspot'),
                         'e',
                         'Échec de l\'envoi vers MikroTik : login.html non envoyé (' . implode(' | ', $sendErrors)
-                        . '). Vérifiez que le MikroTik (10.0.0.3) peut joindre '
+                        . '). Vérifiez que le MikroTik peut joindre '
                         . ($fetchBases[0] ?? 'votre serveur')
-                        . ' : pare-feu macOS, port 8080, même réseau/VPN. Test routeur : /tool fetch url="'
+                        . ' (HTTP/HTTPS, pas le port dev 8080). Test routeur : /tool fetch url="'
                         . ($loginFetchUrls[0] ?? '')
                         . '" dst-path=hotspot/login.html mode=http'
                     );
