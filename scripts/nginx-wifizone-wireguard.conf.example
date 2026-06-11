@@ -1,0 +1,24 @@
+# WifiZone — Nginx: proxy WireGuard 10.0.0.1:80 → Docker app on 127.0.0.1:8000
+#
+# Use when the app runs in Docker (docker-compose.server.yml) and wifizones.org
+# already works via another server block.
+#
+# 1) grep -r root /etc/nginx/sites-enabled/   # find wifizones.org config
+# 2) sudo cp scripts/nginx-wifizone-wireguard.conf.example /etc/nginx/sites-available/wifizone-wg
+# 3) Edit upstream port if APP_PORT is not 8000
+# 4) sudo ln -s ../sites-available/wifizone-wg /etc/nginx/sites-enabled/
+# 5) sudo nginx -t && sudo systemctl reload nginx
+# 6) curl -s -o /dev/null -w "%{http_code}\n" "http://10.0.0.1/index.php?_route=plugin/hotspot_ticker"
+
+server {
+    listen 10.0.0.1:80;
+    server_name wifizones.org 10.0.0.1;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

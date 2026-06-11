@@ -167,7 +167,7 @@
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
                                 <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="{$hs_api_suggested|default:'https://wifizones.org'|escape}">
-                                <p class="help-block">URL joignable par le <strong>MikroTik</strong> via WireGuard. Production : <code>http://10.0.0.1</code> (port <strong>80</strong>, pas 8000). L'envoi crée le NAT <code>192.168.88.x:8080</code> → VPS et le walled-garden.</p>
+                                <p class="help-block">URL joignable par le MikroTik via WireGuard. Docker VPS : <code>http://10.0.0.1:8000</code>. Apache direct : <code>http://10.0.0.1</code> (port 80). L'envoi crée le NAT <code>192.168.88.x:8080</code> → cette URL.</p>
                             </div>
                         </div>
                         <div class="form-group">

@@ -965,7 +965,8 @@ class Mikrotik
         $scheme = $parts['scheme'] ?? 'http';
         $port = isset($parts['port']) ? (int) $parts['port'] : null;
         if (filter_var($host, FILTER_VALIDATE_IP) && preg_match('/^10\.0\.0\./', $host)) {
-            if ($port === null || in_array($port, [8000, 8080], true)) {
+            // 8080 = dev Mac ; 8000 = Docker VPS (docker-compose.server.yml) — ne pas écraser
+            if ($port === null || $port === 8080) {
                 $port = ($scheme === 'https') ? 443 : 80;
             }
         } elseif ($port === null) {
