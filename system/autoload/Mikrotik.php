@@ -1083,27 +1083,79 @@ class Mikrotik
     }
 
     /**
+     * IP sur une interface RouterOS (ex. bridge → 192.168.88.5).
+     */
+    public static function resolveRouterInterfaceIp($client, $interfaceName)
+    {
+        $interfaceName = trim((string) $interfaceName);
+        if ($interfaceName === '') {
+            return '';
+        }
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/address/print'))
+                    ->setArgument('.proplist', 'address,interface,actual-interface')
+                    ->setQuery(RouterOS\Query::where('interface', $interfaceName))
+            );
+            foreach ($responses as $row) {
+                $address = (string) $row->getProperty('address');
+                if (preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
+                    return $match[1];
+                }
+            }
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/address/print'))
+                    ->setArgument('.proplist', 'address,interface,actual-interface')
+            );
+            foreach ($responses as $row) {
+                $iface = (string) $row->getProperty('interface');
+                $actual = (string) $row->getProperty('actual-interface');
+                if ($iface !== $interfaceName && $actual !== $interfaceName) {
+                    continue;
+                }
+                $address = (string) $row->getProperty('address');
+                if (preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
+                    return $match[1];
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    /**
      * IP du serveur hotspot sur le routeur (ex. 192.168.88.5 affiché dans le portail captif).
      */
     public static function getHotspotServerAddress($client, $hotspotName = '')
     {
         $hotspotName = trim((string) $hotspotName);
         $fallback = '';
+        $candidates = [];
+
         try {
             $responses = $client->sendSync(
                 (new RouterOS\Request('/ip/hotspot/print'))
-                    ->setArgument('.proplist', 'name,address')
+                    ->setArgument('.proplist', 'name,interface,address,profile')
             );
             foreach ($responses as $row) {
+                $name = trim((string) $row->getProperty('name'));
+                $ip = '';
                 $address = trim((string) $row->getProperty('address'));
-                if ($address === '' || !preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
+                if ($address !== '' && preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
+                    $ip = $match[1];
+                }
+                if ($ip === '') {
+                    $ip = self::resolveRouterInterfaceIp($client, (string) $row->getProperty('interface'));
+                }
+                if ($ip === '') {
                     continue;
                 }
-                $ip = $match[1];
+                $candidates[] = ['name' => $name, 'ip' => $ip];
                 if ($fallback === '') {
                     $fallback = $ip;
                 }
-                $name = (string) $row->getProperty('name');
                 if ($hotspotName === '' || strcasecmp($name, $hotspotName) === 0) {
                     return $ip;
                 }
@@ -1112,7 +1164,36 @@ class Mikrotik
         } catch (Exception $e) {
         }
 
-        return $fallback;
+        if ($hotspotName !== '' && $fallback === '') {
+            foreach ($candidates as $candidate) {
+                if (stripos($candidate['name'], $hotspotName) !== false || stripos($hotspotName, $candidate['name']) !== false) {
+                    return $candidate['ip'];
+                }
+            }
+        }
+
+        if ($fallback !== '') {
+            return $fallback;
+        }
+
+        try {
+            $networks = $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/network/print'))
+                    ->setArgument('.proplist', 'address,gateway')
+            );
+            foreach ($networks as $row) {
+                foreach (['gateway', 'address'] as $field) {
+                    $value = trim((string) $row->getProperty($field));
+                    if ($value !== '' && preg_match('/(\d+\.\d+\.\d+\.\d+)/', $value, $match)) {
+                        return $match[1];
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
     }
 
     /**

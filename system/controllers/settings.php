@@ -1802,7 +1802,10 @@ HTML;
                     r2(
                         getUrl('settings/hotspot'),
                         'e',
-                        'IP du serveur hotspot introuvable sur le MikroTik. Vérifiez /ip hotspot print (address).'
+                        'IP du serveur hotspot introuvable sur le MikroTik. Vérifiez /ip hotspot print (interface) '
+                        . 'et /ip address print. Nom hotspot configuré : « '
+                        . ($hotspotServerName !== '' ? $hotspotServerName : 'vide')
+                        . ' » — doit correspondre à la colonne NAME dans /ip hotspot print.'
                     );
                 }
                 if ($apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {

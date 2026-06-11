@@ -238,6 +238,7 @@
                             <label class="col-md-4 control-label">Nom du Hotspot</label>
                             <div class="col-md-8">
                                 <input name="hotspot_name" class="form-control" value="{$hs_name}">
+                                <p class="help-block">Doit correspondre à la colonne <strong>NAME</strong> de <code>/ip hotspot print</code> sur le MikroTik (ex. <code>hotspot1</code>).</p>
                             </div>
                         </div>
                         <div class="form-group">
