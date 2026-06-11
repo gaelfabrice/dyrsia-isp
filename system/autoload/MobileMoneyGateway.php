@@ -659,13 +659,8 @@ function hotspotApiBases() {
     }
     async function fetchHotspotEndpoint(route, options) {
         options = options || {};
-        const bases = hotspotApiBases();
-        const headers = Object.assign({}, options.headers || {});
-        if (bases.some(function (b) { return /ngrok/i.test(b); }) || /ngrok/i.test(window.location.hostname || '')) {
-            headers['ngrok-skip-browser-warning'] = '1';
-        }
-        options = Object.assign({}, options, { headers: headers });
         let lastError = null;
+        const bases = hotspotApiBases();
         for (const base of bases) {
             try {
                 const response = await fetch(base + '/index.php?_route=plugin/' + route, options);
