@@ -385,6 +385,13 @@ class MobileMoneyGateway
     function hotspotAssetUrl(filename) {
         if (!filename) return '';
         if (filename.indexOf('/') >= 0 || String(filename).indexOf('http') === 0) return filename;
+        var origin = window.location.origin || '';
+        try {
+            var host = new URL(origin).hostname;
+            if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) {
+                return 'hotspot/' + filename;
+            }
+        } catch (e) {}
         try {
             if (typeof APP_URL === 'string' && APP_URL) {
                 var pageHost = window.location.hostname;
@@ -642,9 +649,22 @@ function hotspotApiBases() {
         const origin = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : '';
         const isFilePreview = window.location.protocol === 'file:' || origin === 'null' || !origin;
         const isLocalPreview = /localhost|127\.0\.0\.1|:8080|ngrok/i.test(origin || '');
+        function isPrivateHost(hostname) {
+            return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname || '');
+        }
+        function isCaptivePortal() {
+            if (!origin) return false;
+            try { return isPrivateHost(new URL(origin).hostname); } catch (e) { return false; }
+        }
+        const onCaptive = isCaptivePortal();
+        if (onCaptive && origin) {
+            const routerHost = (function () { try { return new URL(origin).hostname; } catch (e) { return ''; } })();
+            const proxyBase = routerHost ? ('http://' + routerHost + ':8080') : '';
+            if (proxyBase) bases.push(proxyBase);
+        }
         if (isLocalPreview && origin) bases.push(origin);
-        if (appBase) bases.push(appBase);
-        if (dnsName && !isFilePreview) {
+        if (appBase && !bases.includes(appBase)) bases.push(appBase);
+        if (dnsName && !isFilePreview && !onCaptive) {
             let scheme = 'http';
             let port = '';
             try {
@@ -653,7 +673,7 @@ function hotspotApiBases() {
                 if (u.port && u.port !== '80' && u.port !== '443') port = ':' + u.port;
             } catch (e) {}
             const dnsBase = scheme + '://' + dnsName + port;
-            if (dnsBase !== appBase) bases.push(dnsBase);
+            if (dnsBase !== appBase && !bases.includes(dnsBase)) bases.push(dnsBase);
         }
         return [...new Set(bases.filter(Boolean))];
     }

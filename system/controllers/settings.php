@@ -1772,6 +1772,12 @@ HTML;
                         'Échec walled-garden : ' . implode(' | ', $wgResult['errors'] ?? ['erreur inconnue'])
                     );
                 }
+                foreach (['wifizones.org', 'www.wifizones.org'] as $wgHost) {
+                    $apiHostCheck = parse_url($apiUrlForFetch, PHP_URL_HOST);
+                    if ($apiHostCheck !== $wgHost) {
+                        Mikrotik::ensureHotspotWalledGarden($client, 'https://' . $wgHost);
+                    }
+                }
                 $apiHostForDns = parse_url($apiUrlForFetch, PHP_URL_HOST);
                 $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
                 if ($dnsName !== '' && $apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {

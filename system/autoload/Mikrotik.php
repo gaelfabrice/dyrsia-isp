@@ -1037,21 +1037,23 @@ class Mikrotik
     }
 
     /**
-     * Proxy NAT : clients hotspot joignent l'IP locale du routeur, redirigée vers le serveur DYRSIA.
+     * Proxy NAT : clients hotspot joignent le routeur sur un port dédié (8080),
+     * redirigé vers le serveur DYRSIA (évite le conflit avec le portail captif sur :80).
      *
      * @return array{ok: bool, captive_url?: string, errors?: array<int, string>}
      */
-    public static function ensureHotspotApiNatProxy($client, $listenIp, $backendHost, $port = 8080)
+    public static function ensureHotspotApiNatProxy($client, $listenIp, $backendHost, $backendPort = 80)
     {
         $listenIp = trim((string) $listenIp);
         $backendHost = trim((string) $backendHost);
-        $port = (int) $port;
-        if ($listenIp === '' || $backendHost === '' || $port <= 0) {
+        $backendPort = (int) $backendPort;
+        if ($listenIp === '' || $backendHost === '' || $backendPort <= 0) {
             return ['ok' => false, 'errors' => ['IP hotspot ou serveur API invalide']];
         }
 
-        $captiveUrl = 'http://' . $listenIp . ($port === 80 ? '' : ':' . $port);
-        if ($listenIp === $backendHost) {
+        $listenPort = ($backendPort === 80 || $backendPort === 443) ? 8080 : $backendPort;
+        $captiveUrl = 'http://' . $listenIp . ($listenPort === 80 ? '' : ':' . $listenPort);
+        if ($listenIp === $backendHost && $listenPort === $backendPort) {
             return ['ok' => true, 'captive_url' => $captiveUrl];
         }
 
@@ -1059,13 +1061,15 @@ class Mikrotik
         try {
             $existing = $client->sendSync(
                 (new RouterOS\Request('/ip/firewall/nat/print'))
-                    ->setArgument('.proplist', '.id,comment,to-addresses,to-ports')
+                    ->setArgument('.proplist', '.id,comment,dst-port,to-ports')
                     ->setQuery(RouterOS\Query::where('comment', $comment))
             );
             $hasRule = false;
             foreach ($existing as $row) {
-                $hasRule = true;
-                break;
+                if ((string) $row->getProperty('dst-port') === (string) $listenPort) {
+                    $hasRule = true;
+                    break;
+                }
             }
             if (!$hasRule) {
                 $client->sendSync(
@@ -1073,10 +1077,10 @@ class Mikrotik
                         ->setArgument('chain', 'dstnat')
                         ->setArgument('protocol', 'tcp')
                         ->setArgument('dst-address', $listenIp)
-                        ->setArgument('dst-port', (string) $port)
+                        ->setArgument('dst-port', (string) $listenPort)
                         ->setArgument('action', 'dst-nat')
                         ->setArgument('to-addresses', $backendHost)
-                        ->setArgument('to-ports', (string) $port)
+                        ->setArgument('to-ports', (string) $backendPort)
                         ->setArgument('comment', $comment)
                 );
             }
@@ -1098,7 +1102,7 @@ class Mikrotik
                         ->setArgument('chain', 'srcnat')
                         ->setArgument('protocol', 'tcp')
                         ->setArgument('dst-address', $backendHost)
-                        ->setArgument('dst-port', (string) $port)
+                        ->setArgument('dst-port', (string) $backendPort)
                         ->setArgument('action', 'masquerade')
                         ->setArgument('comment', $snatComment)
                 );
