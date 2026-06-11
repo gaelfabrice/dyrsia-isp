@@ -30,6 +30,7 @@ system/paymentgateway/**
 !system/paymentgateway/ui/mypvit.tpl
 !system/plugin/hotspot_pg-campay.php
 !system/plugin/hotspot_pg-mypvit.php
+!system/plugin/hotspot.php
 !system/plugin/hotspot_pay.php
 !system/plugin/ui/
 system/plugin/ui/*

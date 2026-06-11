@@ -382,7 +382,20 @@ class MobileMoneyGateway
             throw new Error('Réponse serveur invalide');
         }
     }
-    function hotspotAssetUrl(filename) { return filename; }
+    function hotspotAssetUrl(filename) {
+        if (!filename) return '';
+        if (filename.indexOf('/') >= 0 || String(filename).indexOf('http') === 0) return filename;
+        try {
+            if (typeof APP_URL === 'string' && APP_URL) {
+                var pageHost = window.location.hostname;
+                var apiHost = new URL(APP_URL).hostname;
+                if (pageHost !== apiHost) {
+                    return APP_URL.replace(/\/$/, '') + '/system/uploads/mikrotik_hotspot/' + filename;
+                }
+            }
+        } catch (e) {}
+        return 'hotspot/' + filename;
+    }
     function buildPaymentModalHtml(planName, price, currency, validity) {
         const p = HOTSPOT_PAYMENT_PROFILE;
         return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro de téléphone</label><div class="campay-phone-wrap"><span class="campay-phone-prefix">' + escapeHtml(p.prefixDisplay) + '</span><input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + escapeHtml(String(p.localLength || 9)) + '" /></div><div class="campay-operators">' + buildPaymentOperatorsHtml() + '</div></div></div>';
