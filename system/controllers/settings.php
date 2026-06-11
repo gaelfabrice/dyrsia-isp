@@ -1763,7 +1763,10 @@ HTML;
                     Mikrotik::setPool($client, $poolName, $poolRange);
                 }
                 $fetchTs = time();
-                $apiUrlForFetch = trim((string) ($config['hotspot_api_url'] ?? ''));
+                $apiUrlForFetch = Mikrotik::normalizeHotspotBackendApiUrl(trim((string) ($config['hotspot_api_url'] ?? '')));
+                if ($apiUrlForFetch === '') {
+                    r2(getUrl('settings/hotspot'), 'e', 'Hotspot API URL requise (ex. http://10.0.0.1 pour le VPS WireGuard, port 80).');
+                }
                 $wgResult = Mikrotik::ensureHotspotWalledGarden($client, $apiUrlForFetch);
                 if (empty($wgResult['ok'])) {
                     r2(
@@ -1795,10 +1798,29 @@ HTML;
                 $captiveApiUrl = rtrim($apiUrlForFetch, '/');
                 $hotspotServerName = trim((string) ($config['hotspot_name'] ?? ''));
                 $hotspotListenIp = Mikrotik::getHotspotServerAddress($client, $hotspotServerName);
-                if ($hotspotListenIp !== '' && $apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
+                if ($hotspotListenIp === '') {
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'IP du serveur hotspot introuvable sur le MikroTik. Vérifiez /ip hotspot print (address).'
+                    );
+                }
+                if ($apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
                     $natResult = Mikrotik::ensureHotspotApiNatProxy($client, $hotspotListenIp, $apiHostForDns, $apiPort);
-                    if (!empty($natResult['ok']) && !empty($natResult['captive_url'])) {
-                        $captiveApiUrl = $natResult['captive_url'];
+                    if (empty($natResult['ok']) || empty($natResult['captive_url'])) {
+                        r2(
+                            getUrl('settings/hotspot'),
+                            'e',
+                            'Proxy NAT hotspot API échoué : ' . implode(' | ', $natResult['errors'] ?? ['erreur inconnue'])
+                            . '. Test routeur : /tool fetch url="http://10.0.0.1/index.php?_route=plugin/hotspot_plan" mode=http'
+                        );
+                    }
+                    $captiveApiUrl = $natResult['captive_url'];
+                } elseif (!filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
+                    foreach (['wifizones.org', 'www.wifizones.org'] as $wgHost) {
+                        if ($apiHostForDns !== $wgHost) {
+                            Mikrotik::ensureHotspotWalledGarden($client, 'https://' . $wgHost);
+                        }
                     }
                 }
                 $renderedLoginHtml = Mikrotik::patchHotspotLoginCaptiveApi($renderedLoginHtml, $captiveApiUrl, $dnsName);

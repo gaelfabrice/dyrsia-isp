@@ -167,7 +167,7 @@
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
                                 <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="{$hs_api_suggested|default:'https://wifizones.org'|escape}">
-                                <p class="help-block">URL joignable par le <strong>MikroTik</strong> et les clients hotspot. Sur VPS : <code>{$hs_api_suggested|default:'https://votre-domaine.com'|escape}</code> (pas le port 8080). En dev local : IP LAN du Mac, ex. <code>http://10.0.0.2:8080</code>. Le walled-garden est créé à l'envoi.</p>
+                                <p class="help-block">URL joignable par le <strong>MikroTik</strong> via WireGuard. Production : <code>http://10.0.0.1</code> (port <strong>80</strong>, pas 8000). L'envoi crée le NAT <code>192.168.88.x:8080</code> → VPS et le walled-garden.</p>
                             </div>
                         </div>
                         <div class="form-group">

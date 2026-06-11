@@ -952,6 +952,69 @@ class Mikrotik
     }
 
     /**
+     * Normalise l'URL API WireGuard (10.0.0.x) : port web VPS = 80, pas 8000/8080 dev.
+     */
+    public static function normalizeHotspotBackendApiUrl($apiUrl)
+    {
+        $apiUrl = trim((string) $apiUrl);
+        $parts = parse_url($apiUrl);
+        if (!$parts || empty($parts['host'])) {
+            return $apiUrl;
+        }
+        $host = $parts['host'];
+        $scheme = $parts['scheme'] ?? 'http';
+        $port = isset($parts['port']) ? (int) $parts['port'] : null;
+        if (filter_var($host, FILTER_VALIDATE_IP) && preg_match('/^10\.0\.0\./', $host)) {
+            if ($port === null || in_array($port, [8000, 8080], true)) {
+                $port = ($scheme === 'https') ? 443 : 80;
+            }
+        } elseif ($port === null) {
+            $port = ($scheme === 'https') ? 443 : 80;
+        }
+        $url = $scheme . '://' . $host;
+        if (($scheme === 'http' && $port !== 80) || ($scheme === 'https' && $port !== 443)) {
+            $url .= ':' . $port;
+        }
+
+        return $url;
+    }
+
+    /**
+     * @return array{ok: bool, errors?: array<int, string>}
+     */
+    public static function removeFirewallRulesByComment($client, $comment)
+    {
+        $comment = trim((string) $comment);
+        if ($comment === '') {
+            return ['ok' => true];
+        }
+        $errors = [];
+        foreach (['/ip/firewall/nat', '/ip/firewall/filter'] as $chainPath) {
+            try {
+                $rows = $client->sendSync(
+                    (new RouterOS\Request($chainPath . '/print'))
+                        ->setArgument('.proplist', '.id,comment')
+                );
+                foreach ($rows as $row) {
+                    if ((string) $row->getProperty('comment') !== $comment) {
+                        continue;
+                    }
+                    $client->sendSync(
+                        (new RouterOS\Request($chainPath . '/remove'))
+                            ->setArgument('numbers', $row->getProperty('.id'))
+                    );
+                }
+            } catch (Throwable $e) {
+                $errors[] = $chainPath . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = $chainPath . ': ' . $e->getMessage();
+            }
+        }
+
+        return empty($errors) ? ['ok' => true] : ['ok' => false, 'errors' => $errors];
+    }
+
+    /**
      * Autorise le serveur API dans le walled-garden hotspot (avant fetch login.html).
      *
      * @return array{ok: bool, errors?: array<int, string>}
@@ -978,10 +1041,26 @@ class Mikrotik
             try {
                 $walledGarden = $client->sendSync(
                     (new RouterOS\Request($wgPath . '/print'))
-                        ->setArgument('.proplist', '.id')
+                        ->setArgument('.proplist', '.id,' . $queryField . ',dst-port')
                         ->setQuery(RouterOS\Query::where($queryField, $apiHost))
                 );
-                if (count($walledGarden) == 0) {
+                $updated = false;
+                foreach ($walledGarden as $row) {
+                    if ((string) $row->getProperty('dst-port') === (string) $apiPort) {
+                        return ['ok' => true];
+                    }
+                    $client->sendSync(
+                        (new RouterOS\Request($wgPath . '/set'))
+                            ->setArgument('numbers', $row->getProperty('.id'))
+                            ->setArgument('dst-port', (string) $apiPort)
+                            ->setArgument('protocol', 'tcp')
+                            ->setArgument('action', 'accept')
+                            ->setArgument('comment', 'WifiZone hotspot API ' . $apiUrl)
+                    );
+                    $updated = true;
+                    break;
+                }
+                if (!$updated) {
                     $client->sendSync(
                         (new RouterOS\Request($wgPath . '/add'))
                             ->setArgument($queryField, $apiHost)
@@ -1051,64 +1130,82 @@ class Mikrotik
             return ['ok' => false, 'errors' => ['IP hotspot ou serveur API invalide']];
         }
 
-        $listenPort = ($backendPort === 80 || $backendPort === 443) ? 8080 : $backendPort;
-        $captiveUrl = 'http://' . $listenIp . ($listenPort === 80 ? '' : ':' . $listenPort);
+        $listenPort = 8080;
+        $captiveUrl = 'http://' . $listenIp . ':' . $listenPort;
         if ($listenIp === $backendHost && $listenPort === $backendPort) {
             return ['ok' => true, 'captive_url' => $captiveUrl];
         }
 
-        $comment = 'WifiZone hotspot API proxy';
+        $proxyComment = 'WifiZone hotspot API proxy';
+        $snatComment = 'WifiZone hotspot API SNAT';
+        $inputComment = 'WifiZone hotspot API input';
+        $errors = [];
+
         try {
-            $existing = $client->sendSync(
-                (new RouterOS\Request('/ip/firewall/nat/print'))
-                    ->setArgument('.proplist', '.id,comment,dst-port,to-ports')
-                    ->setQuery(RouterOS\Query::where('comment', $comment))
+            self::removeFirewallRulesByComment($client, $proxyComment);
+            self::removeFirewallRulesByComment($client, $snatComment);
+            self::removeFirewallRulesByComment($client, $inputComment);
+
+            $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/add'))
+                    ->setArgument('chain', 'dstnat')
+                    ->setArgument('protocol', 'tcp')
+                    ->setArgument('dst-address', $listenIp)
+                    ->setArgument('dst-port', (string) $listenPort)
+                    ->setArgument('action', 'dst-nat')
+                    ->setArgument('to-addresses', $backendHost)
+                    ->setArgument('to-ports', (string) $backendPort)
+                    ->setArgument('comment', $proxyComment)
             );
-            $hasRule = false;
-            foreach ($existing as $row) {
+
+            $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/add'))
+                    ->setArgument('chain', 'srcnat')
+                    ->setArgument('protocol', 'tcp')
+                    ->setArgument('dst-address', $backendHost)
+                    ->setArgument('dst-port', (string) $backendPort)
+                    ->setArgument('action', 'masquerade')
+                    ->setArgument('comment', $snatComment)
+            );
+
+            $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/add'))
+                    ->setArgument('chain', 'input')
+                    ->setArgument('protocol', 'tcp')
+                    ->setArgument('dst-address', $listenIp)
+                    ->setArgument('dst-port', (string) $listenPort)
+                    ->setArgument('action', 'accept')
+                    ->setArgument('comment', $inputComment)
+            );
+
+            $verify = $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/print'))
+                    ->setArgument('.proplist', 'comment,dst-port,to-addresses,to-ports')
+                    ->setQuery(RouterOS\Query::where('comment', $proxyComment))
+            );
+            $verified = false;
+            foreach ($verify as $row) {
                 if ((string) $row->getProperty('dst-port') === (string) $listenPort) {
-                    $hasRule = true;
+                    $verified = true;
                     break;
                 }
             }
-            if (!$hasRule) {
-                $client->sendSync(
-                    (new RouterOS\Request('/ip/firewall/nat/add'))
-                        ->setArgument('chain', 'dstnat')
-                        ->setArgument('protocol', 'tcp')
-                        ->setArgument('dst-address', $listenIp)
-                        ->setArgument('dst-port', (string) $listenPort)
-                        ->setArgument('action', 'dst-nat')
-                        ->setArgument('to-addresses', $backendHost)
-                        ->setArgument('to-ports', (string) $backendPort)
-                        ->setArgument('comment', $comment)
-                );
+            if (!$verified) {
+                return ['ok' => false, 'errors' => ['Règle NAT proxy non créée sur le MikroTik (droits firewall ?)']];
             }
 
-            $snatComment = 'WifiZone hotspot API SNAT';
-            $snatExisting = $client->sendSync(
-                (new RouterOS\Request('/ip/firewall/nat/print'))
-                    ->setArgument('.proplist', '.id,comment')
-                    ->setQuery(RouterOS\Query::where('comment', $snatComment))
-            );
-            $hasSnat = false;
-            foreach ($snatExisting as $row) {
-                $hasSnat = true;
-                break;
+            $wgBackend = self::ensureHotspotWalledGarden($client, 'http://' . $backendHost . ($backendPort === 80 ? '' : ':' . $backendPort));
+            if (empty($wgBackend['ok'])) {
+                $errors = array_merge($errors, $wgBackend['errors'] ?? ['walled-garden backend']);
             }
-            if (!$hasSnat) {
-                $client->sendSync(
-                    (new RouterOS\Request('/ip/firewall/nat/add'))
-                        ->setArgument('chain', 'srcnat')
-                        ->setArgument('protocol', 'tcp')
-                        ->setArgument('dst-address', $backendHost)
-                        ->setArgument('dst-port', (string) $backendPort)
-                        ->setArgument('action', 'masquerade')
-                        ->setArgument('comment', $snatComment)
-                );
+            $wgCaptive = self::ensureHotspotWalledGarden($client, $captiveUrl);
+            if (empty($wgCaptive['ok'])) {
+                $errors = array_merge($errors, $wgCaptive['errors'] ?? ['walled-garden captive']);
             }
 
-            self::ensureHotspotWalledGarden($client, $captiveUrl);
+            if (!empty($errors)) {
+                return ['ok' => false, 'errors' => $errors, 'captive_url' => $captiveUrl];
+            }
 
             return ['ok' => true, 'captive_url' => $captiveUrl];
         } catch (Throwable $e) {
