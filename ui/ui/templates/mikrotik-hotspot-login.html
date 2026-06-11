@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<!-- Métas essentiels pour portail captif -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="format-detection" content="telephone=no">
+<title>ISP#57 | Portail Haut Débit</title>
+<!-- SweetAlert2 -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+* {
+margin: 0;
+padding: 0;
+box-sizing: border-box;
+-webkit-tap-highlight-color: transparent;
+}
+body {
+font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+background: #0a0c15;
+color: #eef2ff;
+min-height: 100vh;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+transition: background 0.3s ease, color 0.3s ease;
+padding: 1rem;
+}
+/* ===== CARTE PRINCIPALE ===== */
+.glass-card {
+background: rgba(15, 23, 42, 0.88);
+backdrop-filter: blur(12px);
+border-radius: 2rem;
+border: 1px solid rgba(255,255,255,0.12);
+width: 100%;
+max-width: 520px;
+padding: 2rem 1.8rem;
+transition: all 0.3s;
+box-shadow: 0 25px 45px -12px rgba(0,0,0,0.4);
+}
+/* ===== TOGGLE THEME ===== */
+.theme-icon {
+font-size: 12px;
+z-index: 1;
+}
+/* ===== HEADER ===== */
+.hero {
+text-align: center;
+margin-bottom: 1.8rem;
+}
+.hero h1 {
+font-size: 2rem;
+font-weight: 800;
+background: linear-gradient(135deg, #E0F2FE, #A7F3D0);
+background-clip: text;
+-webkit-background-clip: text;
+color: transparent;
+letter-spacing: -0.5px;
+}
+.hero p {
+font-size: 0.8rem;
+opacity: 0.7;
+margin-top: 6px;
+}
+/* ===== SECTION FORFAITS ===== */
+.plans-section {
+margin: 24px 0 8px;
+}
+.section-title {
+font-size: 1rem;
+font-weight: 600;
+text-align: center;
+margin-bottom: 14px;
+color: #94a3b8;
+letter-spacing: 0.5px;
+}
+.packages-list {
+display: flex;
+flex-direction: column;
+gap: 10px;
+margin: 16px 0;
+}
+.package-item {
+display: block;
+padding: 14px 18px;
+border: 1px solid rgba(255,255,255,0.1);
+border-radius: 1rem;
+background: rgba(255,255,255,0.05);
+color: inherit;
+text-decoration: none;
+transition: all 0.2s;
+cursor: pointer;
+}
+.package-item:hover {
+border-color: rgba(34,197,94,0.5);
+background: rgba(34,197,94,0.08);
+transform: translateX(4px);
+}
+.package-name {
+display: flex;
+align-items: baseline;
+justify-content: space-between;
+flex-wrap: wrap;
+gap: 8px;
+margin-bottom: 6px;
+}
+.package-name b {
+font-size: 1rem;
+font-weight: 700;
+color: #facc15;
+}
+.package-price {
+font-weight: 700;
+font-size: 0.9rem;
+color: #fff;
+}
+.package-desc {
+font-size: 0.7rem;
+opacity: 0.7;
+display: flex;
+justify-content: space-between;
+flex-wrap: wrap;
+}
+.badge-unlimited {
+display: inline-block;
+font-size: 0.6rem;
+font-weight: 700;
+padding: 2px 8px;
+border-radius: 20px;
+background: #0f3b2c;
+color: #b9f5d8;
+margin-left: 8px;
+}
+/* ===== DIVIDER ===== */
+.divider {
+display: flex;
+align-items: center;
+gap: 12px;
+width: 100%;
+margin: 24px 0 18px;
+}
+.divider-line {
+flex: 1;
+height: 1px;
+background: rgba(255,255,255,0.15);
+}
+.divider-text {
+font-size: 0.7rem;
+text-transform: uppercase;
+letter-spacing: 1px;
+color: #94a3b8;
+}
+/* ===== FORMULAIRE ===== */
+.input-field {
+width: 100%;
+padding: 14px 18px;
+background: rgba(255,255,255,0.07);
+border: 1px solid rgba(255,255,255,0.12);
+border-radius: 44px;
+font-size: 0.9rem;
+color: #f1f5f9;
+transition: all 0.2s;
+margin-bottom: 14px;
+text-align: left;
+}
+.input-field::placeholder {
+color: rgba(255,255,255,0.4);
+}
+.input-field:focus {
+outline: none;
+border-color: #10b981;
+background: rgba(255,255,255,0.12);
+}
+.btn-primary {
+width: 100%;
+background: #10b981;
+border: none;
+padding: 14px;
+border-radius: 44px;
+font-weight: 700;
+font-size: 0.95rem;
+color: white;
+cursor: pointer;
+transition: all 0.2s;
+letter-spacing: 0.5px;
+}
+.btn-primary:hover {
+background: #0e9f6e;
+transform: translateY(-1px);
+}
+.error-message {
+display: none;
+background: rgba(220,38,38,0.12);
+border-left: 3px solid #ef4444;
+padding: 8px 14px;
+border-radius: 20px;
+font-size: 0.75rem;
+margin-top: 12px;
+text-align: center;
+}
+/* ===== BANDEAU DÉFILANT ===== */
+.ticker-bar {
+width: 100%;
+background: linear-gradient(90deg, #0f172a, #1e293b);
+color: #a7f3d0;
+font-size: 0.7rem;
+font-weight: 600;
+overflow: hidden;
+white-space: nowrap;
+height: 30px;
+display: none;
+align-items: center;
+position: fixed;
+top: 0;
+left: 0;
+right: 0;
+z-index: 1001;
+}
+.ticker-text {
+display: inline-block;
+padding-left: 100%;
+animation: tickerSlide 22s linear infinite;
+}
+@keyframes tickerSlide {
+0% { transform: translateX(0); }
+100% { transform: translateX(-100%); }
+}
+/* ===== FOOTER ===== */
+.footer {
+margin-top: 28px;
+padding-top: 16px;
+text-align: center;
+font-size: 0.65rem;
+border-top: 1px solid rgba(255,255,255,0.08);
+}
+.footer a {
+color: #6ee7b7;
+text-decoration: none;
+}
+/* Responsive */
+@media (max-width: 480px) {
+.glass-card {
+padding: 1.5rem;
+}
+.hero h1 {
+font-size: 1.6rem;
+}
+.package-name b {
+font-size: 0.9rem;
+}
+}
+/* ===== POPUP PAIEMENT CAMPAY ===== */
+.campay-swal-popup {
+border-radius: 24px !important;
+padding: 0 !important;
+overflow: hidden;
+background: #0b1220 !important;
+border: 1px solid rgba(16, 185, 129, 0.28) !important;
+box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55) !important;
+width: min(92vw, 400px) !important;
+}
+.campay-swal-popup .swal2-title {
+display: none !important;
+}
+.campay-swal-popup .swal2-html-container {
+margin: 0 !important;
+padding: 0 !important;
+overflow: visible !important;
+}
+.campay-swal-popup .swal2-actions {
+padding: 0 18px 18px !important;
+gap: 10px !important;
+margin-top: 0 !important;
+}
+.campay-swal-popup .swal2-validation-message {
+margin: 0 18px 12px !important;
+background: rgba(239, 68, 68, 0.12) !important;
+color: #fecaca !important;
+border-radius: 12px !important;
+}
+.campay-swal-confirm {
+flex: 1;
+border-radius: 999px !important;
+font-weight: 800 !important;
+padding: 13px 18px !important;
+background: linear-gradient(135deg, #059669, #10b981) !important;
+color: #021014 !important;
+box-shadow: 0 10px 30px rgba(16, 185, 129, 0.25) !important;
+}
+.campay-swal-cancel {
+flex: 1;
+border-radius: 999px !important;
+font-weight: 700 !important;
+padding: 13px 18px !important;
+background: rgba(148, 163, 184, 0.12) !important;
+color: #e2e8f0 !important;
+}
+.campay-pay-modal {
+text-align: left;
+color: #e2e8f0;
+}
+.campay-pay-header {
+padding: 22px 22px 16px;
+background: linear-gradient(180deg, rgba(16, 185, 129, 0.14), rgba(16, 185, 129, 0));
+border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.campay-pay-badge {
+display: inline-flex;
+align-items: center;
+gap: 8px;
+padding: 6px 12px;
+border-radius: 999px;
+background: rgba(16, 185, 129, 0.12);
+border: 1px solid rgba(16, 185, 129, 0.22);
+font-size: 11px;
+font-weight: 800;
+letter-spacing: 0.04em;
+text-transform: uppercase;
+color: #6ee7b7;
+margin-bottom: 12px;
+}
+.campay-pay-header h4 {
+margin: 0 0 4px;
+font-size: 22px;
+font-weight: 900;
+color: #f8fafc;
+}
+.campay-pay-header p {
+margin: 0;
+font-size: 13px;
+color: #94a3b8;
+}
+.campay-pay-body {
+padding: 18px 22px 8px;
+}
+.campay-pay-plan {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 12px;
+padding: 14px 16px;
+border-radius: 16px;
+background: rgba(255, 255, 255, 0.04);
+border: 1px solid rgba(16, 185, 129, 0.18);
+margin-bottom: 18px;
+}
+.campay-pay-plan-name {
+display: block;
+font-size: 15px;
+font-weight: 800;
+color: #facc15;
+}
+.campay-pay-plan-meta {
+display: block;
+margin-top: 4px;
+font-size: 12px;
+color: #cbd5e1;
+}
+.campay-pay-price {
+text-align: right;
+font-size: 20px;
+font-weight: 900;
+color: #fff;
+white-space: nowrap;
+}
+.campay-pay-price small {
+display: block;
+font-size: 11px;
+font-weight: 600;
+color: #94a3b8;
+margin-top: 2px;
+}
+.campay-pay-label {
+display: block;
+font-size: 12px;
+font-weight: 700;
+letter-spacing: 0.03em;
+text-transform: uppercase;
+color: #94a3b8;
+margin-bottom: 8px;
+}
+.campay-phone-wrap {
+display: flex;
+align-items: stretch;
+border-radius: 16px;
+overflow: hidden;
+border: 1px solid rgba(16, 185, 129, 0.28);
+background: rgba(2, 6, 23, 0.85);
+box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.campay-phone-prefix {
+display: flex;
+align-items: center;
+padding: 0 14px;
+font-size: 16px;
+font-weight: 800;
+color: #6ee7b7;
+background: rgba(16, 185, 129, 0.1);
+border-right: 1px solid rgba(16, 185, 129, 0.18);
+white-space: nowrap;
+}
+.campay-phone-wrap input {
+flex: 1;
+min-width: 0;
+border: 0;
+outline: none;
+background: transparent;
+color: #fff;
+font-size: 18px;
+font-weight: 700;
+letter-spacing: 0.06em;
+padding: 15px 14px;
+}
+.campay-phone-wrap input::placeholder {
+color: #64748b;
+font-weight: 500;
+letter-spacing: 0.03em;
+}
+.campay-operators {
+display: flex;
+gap: 10px;
+margin-top: 16px;
+}
+.campay-op {
+flex: 1;
+display: flex;
+align-items: center;
+justify-content: center;
+padding: 12px 10px;
+border-radius: 14px;
+background: rgba(255, 255, 255, 0.05);
+border: 1px solid rgba(255, 255, 255, 0.1);
+min-height: 60px;
+}
+.campay-op img {
+display: block;
+max-width: 100%;
+width: auto;
+object-fit: contain;
+}
+.campay-op.mtn img {
+max-height: 44px;
+}
+.campay-op.orange img {
+max-height: 40px;
+}
+/* ===== POPUP SUCCÈS PAIEMENT ===== */
+.hotspot-pay-success-popup .swal2-actions {
+display: none !important;
+}
+.hotspot-pay-success-popup .swal2-html-container {
+padding: 28px 24px 22px !important;
+}
+.hotspot-pay-success {
+text-align: center;
+color: #e2e8f0;
+}
+.hotspot-pay-success-ring {
+width: 76px;
+height: 76px;
+margin: 0 auto;
+border-radius: 50%;
+background: radial-gradient(circle at 30% 30%, rgba(52, 211, 153, 0.35), rgba(16, 185, 129, 0.08));
+border: 2px solid rgba(52, 211, 153, 0.45);
+display: flex;
+align-items: center;
+justify-content: center;
+box-shadow: 0 0 32px rgba(16, 185, 129, 0.22);
+animation: hotspotSuccessPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hotspot-pay-success-ring svg {
+width: 38px;
+height: 38px;
+stroke: #34d399;
+stroke-width: 3;
+stroke-linecap: round;
+stroke-linejoin: round;
+fill: none;
+}
+.hotspot-pay-success-ring path {
+stroke-dasharray: 48;
+stroke-dashoffset: 48;
+animation: hotspotSuccessCheck 0.55s 0.2s ease forwards;
+}
+.hotspot-pay-success h3 {
+margin: 20px 0 6px;
+font-size: 1.35rem;
+font-weight: 800;
+color: #ecfdf5;
+letter-spacing: -0.02em;
+}
+.hotspot-pay-success-plan {
+font-size: 0.82rem;
+color: #94a3b8;
+margin: 0 0 14px;
+}
+.hotspot-pay-success-sub {
+font-size: 0.9rem;
+color: #6ee7b7;
+font-weight: 600;
+margin: 0 0 18px;
+}
+.hotspot-pay-success-bar {
+height: 4px;
+background: rgba(255, 255, 255, 0.08);
+border-radius: 99px;
+overflow: hidden;
+}
+.hotspot-pay-success-bar span {
+display: block;
+height: 100%;
+width: 0;
+background: linear-gradient(90deg, #059669, #34d399);
+border-radius: 99px;
+animation: hotspotPayBar 1.5s ease forwards;
+}
+@keyframes hotspotSuccessPop {
+from { transform: scale(0.6); opacity: 0; }
+to { transform: scale(1); opacity: 1; }
+}
+@keyframes hotspotSuccessCheck {
+to { stroke-dashoffset: 0; }
+}
+@keyframes hotspotPayBar {
+to { width: 100%; }
+}
+.voucher-section,
+.recover-section {
+margin: 16px 0;
+}
+.voucher-form {
+display: none;
+margin-top: 12px;
+}
+.voucher-form.open {
+display: block;
+}
+.btn-secondary {
+width: 100%;
+padding: 14px;
+border-radius: 44px;
+border: 1px solid rgba(16,185,129,0.35);
+background: rgba(16,185,129,0.08);
+color: #a7f3d0;
+font-weight: 700;
+cursor: pointer;
+}
+.btn-secondary:hover {
+background: rgba(16,185,129,0.14);
+}
+.recover-hint {
+margin-top: 8px;
+font-size: 0.72rem;
+line-height: 1.4;
+color: #94a3b8;
+text-align: center;
+}
+/* ===== AIDE / WHATSAPP ===== */
+.help-section {
+margin-bottom: 20px;
+padding-bottom: 18px;
+border-bottom: 1px solid rgba(255,255,255,0.08);
+text-align: center;
+}
+.help-text {
+font-size: 0.78rem;
+line-height: 1.55;
+color: #94a3b8;
+margin-bottom: 14px;
+padding: 0 4px;
+}
+.help-title {
+font-size: 0.92rem;
+font-weight: 800;
+color: #ecfdf5;
+letter-spacing: 0.02em;
+margin-bottom: 8px;
+}
+.help-text p {
+margin: 0 0 6px;
+}
+.help-text p:last-child {
+margin-bottom: 0;
+}
+.help-badge {
+display: inline-block;
+margin-top: 8px;
+padding: 4px 12px;
+border-radius: 999px;
+font-size: 0.68rem;
+font-weight: 700;
+color: #6ee7b7;
+background: rgba(16, 185, 129, 0.12);
+border: 1px solid rgba(16, 185, 129, 0.25);
+}
+.btn-whatsapp {
+display: inline-flex;
+align-items: center;
+justify-content: center;
+gap: 10px;
+width: 100%;
+padding: 14px 18px;
+border-radius: 44px;
+border: 1px solid rgba(37, 211, 102, 0.45);
+background: linear-gradient(135deg, rgba(37, 211, 102, 0.18), rgba(16, 185, 129, 0.12));
+color: #bbf7d0;
+font-weight: 700;
+font-size: 0.92rem;
+text-decoration: none;
+cursor: pointer;
+transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+box-shadow: 0 8px 24px rgba(37, 211, 102, 0.12);
+}
+.btn-whatsapp:hover {
+background: linear-gradient(135deg, rgba(37, 211, 102, 0.28), rgba(16, 185, 129, 0.2));
+transform: translateY(-1px);
+box-shadow: 0 12px 28px rgba(37, 211, 102, 0.18);
+color: #ecfdf5;
+}
+.btn-whatsapp:active {
+transform: translateY(0);
+}
+.btn-whatsapp svg {
+width: 22px;
+height: 22px;
+flex-shrink: 0;
+}
+</style>
+<script>window.HOTSPOT_INLINE_MD5=true;/*
+* A JavaScript implementation of the RSA Data Security, Inc. MD5 Message
+* Digest Algorithm, as defined in RFC 1321.
+* Version 1.1 Copyright (C) Paul Johnston 1999 - 2002.
+* Code also contributed by Greg Holt
+* See http://pajhome.org.uk/site/legal.html for details.
+*/
+/*
+* Add integers, wrapping at 2^32. This uses 16-bit operations internally
+* to work around bugs in some JS interpreters.
+*/
+function safe_add(x, y)
+{
+var lsw = (x & 0xFFFF) + (y & 0xFFFF)
+var msw = (x >> 16) + (y >> 16) + (lsw >> 16)
+return (msw << 16) | (lsw & 0xFFFF)
+}
+/*
+* Bitwise rotate a 32-bit number to the left.
+*/
+function rol(num, cnt)
+{
+return (num << cnt) | (num >>> (32 - cnt))
+}
+/*
+* These functions implement the four basic operations the algorithm uses.
+*/
+function cmn(q, a, b, x, s, t)
+{
+return safe_add(rol(safe_add(safe_add(a, q), safe_add(x, t)), s), b)
+}
+function ff(a, b, c, d, x, s, t)
+{
+return cmn((b & c) | ((~b) & d), a, b, x, s, t)
+}
+function gg(a, b, c, d, x, s, t)
+{
+return cmn((b & d) | (c & (~d)), a, b, x, s, t)
+}
+function hh(a, b, c, d, x, s, t)
+{
+return cmn(b ^ c ^ d, a, b, x, s, t)
+}
+function ii(a, b, c, d, x, s, t)
+{
+return cmn(c ^ (b | (~d)), a, b, x, s, t)
+}
+/*
+* Calculate the MD5 of an array of little-endian words, producing an array
+* of little-endian words.
+*/
+function coreMD5(x)
+{
+var a =  1732584193
+var b = -271733879
+var c = -1732584194
+var d =  271733878
+for(i = 0; i < x.length; i += 16)
+{
+var olda = a
+var oldb = b
+var oldc = c
+var oldd = d
+a = ff(a, b, c, d, x[i+ 0], 7 , -680876936)
+d = ff(d, a, b, c, x[i+ 1], 12, -389564586)
+c = ff(c, d, a, b, x[i+ 2], 17,  606105819)
+b = ff(b, c, d, a, x[i+ 3], 22, -1044525330)
+a = ff(a, b, c, d, x[i+ 4], 7 , -176418897)
+d = ff(d, a, b, c, x[i+ 5], 12,  1200080426)
+c = ff(c, d, a, b, x[i+ 6], 17, -1473231341)
+b = ff(b, c, d, a, x[i+ 7], 22, -45705983)
+a = ff(a, b, c, d, x[i+ 8], 7 ,  1770035416)
+d = ff(d, a, b, c, x[i+ 9], 12, -1958414417)
+c = ff(c, d, a, b, x[i+10], 17, -42063)
+b = ff(b, c, d, a, x[i+11], 22, -1990404162)
+a = ff(a, b, c, d, x[i+12], 7 ,  1804603682)
+d = ff(d, a, b, c, x[i+13], 12, -40341101)
+c = ff(c, d, a, b, x[i+14], 17, -1502002290)
+b = ff(b, c, d, a, x[i+15], 22,  1236535329)
+a = gg(a, b, c, d, x[i+ 1], 5 , -165796510)
+d = gg(d, a, b, c, x[i+ 6], 9 , -1069501632)
+c = gg(c, d, a, b, x[i+11], 14,  643717713)
+b = gg(b, c, d, a, x[i+ 0], 20, -373897302)
+a = gg(a, b, c, d, x[i+ 5], 5 , -701558691)
+d = gg(d, a, b, c, x[i+10], 9 ,  38016083)
+c = gg(c, d, a, b, x[i+15], 14, -660478335)
+b = gg(b, c, d, a, x[i+ 4], 20, -405537848)
+a = gg(a, b, c, d, x[i+ 9], 5 ,  568446438)
+d = gg(d, a, b, c, x[i+14], 9 , -1019803690)
+c = gg(c, d, a, b, x[i+ 3], 14, -187363961)
+b = gg(b, c, d, a, x[i+ 8], 20,  1163531501)
+a = gg(a, b, c, d, x[i+13], 5 , -1444681467)
+d = gg(d, a, b, c, x[i+ 2], 9 , -51403784)
+c = gg(c, d, a, b, x[i+ 7], 14,  1735328473)
+b = gg(b, c, d, a, x[i+12], 20, -1926607734)
+a = hh(a, b, c, d, x[i+ 5], 4 , -378558)
+d = hh(d, a, b, c, x[i+ 8], 11, -2022574463)
+c = hh(c, d, a, b, x[i+11], 16,  1839030562)
+b = hh(b, c, d, a, x[i+14], 23, -35309556)
+a = hh(a, b, c, d, x[i+ 1], 4 , -1530992060)
+d = hh(d, a, b, c, x[i+ 4], 11,  1272893353)
+c = hh(c, d, a, b, x[i+ 7], 16, -155497632)
+b = hh(b, c, d, a, x[i+10], 23, -1094730640)
+a = hh(a, b, c, d, x[i+13], 4 ,  681279174)
+d = hh(d, a, b, c, x[i+ 0], 11, -358537222)
+c = hh(c, d, a, b, x[i+ 3], 16, -722521979)
+b = hh(b, c, d, a, x[i+ 6], 23,  76029189)
+a = hh(a, b, c, d, x[i+ 9], 4 , -640364487)
+d = hh(d, a, b, c, x[i+12], 11, -421815835)
+c = hh(c, d, a, b, x[i+15], 16,  530742520)
+b = hh(b, c, d, a, x[i+ 2], 23, -995338651)
+a = ii(a, b, c, d, x[i+ 0], 6 , -198630844)
+d = ii(d, a, b, c, x[i+ 7], 10,  1126891415)
+c = ii(c, d, a, b, x[i+14], 15, -1416354905)
+b = ii(b, c, d, a, x[i+ 5], 21, -57434055)
+a = ii(a, b, c, d, x[i+12], 6 ,  1700485571)
+d = ii(d, a, b, c, x[i+ 3], 10, -1894986606)
+c = ii(c, d, a, b, x[i+10], 15, -1051523)
+b = ii(b, c, d, a, x[i+ 1], 21, -2054922799)
+a = ii(a, b, c, d, x[i+ 8], 6 ,  1873313359)
+d = ii(d, a, b, c, x[i+15], 10, -30611744)
+c = ii(c, d, a, b, x[i+ 6], 15, -1560198380)
+b = ii(b, c, d, a, x[i+13], 21,  1309151649)
+a = ii(a, b, c, d, x[i+ 4], 6 , -145523070)
+d = ii(d, a, b, c, x[i+11], 10, -1120210379)
+c = ii(c, d, a, b, x[i+ 2], 15,  718787259)
+b = ii(b, c, d, a, x[i+ 9], 21, -343485551)
+a = safe_add(a, olda)
+b = safe_add(b, oldb)
+c = safe_add(c, oldc)
+d = safe_add(d, oldd)
+}
+return [a, b, c, d]
+}
+/*
+* Convert an array of little-endian words to a hex string.
+*/
+function binl2hex(binarray)
+{
+var hex_tab = "0123456789abcdef"
+var str = ""
+for(var i = 0; i < binarray.length * 4; i++)
+{
+str += hex_tab.charAt((binarray[i>>2] >> ((i%4)*8+4)) & 0xF) +
+hex_tab.charAt((binarray[i>>2] >> ((i%4)*8)) & 0xF)
+}
+return str
+}
+/*
+* Convert an array of little-endian words to a base64 encoded string.
+*/
+function binl2b64(binarray)
+{
+var tab = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+var str = ""
+for(var i = 0; i < binarray.length * 32; i += 6)
+{
+str += tab.charAt(((binarray[i>>5] << (i%32)) & 0x3F) |
+((binarray[i>>5+1] >> (32-i%32)) & 0x3F))
+}
+return str
+}
+/*
+* Convert an 8-bit character string to a sequence of 16-word blocks, stored
+* as an array, and append appropriate padding for MD4/5 calculation.
+* If any of the characters are >255, the high byte is silently ignored.
+*/
+function str2binl(str)
+{
+var nblk = ((str.length + 8) >> 6) + 1 // number of 16-word blocks
+var blks = new Array(nblk * 16)
+for(var i = 0; i < nblk * 16; i++) blks[i] = 0
+for(var i = 0; i < str.length; i++)
+blks[i>>2] |= (str.charCodeAt(i) & 0xFF) << ((i%4) * 8)
+blks[i>>2] |= 0x80 << ((i%4) * 8)
+blks[nblk*16-2] = str.length * 8
+return blks
+}
+/*
+* Convert a wide-character string to a sequence of 16-word blocks, stored as
+* an array, and append appropriate padding for MD4/5 calculation.
+*/
+function strw2binl(str)
+{
+var nblk = ((str.length + 4) >> 5) + 1 // number of 16-word blocks
+var blks = new Array(nblk * 16)
+for(var i = 0; i < nblk * 16; i++) blks[i] = 0
+for(var i = 0; i < str.length; i++)
+blks[i>>1] |= str.charCodeAt(i) << ((i%2) * 16)
+blks[i>>1] |= 0x80 << ((i%2) * 16)
+blks[nblk*16-2] = str.length * 16
+return blks
+}
+/*
+* External interface
+*/
+function hexMD5 (str) { return binl2hex(coreMD5( str2binl(str))) }
+function hexMD5w(str) { return binl2hex(coreMD5(strw2binl(str))) }
+function b64MD5 (str) { return binl2b64(coreMD5( str2binl(str))) }
+function b64MD5w(str) { return binl2b64(coreMD5(strw2binl(str))) }
+/* Backward compatibility */
+function calcMD5(str) { return binl2hex(coreMD5( str2binl(str))) }
+</script>
+<style>.hotspot-modal-backdrop{position:fixed;inset:0;z-index:99999;background:rgba(2,6,23,.72);display:flex;align-items:center;justify-content:center;padding:18px}.hotspot-modal{width:min(92vw,380px);background:#111827;color:#f8fafc;border:1px solid rgba(16,185,129,.35);border-radius:24px;padding:22px;box-shadow:0 25px 80px rgba(0,0,0,.45);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}.hotspot-modal h3{margin:0 0 10px;font-size:20px}.hotspot-modal p{margin:0 0 14px;color:#cbd5e1;line-height:1.45}.hotspot-modal input{width:100%;box-sizing:border-box;padding:14px;border-radius:14px;border:1px solid rgba(148,163,184,.28);background:#020617;color:#fff;font-size:16px;outline:none}.hotspot-modal-error{display:none;margin-top:9px;color:#fca5a5;font-size:13px}.hotspot-modal-actions{display:flex;gap:10px;margin-top:18px}.hotspot-modal-actions button{flex:1;padding:12px;border:0;border-radius:999px;font-weight:800}.hotspot-modal-cancel{background:#374151;color:#fff}.hotspot-modal-confirm{background:linear-gradient(135deg,#10b981,#22c55e);color:#021014}</style><script>window.HOTSPOT_SWAL_FALLBACK=true;(function(){if(window.Swal&&typeof window.Swal.fire==='function')return;window.Swal={fire:function(a,b,c){return new Promise(function(resolve){var opts=typeof a==='object'?a:{title:a||'',text:b||'',icon:c||''};var backdrop=document.createElement('div');backdrop.className='hotspot-modal-backdrop';var html=String(opts.html||'').replace(/<script[\s\S]*?<\/script>/gi,'');backdrop.innerHTML='<div class="hotspot-modal"><h3></h3><p></p><div class="hotspot-modal-html"></div><input style="display:none"><div class="hotspot-modal-error"></div><div class="hotspot-modal-actions"><button type="button" class="hotspot-modal-cancel"></button><button type="button" class="hotspot-modal-confirm"></button></div></div>';var box=backdrop.firstChild,title=box.querySelector('h3'),text=box.querySelector('p'),htmlBox=box.querySelector('.hotspot-modal-html'),input=box.querySelector('input'),err=box.querySelector('.hotspot-modal-error'),cancel=box.querySelector('.hotspot-modal-cancel'),ok=box.querySelector('.hotspot-modal-confirm');title.textContent=opts.title||'';text.textContent=opts.text||opts.inputPlaceholder||'';text.style.display=text.textContent?'block':'none';htmlBox.innerHTML=html;if(opts.input){input.style.display='block';input.type=opts.input==='tel'?'tel':'text';input.placeholder=opts.inputPlaceholder||'';if(opts.inputAttributes){Object.keys(opts.inputAttributes).forEach(function(k){input.setAttribute(k,opts.inputAttributes[k]);});}}else{input.parentNode.removeChild(input);}cancel.textContent=opts.cancelButtonText||'Annuler';ok.textContent=opts.confirmButtonText||'OK';cancel.style.display=opts.showCancelButton===false?'none':'block';function close(result){document.body.removeChild(backdrop);resolve(result);}cancel.onclick=function(){close({isConfirmed:false,isDismissed:true,value:input?input.value:null});};ok.onclick=function(){var value=input?input.value:null;if(input&&typeof opts.inputValidator==='function'){var message=opts.inputValidator(value);if(message){err.textContent=message;err.style.display='block';return;}}close({isConfirmed:true,isDismissed:false,value:value});};document.body.appendChild(backdrop);setTimeout(function(){if(input)input.focus();},50);if(opts.timer){setTimeout(function(){if(document.body.contains(backdrop))close({isConfirmed:true,isDismissed:false,value:null});},opts.timer);}});}};})();</script>
+</head>
+<body>
+<div id="tickerBar" class="ticker-bar">
+<span id="tickerText" class="ticker-text"></span>
+</div>
+<div class="glass-card">
+<div class="help-section">
+<div class="help-title">Assistance &amp; Connexion à domicile</div>
+<div class="help-text">
+<p>Une question ? Un besoin technique ?</p>
+<p>Appuyez sur le bouton ci-dessous pour contacter nos conseillers directement sur WhatsApp.</p>
+<span class="help-badge">Réponse rapide garantie.</span>
+</div>
+<a href="https://wa.me/33761951914" target="_blank" rel="noopener noreferrer" class="btn-whatsapp" aria-label="Contacter le support sur WhatsApp">
+<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+WhatsApp — Nous contacter
+</a>
+</div>
+<div class="hero">
+<h1>⚡ <span data-hotspot-title>ISP#57</span></h1></div>
+<div class="voucher-section">
+<button type="button" id="toggleVoucherBtn" class="btn-secondary voucher-toggle">🎫 J'AI UN CODE</button>
+</div>
+<div class="recover-section">
+<button type="button" id="recoverPlanBtn" class="btn-secondary">🔑 RÉCUPÉRER MON FORFAIT</button>
+</div>
+<div class="plans-section">
+<div class="section-title">🎯 CHOISISSEZ VOTRE FORFAIT</div>
+<div id="packagesList" class="packages-list">
+<div style="text-align:center; padding:0.8rem;">⏳ Chargement des offres...</div>
+</div>
+</div>
+<div class="divider">
+<div class="divider-line"></div>
+<span class="divider-text">Déjà un compte</span>
+<div class="divider-line"></div>
+</div>
+<form id="loginForm" name="login" action="$(link-login-only)" method="post">
+<input type="hidden" name="dst" value="$(link-orig)">
+<input type="hidden" name="popup" value="true">
+<input type="text" id="loginUsername" name="username" class="input-field" placeholder="Identifiant" autocomplete="off">
+<input type="password" id="loginPassword" name="password" class="input-field" placeholder="Mot de passe" autocomplete="off">
+<button type="button" id="loginBtn" class="btn-primary">🔓 SE CONNECTER</button>
+<div id="formError" class="error-message"></div>
+</form>
+<div class="footer">
+<span>© DYRSIA — Powered by <a href="#">Dyrsia</a></span>
+</div>
+</div>
+<script>
+/* ===== CONFIGURATION ===== */
+/* Remplacé automatiquement à l'envoi MikroTik (Settings → Hotspot → Send) */
+const APP_URL = "http:\/\/10.0.0.2:8080";
+const ROUTER_ID = 2;
+const HOTSPOT_ROUTER_NAME = "MK";
+const HOTSPOT_EMBEDDED_PLANS = [{"planid":1,"planname":"1g","price":"100","currency":"XAF","validity":"15 Mins","paymentlink":"http://10.0.0.2:8080/index.php?_route=plugin/hotspot_pay&routername=MK&planid=1&amount=100","routername":"MK"},{"planid":2,"planname":"2 personnes","price":"10","currency":"XAF","validity":"15 Mins","paymentlink":"http://10.0.0.2:8080/index.php?_route=plugin/hotspot_pay&routername=MK&planid=2&amount=10","routername":"MK"},{"planid":3,"planname":"4G","price":"10","currency":"XAF","validity":"15 Mins","paymentlink":"http://10.0.0.2:8080/index.php?_route=plugin/hotspot_pay&routername=MK&planid=3&amount=10","routername":"MK"},{"planid":4,"planname":"DIDI","price":"2000","currency":"XAF","validity":"1 Mins","paymentlink":"http://10.0.0.2:8080/index.php?_route=plugin/hotspot_pay&routername=MK&planid=4&amount=2000","routername":"MK"},{"planid":5,"planname":"501","price":"501","currency":"XAF","validity":"10 Mins","paymentlink":"http://10.0.0.2:8080/index.php?_route=plugin/hotspot_pay&routername=MK&planid=5&amount=501","routername":"MK"}];
+let CLIENT_MAC = '';
+    const HOTSPOT_DNS_NAME = "hotspot.monreseau.net";
+    function hotspotApiBases() {
+        const bases = [];
+        const appBase = APP_URL ? String(APP_URL).replace(/\/$/, '') : '';
+        const dnsName = (typeof HOTSPOT_DNS_NAME !== 'undefined' && HOTSPOT_DNS_NAME) ? String(HOTSPOT_DNS_NAME).trim() : '';
+        const origin = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : '';
+        const isLocalPreview = /localhost|127\.0\.0\.1|:8080|ngrok/i.test(origin || '');
+        if (isLocalPreview && origin) bases.push(origin);
+        if (appBase) bases.push(appBase);
+        if (dnsName) {
+            let scheme = 'http';
+            let port = '';
+            try {
+                const u = new URL(appBase || 'http://' + dnsName);
+                scheme = u.protocol.replace(':', '');
+                if (u.port && u.port !== '80' && u.port !== '443') port = ':' + u.port;
+            } catch (e) {}
+            const dnsBase = scheme + '://' + dnsName + port;
+            if (dnsBase !== appBase) bases.push(dnsBase);
+        }
+        return [...new Set(bases.filter(Boolean))];
+    }
+    async function fetchHotspotEndpoint(route, options) {
+        options = options || {};
+        const headers = Object.assign({ 'ngrok-skip-browser-warning': '1' }, options.headers || {});
+        options = Object.assign({}, options, { headers: headers });
+        let lastError = null;
+        const bases = hotspotApiBases();
+        for (const base of bases) {
+            try {
+                const response = await fetch(base + '/index.php?_route=plugin/' + route, options);
+                const contentType = (response.headers.get('content-type') || '').toLowerCase();
+                if (response.ok || contentType.indexOf('application/json') !== -1) return response;
+                lastError = new Error('HTTP ' + response.status + ' via ' + base);
+            } catch (error) {
+                lastError = error;
+            }
+        }
+        const hint = bases.length ? bases.join(' ou ') : (APP_URL || 'Hotspot API URL');
+        throw lastError || new Error('API injoignable depuis le hotspot (' + hint + ')');
+    }
+// Récupération MAC (format MikroTik)
+const MAC_REGEX = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/i;
+let macCandidate = '$(mac)';
+if (MAC_REGEX.test(macCandidate)) CLIENT_MAC = macCandidate.toUpperCase();
+if (!CLIENT_MAC) {
+try {
+const params = new URLSearchParams(window.location.search);
+const urlMac = params.get('mac') || params.get('nux-mac');
+if (urlMac && MAC_REGEX.test(urlMac)) CLIENT_MAC = urlMac.toUpperCase();
+} catch (e) {}
+}
+window.CLIENT_MAC = CLIENT_MAC;
+function resolveHotspotRouterName() {
+var name = (typeof HOTSPOT_ROUTER_NAME !== 'undefined') ? String(HOTSPOT_ROUTER_NAME || '') : '';
+if (name && name !== '$(identity)' && name.indexOf('$(') < 0) {
+return name;
+}
+if (typeof HOTSPOT_EMBEDDED_PLANS !== 'undefined' && HOTSPOT_EMBEDDED_PLANS.length && HOTSPOT_EMBEDDED_PLANS[0].routername) {
+return HOTSPOT_EMBEDDED_PLANS[0].routername;
+}
+try {
+var previewRouter = new URLSearchParams(window.location.search).get('routername');
+if (previewRouter) return previewRouter;
+} catch (e) {}
+return name || '';
+}
+function applyHotspotConfig() {
+try {
+const params = new URLSearchParams(window.location.search);
+const title = params.get('title');
+if (title) {
+document.querySelectorAll('[data-hotspot-title]').forEach(el => el.textContent = title);
+document.title = title + ' | Portail Haut Débit';
+}
+} catch(e) {}
+}
+applyHotspotConfig();
+/* ===== BANDEAU DÉFILANT ===== */
+function fetchTicker() {
+fetchHotspotEndpoint('hotspot_ticker')
+.then(res => res.json())
+.then(data => {
+const txt = data.ticker?.trim() || '';
+const bar = document.getElementById('tickerBar');
+const span = document.getElementById('tickerText');
+if (txt) {
+span.innerText = txt;
+bar.style.display = 'flex';
+document.body.style.paddingTop = '30px';
+} else {
+bar.style.display = 'none';
+document.body.style.paddingTop = '0';
+}
+})
+.catch(() => {});
+}
+fetchTicker();
+setInterval(fetchTicker, 30000);
+/* ===== GESTION COOKIE ===== */
+function generateAccountNumber(len = 7) {
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+let out = '';
+for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+storeAccountInCookie(out);
+return out;
+}
+function storeAccountInCookie(val) {
+try {
+const d = new Date();
+d.setTime(d.getTime() + 30 * 86400000);
+document.cookie = `account_number=${encodeURIComponent(val)}; expires=${d.toUTCString()}; path=/; SameSite=Lax`;
+} catch(e) {}
+}
+function getAccountFromCookie() {
+const match = document.cookie.match(/account_number=([^;]+)/);
+return match ? decodeURIComponent(match[1]) : null;
+}
+/* ===== CHARGEMENT DES FORFAITS (API hotspot_plan) ===== */
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function (m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
+}
+function renderHotspotPlans(plans) {
+    const container = document.getElementById('packagesList');
+    if (!container) return;
+    if (!plans || !plans.length) {
+        container.innerHTML = '<div class="package-item" style="text-align:center;">Aucun forfait actif pour ce routeur.</div>';
+        return;
+    }
+    const routerName = resolveHotspotRouterName();
+    container.innerHTML = plans.map(function (pkg) {
+        const planId = pkg.planid || pkg.planId || '';
+        const paymentLink = pkg.paymentlink || (APP_URL + '/index.php?_route=plugin/hotspot_pay&routername=' + encodeURIComponent(routerName) + '&planid=' + encodeURIComponent(planId) + '&amount=' + encodeURIComponent(pkg.price || ''));
+        const url = paymentLink + (paymentLink.indexOf('?') >= 0 ? '&' : '?') + 'mac=$(mac)&ip=$(ip)';
+        return '<a class="package-item" href="' + url + '" target="_self" onclick="event.preventDefault(); handlePlanPayment(\'' + escapeHtml(pkg.planname || pkg.name || '') + '\', \'' + (pkg.price || '') + '\', \'' + (pkg.currency || 'Fcfa') + '\', \'' + escapeHtml(pkg.validity || '') + '\', this.href)">' +
+            '<div class="package-name"><b>' + escapeHtml(pkg.planname || pkg.name || '') + '</b><span class="package-price">' + (pkg.price || '') + ' ' + (pkg.currency || 'Fcfa') + '</span></div>' +
+            '<div class="package-desc"><span>⏱️ Validité: ' + escapeHtml(pkg.validity || '—') + '</span><span class="badge-unlimited">♾️ ILLIMITÉ</span></div></a>';
+    }).join('');
+}
+async function loadPlans() {
+    const container = document.getElementById('packagesList');
+    if (!container) return;
+    if (typeof HOTSPOT_EMBEDDED_PLANS !== 'undefined' && HOTSPOT_EMBEDDED_PLANS.length) {
+        renderHotspotPlans(HOTSPOT_EMBEDDED_PLANS);
+        return;
+    }
+    container.innerHTML = '<div style="text-align:center; padding:0.8rem;">⏳ Chargement des offres...</div>';
+    const routerName = resolveHotspotRouterName();
+    if (!routerName) {
+        container.innerHTML = '<div class="package-item" style="text-align:center; color:#ef4444;">⚠️ Routeur hotspot non configuré. Enregistrez les paramètres Hotspot puis renvoyez login.html au MikroTik.</div>';
+        return;
+    }
+    try {
+        const response = await fetchHotspotEndpoint('hotspot_plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'routername=' + encodeURIComponent(routerName)
+        });
+        const data = await response.json();
+        if (data.ResultCode === '200' && data.data && data.data.length) {
+            renderHotspotPlans(data.data);
+        } else {
+            const msg = data.message || 'Aucun forfait actif pour ce routeur.';
+            container.innerHTML = '<div class="package-item" style="text-align:center; color:#ef4444;">⚠️ ' + escapeHtml(msg) + '</div>';
+        }
+    } catch (error) {
+        console.warn('Erreur chargement forfaits:', error);
+        if (!(typeof HOTSPOT_EMBEDDED_PLANS !== 'undefined' && HOTSPOT_EMBEDDED_PLANS.length)) {
+            container.innerHTML = '<div class="package-item" style="text-align:center; color:#ef4444;">⚠️ API injoignable. Vérifiez Settings → Hotspot → URL API puis renvoyez login.html au MikroTik.</div>';
+        }
+    }
+}
+/* ===== GESTION PAIEMENT ===== */
+const HOTSPOT_PAYMENT_GATEWAY = "campay";
+const HOTSPOT_PAYMENT_PROFILE = {"gateway":"campay","prefix":"237","prefixDisplay":"+237","country":"Cameroun","badge":"Mobile Money · Cameroun","subtitle":"MTN MoMo ou Orange Money","placeholder":"6XX XXX XXX","localLength":9,"localPattern":"^[26]","errors":{"length":"Entrez 9 chiffres après +237 (ex: 677123456)","format":"Numéro camerounais invalide (doit commencer par 6 ou 2)"},"operators":[{"img":"MTN.png","alt":"MoMo MTN","class":"mtn"},{"img":"orange.png","alt":"Orange Money","class":"orange"}],"detect":[{"pattern":"^(67|68)","name":"MTN","ussd":"*126#"},{"pattern":"^(69|65[5-9])","name":"Orange","ussd":"#150*50#"}]};
+    const CAMPAY_WAIT_SECONDS = 60;
+    function parsePaymentUrl(paymentUrl) {
+        try {
+            const url = new URL(paymentUrl, APP_URL + '/');
+            return { planid: url.searchParams.get('planid') || '', routername: url.searchParams.get('routername') || '', amount: url.searchParams.get('amount') || '' };
+        } catch (e) { return { planid: '', routername: '', amount: '' }; }
+    }
+    function normalizeLocalPhone(value) {
+        let digits = String(value || '').replace(/\D/g, '');
+        const prefix = String(HOTSPOT_PAYMENT_PROFILE.prefix || '');
+        if (prefix && digits.indexOf(prefix) === 0) digits = digits.slice(prefix.length);
+        if (digits.indexOf('0') === 0) digits = digits.slice(1);
+        return digits.slice(0, HOTSPOT_PAYMENT_PROFILE.localLength || 9);
+    }
+    function formatDisplayPhone(phone) {
+        const local = normalizeLocalPhone(phone);
+        const pfx = HOTSPOT_PAYMENT_PROFILE.prefixDisplay || '';
+        if (local.length === (HOTSPOT_PAYMENT_PROFILE.localLength || 9)) {
+            return pfx + ' ' + local.slice(0, 3) + ' ' + local.slice(3, 6) + ' ' + local.slice(6);
+        }
+        return pfx + ' ' + local;
+    }
+    function validateHotspotPhone(phone) {
+        const p = HOTSPOT_PAYMENT_PROFILE;
+        const local = normalizeLocalPhone(phone);
+        if (local.length !== (p.localLength || 9)) return p.errors.length;
+        if (!new RegExp(p.localPattern).test(local)) return p.errors.format;
+        return null;
+    }
+    function detectMobileOperator(phone, apiOperator, apiUssd) {
+        if (apiOperator && apiUssd) return { name: apiOperator, ussd: apiUssd };
+        const local = normalizeLocalPhone(phone);
+        const rules = HOTSPOT_PAYMENT_PROFILE.detect || [];
+        for (let i = 0; i < rules.length; i++) {
+            if (new RegExp(rules[i].pattern).test(local)) {
+                return { name: rules[i].name, ussd: rules[i].ussd };
+            }
+        }
+        return { name: 'Mobile Money', ussd: '' };
+    }
+    function buildPaymentOperatorsHtml() {
+        return (HOTSPOT_PAYMENT_PROFILE.operators || []).map(function (op) {
+            if (op.img) {
+                return '<span class="campay-op ' + escapeHtml(op.class || '') + '"><img src="' + hotspotAssetUrl(op.img) + '" alt="' + escapeHtml(op.alt || '') + '" /></span>';
+            }
+            return '<span class="campay-op-text" style="display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(16,185,129,.12);color:#a7f3d0;font-size:11px;font-weight:700">' + escapeHtml(op.label || '') + '</span>';
+        }).join('');
+    }
+    function buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency) {
+        return '<div style="text-align:center;padding:6px 2px"><div style="width:58px;height:58px;margin:0 auto 18px;border:4px solid rgba(16,185,129,.18);border-top-color:#10b981;border-radius:50%;animation:campaySpin 1s linear infinite"></div><style>@keyframes campaySpin{to{transform:rotate(360deg)}}</style><p style="font-size:16px;line-height:1.5;margin:0 0 10px"><strong>Validez la transaction sur votre téléphone</strong></p><p style="font-size:14px;color:#94a3b8;margin:0 0 8px">' + escapeHtml(planName) + ' — <strong>' + escapeHtml(String(price)) + ' ' + escapeHtml(currency || 'Fcfa') + '</strong></p><p style="font-size:14px;margin:0 0 12px">Numéro: <strong>' + escapeHtml(formatDisplayPhone(phone)) + '</strong> (' + escapeHtml(operator.name) + ')</p><div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:16px;padding:14px;margin:12px 0;text-align:left"><p style="margin:0 0 8px;font-size:14px">📲 Une notification USSD va s\'afficher.<br>Confirmez avec votre <strong>code PIN</strong>.</p><p style="margin:0;font-size:14px">Sinon composez: <strong style="color:#10b981;font-size:20px">' + escapeHtml(operator.ussd) + '</strong></p></div><p id="campayCountdown" style="font-size:13px;color:#64748b;margin:14px 0 0">Temps restant: ' + secondsLeft + ' secondes…</p><p style="font-size:12px;color:#64748b;margin:8px 0 0">Ne fermez pas cette page pendant la validation.</p></div>';
+    }
+    async function pollPaymentStatus(reference, maxSeconds) {
+        const deadline = Date.now() + (maxSeconds * 1000);
+        while (Date.now() < deadline) {
+            await new Promise(function (r) { setTimeout(r, 3000); });
+            try {
+                const res = await fetchHotspotEndpoint('hotspot_verify&reference=' + encodeURIComponent(reference) + '&format=json', { headers: { 'Accept': 'application/json' } });
+                if (!res.ok) continue;
+                const data = await res.json();
+                if (data.status === 'paid' || data.status === 'failed' || data.status === 'cancelled') return data;
+            } catch (e) {}
+        }
+        return { status: 'timeout', message: 'Délai dépassé. Vérifiez votre téléphone puis réessayez.' };
+    }
+    let campayCountdownTimer = null;
+    function openUssdWaitModal(phone, operator, planName, price, currency) {
+        let secondsLeft = CAMPAY_WAIT_SECONDS;
+        Swal.fire({ title: 'Paiement en cours…', html: buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency), allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false,
+            didOpen: function () {
+                campayCountdownTimer = setInterval(function () {
+                    secondsLeft -= 1;
+                    const el = document.getElementById('campayCountdown');
+                    if (el) el.textContent = secondsLeft > 0 ? ('Temps restant: ' + secondsLeft + ' secondes…') : 'Vérification finale…';
+                    if (secondsLeft <= 0 && campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; }
+                }, 1000);
+            },
+            willClose: function () { if (campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; } }
+        });
+    }
+    async function initiateCampayPayment(params) {
+        const body = new URLSearchParams(params); body.set('ajax', '1');
+        const res = await fetchHotspotEndpoint('hotspot_pay', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: body.toString() });
+        const text = await res.text();
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            throw new Error('Réponse serveur invalide');
+        }
+    }
+    function hotspotAssetUrl(filename) { return filename; }
+    function buildPaymentModalHtml(planName, price, currency, validity) {
+        const p = HOTSPOT_PAYMENT_PROFILE;
+        return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro de téléphone</label><div class="campay-phone-wrap"><span class="campay-phone-prefix">' + escapeHtml(p.prefixDisplay) + '</span><input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + escapeHtml(String(p.localLength || 9)) + '" /></div><div class="campay-operators">' + buildPaymentOperatorsHtml() + '</div></div></div>';
+    }
+    function bindPaymentPhoneInput() { const input = document.getElementById('campayPhoneInput'); if (!input) return; input.addEventListener('input', function () { input.value = normalizeLocalPhone(input.value); }); setTimeout(function () { input.focus(); }, 80); }
+    function buildPaymentSuccessHtml(planName, validity) {
+        return '<div class="hotspot-pay-success">' +
+            '<div class="hotspot-pay-success-ring"><svg viewBox="0 0 48 48"><path d="M12 24l8 8 16-16"/></svg></div>' +
+            '<h3>Paiement confirmé</h3>' +
+            '<p class="hotspot-pay-success-plan">' + escapeHtml(planName) + (validity ? (' · ' + escapeHtml(validity)) : '') + '</p>' +
+            '<p class="hotspot-pay-success-sub">Connexion automatique en cours…</p>' +
+            '<div class="hotspot-pay-success-bar"><span></span></div></div>';
+    }
+    function connectAfterPayment(code, password, planName, validity) {
+        const loginPassword = password || '123456';
+        Swal.fire({
+            html: buildPaymentSuccessHtml(planName, validity),
+            showConfirmButton: false,
+            showCloseButton: false,
+            allowOutsideClick: false,
+            allowEscapeKey: false,
+            customClass: { popup: 'campay-swal-popup hotspot-pay-success-popup' },
+            didOpen: function () {
+                setTimeout(function () {
+                    if (typeof fillAndSubmitLogin === 'function') {
+                        fillAndSubmitLogin(code, loginPassword);
+                    } else {
+                        const userField = document.getElementById('loginUsername');
+                        const pwdField = document.getElementById('loginPassword');
+                        const form = document.getElementById('loginForm');
+                        if (userField && code) userField.value = code;
+                        if (pwdField) pwdField.value = loginPassword;
+                        if (form && typeof prepareMikrotikLogin === 'function' && prepareMikrotikLogin(form)) form.submit();
+                    }
+                }, 1500);
+            },
+            timer: 1800,
+            timerProgressBar: false
+        });
+    }
+    async function handlePlanPayment(planName, price, currency, validity, paymentUrl) {
+        const meta = parsePaymentUrl(paymentUrl);
+        const result = await Swal.fire({ title: '', html: buildPaymentModalHtml(planName, price, currency, validity), showCancelButton: true, confirmButtonText: 'Payer maintenant', cancelButtonText: 'Annuler', allowOutsideClick: false, focusConfirm: false, customClass: { popup: 'campay-swal-popup', confirmButton: 'campay-swal-confirm', cancelButton: 'campay-swal-cancel' }, didOpen: bindPaymentPhoneInput, preConfirm: function () { const input = document.getElementById('campayPhoneInput'); const phone = normalizeLocalPhone(input ? input.value : ''); const err = validateHotspotPhone(phone); if (err) { Swal.showValidationMessage(err); return false; } return phone; } });
+        if (!result.isConfirmed) return;
+        const phone = normalizeLocalPhone(result.value || '');
+        let initResult;
+        try { initResult = await initiateCampayPayment({ pay: '1', type: 'gateways', payment_gateway: HOTSPOT_PAYMENT_GATEWAY, phone: phone, routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : '$(identity)'), planid: meta.planid, amount: meta.amount || price, plan_name: planName, mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)', fullname: 'Client Hotspot', address: 'Hotspot' }); }
+        catch (e) { await Swal.fire({ title: 'Erreur réseau', text: (e && e.message) ? e.message : 'Impossible de contacter le serveur.', icon: 'error' }); return; }
+        if (!initResult.ok) { await Swal.fire({ title: 'Paiement refusé', text: initResult.message || 'Erreur', icon: 'error' }); return; }
+        const operator = detectMobileOperator(phone, initResult.operator, initResult.ussd_code);
+        openUssdWaitModal(phone, operator, planName, price, currency);
+        const paymentResult = await pollPaymentStatus(initResult.reference, CAMPAY_WAIT_SECONDS);
+        Swal.close();
+        if (paymentResult.status === 'paid') {
+            const loginUser = paymentResult.username || paymentResult.voucher_code || '';
+            const loginPass = paymentResult.password || '123456';
+            connectAfterPayment(loginUser, loginPass, planName, validity);
+            return;
+        }
+        if (paymentResult.status === 'failed') { await Swal.fire({ title: 'Paiement échoué', text: paymentResult.message || 'Transaction refusée.', icon: 'error' }); return; }
+        await Swal.fire({ title: 'En attente', html: 'Confirmation non reçue. Si vous avez validé, attendez 1 minute puis réessayez.', icon: 'warning' });
+    }
+/* ===== CONNEXION ===== */
+function prepareMikrotikLogin(form) {
+if (!form) return false;
+const passwordInput = form.querySelector('input[name="password"]');
+const chapId = '$(chap-id)';
+const chapChallenge = '$(chap-challenge)';
+const hasChap = chapId && chapChallenge && chapId.indexOf('$(') !== 0 && chapChallenge.indexOf('$(') !== 0;
+if (hasChap && passwordInput && !passwordInput.dataset.chapDone) {
+if (typeof hexMD5 === 'function') {
+passwordInput.value = hexMD5(chapId + passwordInput.value + chapChallenge);
+passwordInput.dataset.chapDone = '1';
+}
+}
+return true;
+}
+function showVoucherError(message, targetId) {
+const errDiv = document.getElementById(targetId || 'formError');
+if (!errDiv) return;
+errDiv.textContent = message;
+errDiv.style.opacity = '1';
+errDiv.style.display = 'block';
+if (typeof message !== 'undefined') logHotspotError(errorMsg, document.getElementById('loginUsername') ? document.getElementById('loginUsername').value : '');
+}
+function fillAndSubmitLogin(username, password) {
+const form = document.getElementById('loginForm');
+const usernameInput = document.getElementById('loginUsername');
+const passwordInput = document.getElementById('loginPassword');
+if (usernameInput) usernameInput.value = username || '';
+if (passwordInput) passwordInput.value = password || username || '';
+if (form && prepareMikrotikLogin(form)) form.submit();
+}
+function packageHtml(pkg) {
+if (!pkg) return '';
+return '<div style="text-align:left;margin-top:10px"><b>Forfait:</b> ' + escapeHtml(pkg.name || '') + '<br><b>Prix:</b> ' + escapeHtml(String(pkg.price || '')) + '<br><b>Validité:</b> ' + escapeHtml(pkg.validity || '') + '</div>';
+}
+async function validateAndConnect(endpoint, body, errorId) {
+const response = await fetchHotspotEndpoint(endpoint, {
+method: 'POST',
+headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+body: body
+});
+const data = await response.json();
+if (!data.success) {
+showVoucherError(data.message || 'Validation impossible', errorId);
+return;
+}
+await Swal.fire({title: data.message || 'Validation réussie', html: packageHtml(data.package) + '<br>Connexion en cours...', icon: 'success', timer: 1800, showConfirmButton: false});
+fillAndSubmitLogin(data.username, data.password || data.username);
+}
+function logHotspotError(message, code) {
+fetch(APP_URL + '/index.php?_route=plugin/hotspot_log', {
+method: 'POST',
+headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+body: 'message=' + encodeURIComponent(message) +
+'&code=' + encodeURIComponent(code || '') +
+'&mac=' + encodeURIComponent(CLIENT_MAC || '$(mac)') +
+'&ip=' + encodeURIComponent('$(ip)') +
+'&router=' + encodeURIComponent(HOTSPOT_ROUTER_NAME || '$(identity)')
+}).catch(function() {});
+}
+document.getElementById('toggleVoucherBtn').addEventListener('click', async () => {
+const result = await Swal.fire({
+title: "🎫 J'AI UN CODE",
+input: 'text',
+inputPlaceholder: 'Entrez votre code voucher',
+showCancelButton: true,
+confirmButtonText: 'Valider',
+cancelButtonText: 'Annuler',
+inputValidator: (value) => !value || !value.trim() ? 'Veuillez saisir votre voucher.' : undefined
+});
+if (result.isConfirmed) {
+validateAndConnect('hotspot_voucher_check', 'voucher=' + encodeURIComponent(result.value.trim()), 'formError').catch(() => Swal.fire('Erreur', 'Erreur de validation voucher.', 'error'));
+}
+});
+document.getElementById('recoverPlanBtn').addEventListener('click', async () => {
+const result = await Swal.fire({
+title: '🔑 RÉCUPÉRER MON FORFAIT',
+input: 'tel',
+inputPlaceholder: 'Numéro de téléphone (9 chiffres)',
+inputAttributes: {maxlength: 9, inputmode: 'numeric'},
+showCancelButton: true,
+confirmButtonText: 'Récupérer',
+cancelButtonText: 'Annuler',
+inputValidator: (value) => {
+const phone = String(value || '').replace(/\D/g, '');
+if (phone.length !== 9) return 'Le numéro doit contenir 9 chiffres.';
+return undefined;
+}
+});
+if (result.isConfirmed) {
+const phone = String(result.value || '').replace(/\D/g, '');
+validateAndConnect('hotspot_recover_plan', 'phone=' + encodeURIComponent(phone), 'formError').catch(() => Swal.fire('Erreur', 'Erreur de récupération.', 'error'));
+}
+});
+document.getElementById('loginBtn').addEventListener('click', () => {
+const username = document.getElementById('loginUsername').value.trim();
+const password = document.getElementById('loginPassword').value.trim();
+if (!username || !password) return showVoucherError('Identifiant et mot de passe requis.', 'formError');
+validateAndConnect('hotspot_account_check', 'username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password), 'formError').catch(() => showVoucherError('Erreur de validation compte.', 'formError'));
+});
+// Auto-remplissage depuis cookie si existant
+const savedAcc = getAccountFromCookie();
+if (savedAcc) {
+document.getElementById('loginUsername').value = savedAcc;
+// Optionnel: auto-remplir password par défaut
+const pwdField = document.getElementById('loginPassword');
+if (pwdField && !pwdField.value) pwdField.value = '123';
+}
+// Gestion de l'erreur MikroTik
+(function showMikrotikError() {
+const errorMsg = '$(error)';
+if (errorMsg && errorMsg.trim()) {
+const errDiv = document.getElementById('formError');
+if (errDiv) {
+errDiv.textContent = errorMsg;
+errDiv.style.display = 'block';
+if (typeof message !== 'undefined') logHotspotError(errorMsg, document.getElementById('loginUsername') ? document.getElementById('loginUsername').value : '');
+setTimeout(() => {
+errDiv.style.opacity = '0';
+setTimeout(() => errDiv.style.display = 'none', 500);
+}, 5000);
+}
+}
+})();
+// Chargement initial
+loadPlans();
+</script>
+</body>
+</html>

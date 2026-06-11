@@ -1240,7 +1240,27 @@ switch ($action) {
         ];
 
         $buildHotspotLoginHtml = function () use ($UPLOAD_PATH, &$config) {
-            $defaultLoginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+            $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+            $defaultLoginFile = $loginDir . DIRECTORY_SEPARATOR . 'login.html';
+            $templateLoginFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik-hotspot-login.html';
+            $templateAssetDir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+
+            if (!is_file($defaultLoginFile) && is_file($templateLoginFile)) {
+                if (!is_dir($loginDir)) {
+                    @mkdir($loginDir, 0755, true);
+                }
+                @copy($templateLoginFile, $defaultLoginFile);
+                if (is_dir($templateAssetDir)) {
+                    foreach (['MTN.png', 'orange.png'] as $assetName) {
+                        $src = $templateAssetDir . DIRECTORY_SEPARATOR . $assetName;
+                        $dst = $loginDir . DIRECTORY_SEPARATOR . $assetName;
+                        if (is_file($src) && !is_file($dst)) {
+                            @copy($src, $dst);
+                        }
+                    }
+                }
+            }
+
             if (file_exists($defaultLoginFile)) {
                 $html = file_get_contents($defaultLoginFile);
                 if ($html === false) {
@@ -1384,11 +1404,7 @@ switch ($action) {
                     $html = preg_replace('/const HOTSPOT_EMBEDDED_PLANS = .*?;/s', $embeddedPlansJs, $html, 1);
                 }
                 if (strpos($html, 'function hotspotApiBases') === false) {
-                    $html = str_replace(
-                        'let CLIENT_MAC = \'\';',
-                        "let CLIENT_MAC = '';\n    function hotspotApiBases() {\n        const bases = [];\n        const appBase = APP_URL ? String(APP_URL).replace(/\\/$/, '') : '';\n        const origin = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : '';\n        const isLocalPreview = /localhost|127\\.0\\.0\\.1|:8080|ngrok/i.test(origin || '');\n        if (isLocalPreview && origin) bases.push(origin);\n        if (appBase) bases.push(appBase);\n        if (!isLocalPreview && origin && origin !== appBase) bases.push(origin);\n        return [...new Set(bases.filter(Boolean))];\n    }\n    async function fetchHotspotEndpoint(route, options) {\n        let lastError = null;\n        for (const base of hotspotApiBases()) {\n            try {\n                const response = await fetch(base + '/index.php?_route=plugin/' + route, options);\n                if (response.ok) return response;\n                lastError = new Error('HTTP ' + response.status + ' via ' + base);\n            } catch (error) {\n                lastError = error;\n            }\n        }\n        throw lastError || new Error('API hotspot indisponible');\n    }",
-                        $html
-                    );
+                    $html = MobileMoneyGateway::patchHotspotApiBases($html);
                 }
                 if (strpos($html, 'const HOTSPOT_EMBEDDED_PLANS') === false) {
                     $html = str_replace(
@@ -1869,9 +1885,11 @@ HTML;
         }
 
         $routers = settings_scoped_router_query($admin)->order_by_asc('name')->find_many();
+        $writeHotspotLoginHtml();
         MobileMoneyGateway::syncHotspotCaptivePaymentUi();
         $ui->assign('_title', Lang::T('Hotspot Settings'));
         $ui->assign('routers', $routers);
+        $ui->assign('hs_api_suggested', rtrim(APP_URL, '/'));
         $ui->assign('_c', $config);
         $ui->display('admin/settings/hotspot.tpl');
         break;

@@ -28,7 +28,16 @@ mkdir -p \
   "$STAGING/system/cache" \
   "$STAGING/ui/compiled" \
   "$STAGING/ui/cache" \
-  "$STAGING/system/uploads"
+  "$STAGING/system/uploads/mikrotik_hotspot"
+
+if [ -f "$ROOT_DIR/ui/ui/templates/mikrotik-hotspot-login.html" ]; then
+  cp "$ROOT_DIR/ui/ui/templates/mikrotik-hotspot-login.html" "$STAGING/system/uploads/mikrotik_hotspot/login.html"
+fi
+if [ -d "$ROOT_DIR/ui/ui/templates/mikrotik_hotspot" ]; then
+  cp "$ROOT_DIR/ui/ui/templates/mikrotik_hotspot/"*.png "$STAGING/system/uploads/mikrotik_hotspot/" 2>/dev/null || true
+fi
+
+mkdir -p "$STAGING/system/uploads"
 
 rm -rf \
   "$STAGING/tests" \

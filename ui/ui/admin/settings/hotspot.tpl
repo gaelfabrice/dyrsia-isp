@@ -166,8 +166,8 @@
                         <div class="form-group">
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
-                                <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="https://wifizones.org">
-                                <p class="help-block">URL du <strong>serveur DYRSIA</strong> (votre Mac/PC), <em>pas</em> l'IP du MikroTik. Ex. routeur <code>10.0.0.3</code> → mettez <code>http://10.0.0.2:8080</code> (IP du Mac sur le même réseau/VPN). Le walled-garden est créé automatiquement à l'envoi.</p>
+                                <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="{$hs_api_suggested|default:'https://wifizones.org'|escape}">
+                                <p class="help-block">URL joignable par le <strong>MikroTik</strong> et les clients hotspot. Sur VPS : <code>{$hs_api_suggested|default:'https://votre-domaine.com'|escape}</code> (pas le port 8080). En dev local : IP LAN du Mac, ex. <code>http://10.0.0.2:8080</code>. Le walled-garden est créé à l'envoi.</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -373,7 +373,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!titleInput || !preview) {
         return;
     }
-    var basePreviewUrl = window.location.origin + '/system/uploads/mikrotik_hotspot/login.html';
+    var basePreviewUrl = window.location.origin + '/index.php?_route=plugin/hotspot_login_file';
     var previewRouter = preview.getAttribute('data-router') || '';
     function updatePreviewUrl() {
         if (preview.dataset.suspended === '1') {

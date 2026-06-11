@@ -60,13 +60,31 @@ if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')
     function hotspot_login_file()
     {
         global $UPLOAD_PATH;
-        $file = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+        $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+        $file = $loginDir . DIRECTORY_SEPARATOR . 'login.html';
+        if (!is_file($file) || !is_readable($file)) {
+            $templateFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik-hotspot-login.html';
+            if (is_file($templateFile)) {
+                if (!is_dir($loginDir)) {
+                    @mkdir($loginDir, 0755, true);
+                }
+                @copy($templateFile, $file);
+                $templateAssetDir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
+                foreach (['MTN.png', 'orange.png'] as $assetName) {
+                    $src = $templateAssetDir . DIRECTORY_SEPARATOR . $assetName;
+                    $dst = $loginDir . DIRECTORY_SEPARATOR . $assetName;
+                    if (is_file($src) && !is_file($dst)) {
+                        @copy($src, $dst);
+                    }
+                }
+            }
+        }
         if (!is_file($file) || !is_readable($file)) {
             if (!headers_sent()) {
                 header('HTTP/1.1 404 Not Found');
                 header('Content-Type: text/plain; charset=utf-8');
             }
-            echo 'login.html introuvable';
+            echo 'login.html introuvable — enregistrez Paramètres Hotspot pour générer la page.';
             exit;
         }
         if (!headers_sent()) {
