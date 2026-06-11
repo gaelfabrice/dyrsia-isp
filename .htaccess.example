@@ -1,6 +1,9 @@
 # Copier ce fichier vers .htaccess sur cPanel (Gestionnaire de fichiers).
 # Utiliser cette version pendant l'installation ; après install, vous pouvez
 # passer à .htaccess_firewall renommé en .htaccess pour durcir la sécurité.
+#
+# Ne mettez PAS de bloc <VirtualHost> ici — Apache l'ignore dans .htaccess.
+# Pour le MikroTik / WireGuard (10.0.0.1), voir scripts/apache-wifizone-wireguard.conf.example
 
 RewriteEngine On
 RewriteBase /

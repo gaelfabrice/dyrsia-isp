@@ -1,0 +1,27 @@
+# WifiZone — Apache vhost for MikroTik WireGuard API (10.0.0.1)
+#
+# IMPORTANT: VirtualHost blocks do NOT work in .htaccess — only in sites-available.
+#
+# 1) Find your real DocumentRoot (same as wifizones.org):
+#      grep -r DocumentRoot /etc/apache2/sites-enabled/
+# 2) Replace /var/www/wifizone below if needed.
+# 3) sudo cp scripts/apache-wifizone-wireguard.conf.example /etc/apache2/sites-available/wifizone-wg.conf
+# 4) sudo a2ensite wifizone-wg.conf && sudo apache2ctl configtest && sudo systemctl reload apache2
+# 5) curl -s -o /dev/null -w "%{http_code}\n" "http://10.0.0.1/index.php?_route=plugin/hotspot_ticker"
+#    Expected: 200
+
+Listen 10.0.0.1:80
+
+<VirtualHost 10.0.0.1:80>
+    ServerName wifizones.org
+    DocumentRoot /var/www/wifizone
+
+    <Directory /var/www/wifizone>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/wifizone-wg-error.log
+    CustomLog ${APACHE_LOG_DIR}/wifizone-wg-access.log combined
+</VirtualHost>
