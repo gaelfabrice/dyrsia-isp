@@ -640,10 +640,11 @@ function hotspotApiBases() {
         const appBase = APP_URL ? String(APP_URL).replace(/\/$/, '') : '';
         const dnsName = (typeof HOTSPOT_DNS_NAME !== 'undefined' && HOTSPOT_DNS_NAME) ? String(HOTSPOT_DNS_NAME).trim() : '';
         const origin = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : '';
+        const isFilePreview = window.location.protocol === 'file:' || origin === 'null' || !origin;
         const isLocalPreview = /localhost|127\.0\.0\.1|:8080|ngrok/i.test(origin || '');
         if (isLocalPreview && origin) bases.push(origin);
         if (appBase) bases.push(appBase);
-        if (dnsName) {
+        if (dnsName && !isFilePreview) {
             let scheme = 'http';
             let port = '';
             try {
@@ -658,10 +659,13 @@ function hotspotApiBases() {
     }
     async function fetchHotspotEndpoint(route, options) {
         options = options || {};
-        const headers = Object.assign({ 'ngrok-skip-browser-warning': '1' }, options.headers || {});
+        const bases = hotspotApiBases();
+        const headers = Object.assign({}, options.headers || {});
+        if (bases.some(function (b) { return /ngrok/i.test(b); }) || /ngrok/i.test(window.location.hostname || '')) {
+            headers['ngrok-skip-browser-warning'] = '1';
+        }
         options = Object.assign({}, options, { headers: headers });
         let lastError = null;
-        const bases = hotspotApiBases();
         for (const base of bases) {
             try {
                 const response = await fetch(base + '/index.php?_route=plugin/' + route, options);

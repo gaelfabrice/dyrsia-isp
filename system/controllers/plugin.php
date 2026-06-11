@@ -33,7 +33,9 @@ $publicPlugins = [
     'hotspot_login', 'hotspot_login_file', 'hotspot_ticker', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
     'wifizone_reseller_api',
 ];
-if (!in_array($pluginFn, $publicPlugins, true)) {
+if (in_array($pluginFn, $publicPlugins, true)) {
+    wifizone_hotspot_plugin_cors();
+} else {
     _admin();
 }
 
@@ -100,12 +102,6 @@ if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')
 if ($pluginFn === 'hotspot_ticker' && !function_exists('hotspot_ticker')) {
     function hotspot_ticker()
     {
-        header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-        header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-        if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-            exit;
-        }
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode([
             'success' => true,

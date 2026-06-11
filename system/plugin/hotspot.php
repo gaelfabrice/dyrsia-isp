@@ -18,16 +18,6 @@ define('WIFIZONE_HOTSPOT_PLUGIN_LOADED', true);
  *
  **/
 
-
-
-/// Allow requests from any origin
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization');
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    exit;
-}
-
 use PEAR2\Net\RouterOS;
 
 $db = ORM::getDb();
@@ -393,13 +383,6 @@ function hotspot_resolve_router($routername)
 
 function hotspot_plan()
 {
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization');
-    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-        exit;
-    }
-
     global $config;
     $currency = $config['currency_code'];
 

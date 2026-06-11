@@ -402,6 +402,24 @@ function wifizone_json_error($message, $httpCode = 400)
     exit;
 }
 
+/**
+ * CORS for captive portal plugin routes (MikroTik login.html, file:// preview, ngrok dev).
+ */
+function wifizone_hotspot_plugin_cors()
+{
+    if (headers_sent()) {
+        return;
+    }
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, X-Requested-With, Accept, Authorization, ngrok-skip-browser-warning');
+    header('Access-Control-Max-Age: 86400');
+    if (strcasecmp($_SERVER['REQUEST_METHOD'] ?? '', 'OPTIONS') === 0) {
+        http_response_code(204);
+        exit;
+    }
+}
+
 function csrf_field()
 {
     if (!isset($_SESSION['csrf_token'])) {
