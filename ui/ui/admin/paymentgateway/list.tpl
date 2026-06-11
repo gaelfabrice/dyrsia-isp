@@ -33,7 +33,8 @@
                                         {/if}
                                     </td>
                                     <td><a href="{Text::url('paymentgateway/')}{$pg}"
-                                            class="btn btn-block btn-{if in_array($pg, $actives)}info{else}default{/if} text-left">{ucwords($pg)}</a>
+                                            class="btn btn-block btn-{if in_array($pg, $actives)}info{else}default{/if} text-left">{ucwords($pg)}
+                                            {if in_array($pg, $actives)}<span class="label label-success pull-right">{Lang::T('Active Gateway')}</span>{/if}</a>
                                     </td>
                                     <td width="114">
                                         <div class="btn-group" role="group" aria-label="...">

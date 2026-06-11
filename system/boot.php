@@ -77,15 +77,6 @@ function _msglog($type, $msg)
     $_SESSION['notify'] = $msg;
 }
 
-if (isset($_SESSION['notify'])) {
-    $notify = $_SESSION['notify'];
-    $ntype = $_SESSION['ntype'];
-    $ui->assign('notify', $notify);
-    $ui->assign('notify_t', $ntype);
-    unset($_SESSION['notify']);
-    unset($_SESSION['ntype']);
-}
-
 if (!isset($_GET['_route'])) {
     $req = ltrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     $len = strlen(ltrim(parse_url(APP_URL, PHP_URL_PATH), '/'));
@@ -122,6 +113,27 @@ WifiZoneSecurity::blockDestructiveGetRequests($routes);
 $handler = $routes[0];
 if ($handler == '') {
     $handler = 'default';
+}
+
+// Consume the one-shot flash message (notify) only for real full-page navigations.
+// Background polls/APIs (the `plugin` handler) and XHR requests must NOT steal it,
+// otherwise a flash set just before a redirect (e.g. "Send to Mikrotik" result) would
+// be cleared by a background request before the page that should show it is rendered.
+$jsonApiActions = [
+    'routers' => ['alerts', 'dismiss-alert', 'test-connection'],
+    'autoload' => true,
+    'widgets' => true,
+];
+$isJsonApiRoute = isset($jsonApiActions[$handler])
+    && ($jsonApiActions[$handler] === true || in_array($routes[1] ?? '', $jsonApiActions[$handler], true));
+$isBackgroundRequest = ($handler === 'plugin')
+    || $isJsonApiRoute
+    || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+if (!$isBackgroundRequest && isset($_SESSION['notify'])) {
+    $ui->assign('notify', $_SESSION['notify']);
+    $ui->assign('notify_t', $_SESSION['ntype']);
+    unset($_SESSION['notify']);
+    unset($_SESSION['ntype']);
 }
 
 Tenant::restoreFromSession();

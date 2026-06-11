@@ -7,9 +7,7 @@
 {assign var=hs_color value=$_c['hotspot_login_color']|default:'green'}
 {assign var=hs_shape value=$_c['hotspot_card_shape']|default:'rounded'}
 {assign var=hs_display value=$_c['hotspot_card_display']|default:'auto'}
-{assign var=hs_plan_order value=$_c['hotspot_plan_order']|default:'data_first'}
 {assign var=hs_banner value=$_c['hotspot_banner_text']|default:''}
-{assign var=hs_chat value=$_c['hotspot_chat_service']|default:'disabled'}
 {assign var=hs_name value=$_c['hotspot_name']|default:'hotspot1'}
 {assign var=hs_interface value=$_c['hotspot_interface']|default:'bridge'}
 {assign var=hs_profile value=$_c['hotspot_profile']|default:'hsprof1'}
@@ -169,17 +167,23 @@
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
                                 <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="https://wifizones.org">
-                                <p class="help-block">URL publique du serveur DYRSIA (sans port MikroTik). Ex: <code>https://wifizones.org</code> — pas <code>10.0.0.3:8000</code>. Le walled-garden est créé automatiquement à l'envoi vers MikroTik.</p>
+                                <p class="help-block">URL du <strong>serveur DYRSIA</strong> (votre Mac/PC), <em>pas</em> l'IP du MikroTik. Ex. routeur <code>10.0.0.3</code> → mettez <code>http://10.0.0.2:8080</code> (IP du Mac sur le même réseau/VPN). Le walled-garden est créé automatiquement à l'envoi.</p>
                             </div>
                         </div>
                         <div class="form-group">
                             <label class="col-md-3 control-label">{Lang::T('Router')}</label>
                             <div class="col-md-9">
-                                <select name="hotspot_login_router" class="form-control" required>
+                                <select name="hotspot_login_router" id="hotspot_login_router" class="form-control">
                                     {if $routers|@count == 0}
-                                        <option value="">{Lang::T('No routers found — add one in Network → Routers')}</option>
+                                        {if $hs_router neq ''}
+                                            <option value="{$hs_router|escape}" selected>{$hs_router|escape} (configuré)</option>
+                                        {else}
+                                            <option value="">{Lang::T('No routers found — add one in Network → Routers')}</option>
+                                        {/if}
                                     {else}
-                                        <option value="">{Lang::T('Select router')}</option>
+                                        {if $hs_router eq ''}
+                                            <option value="">{Lang::T('Select router')}</option>
+                                        {/if}
                                         {foreach $routers as $r}
                                             <option value="{$r['name']|escape}" {if $hs_router eq $r['name']}selected{/if}>{$r['name']|escape}{if $r['description']} — {$r['description']|escape}{/if}</option>
                                         {/foreach}
@@ -220,28 +224,9 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-3 control-label">{Lang::T('Ordre d’affichage des forfaits')}</label>
-                            <div class="col-md-9">
-                                <select name="hotspot_plan_order" class="form-control">
-                                    <option value="data_first" {if $hs_plan_order eq 'data_first'}selected{/if}>Data en premier — illimités en dessous</option>
-                                    <option value="price_asc" {if $hs_plan_order eq 'price_asc'}selected{/if}>Prix croissant</option>
-                                    <option value="price_desc" {if $hs_plan_order eq 'price_desc'}selected{/if}>Prix décroissant</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="col-md-3 control-label">{Lang::T('Texte du bandeau')}</label>
+                            <label class="col-md-3 control-label">{Lang::T('Panneau_publicitaire')}</label>
                             <div class="col-md-9">
                                 <input type="text" name="hotspot_banner_text" class="form-control" value="{$hs_banner}" placeholder="Laisser vide pour désactiver">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="col-md-3 control-label">{Lang::T('Service de chat')}</label>
-                            <div class="col-md-9">
-                                <select name="hotspot_chat_service" class="form-control">
-                                    <option value="enabled" {if $hs_chat eq 'enabled'}selected{/if}>Activé</option>
-                                    <option value="disabled" {if $hs_chat eq 'disabled' || $hs_chat eq ''}selected{/if}>Désactivé</option>
-                                </select>
                             </div>
                         </div>
                     </div>
@@ -277,6 +262,7 @@
                             <label class="col-md-4 control-label">DNS Name</label>
                             <div class="col-md-8">
                                 <input name="hotspot_dns_name" class="form-control" value="{$hs_dns}" placeholder="hotspot.monreseau.net">
+                                <p class="help-block">Nom DNS du portail sur le MikroTik. À l'envoi, une entrée DNS statique <code>nom → IP du serveur</code> est créée (ex. <code>hotspot.monreseau.net → 10.0.0.2</code>).</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -356,7 +342,7 @@
                                 <a href="{Text::url('settings/hotspot&download_login=1')}" class="btn btn-info">
                                     <i class="fa fa-download"></i> Download Login.html
                                 </a>
-                                <button type="submit" name="send_mikrotik" value="1" class="btn btn-warning"
+                                <button type="submit" name="send_mikrotik" value="1" id="hs-send-mikrotik-btn" class="btn btn-warning"
                                     onclick="return confirm('Envoyer la configuration (pool + paramètres) vers le routeur sélectionné ?');">
                                     <i class="fa fa-cloud-upload"></i> Send to Mikrotik
                                 </button>
@@ -372,14 +358,14 @@
             <div class="hs-phone">
                 <div class="hs-phone-notch"></div>
                 <div id="hs-preview-screen" class="hs-phone-screen" style="padding:0;">
-                    <iframe id="hs-real-preview" src="{$app_url}/system/uploads/mikrotik_hotspot/login.html?title={$hs_title|escape:'url'}&routername={$hs_router|escape:'url'}" style="width:100%;height:100%;border:0;border-radius:36px;background:#0a0c15;" title="Aperçu login hotspot"></iframe>
+                    <iframe id="hs-real-preview" src="about:blank" data-title="{$hs_title|escape:'html'}" data-router="{$hs_router|escape:'html'}" style="width:100%;height:100%;border:0;border-radius:36px;background:#0a0c15;" title="Aperçu login hotspot"></iframe>
                 </div>
             </div>
         </aside>
     </div>
 </form>
 
-<script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js"></script>
+<script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.11"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     var titleInput = document.querySelector('input[name="hotspot_page_title"]');
@@ -387,15 +373,19 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!titleInput || !preview) {
         return;
     }
-    var basePreviewUrl = '{$app_url}/system/uploads/mikrotik_hotspot/login.html';
-    var previewRouter = '{$hs_router|escape:'javascript'}';
+    var basePreviewUrl = window.location.origin + '/system/uploads/mikrotik_hotspot/login.html';
+    var previewRouter = preview.getAttribute('data-router') || '';
     function updatePreviewUrl() {
-        var qs = '?title=' + encodeURIComponent(titleInput.value || '');
+        if (preview.dataset.suspended === '1') {
+            return;
+        }
+        var qs = '?title=' + encodeURIComponent(titleInput.value || preview.getAttribute('data-title') || '');
         if (previewRouter) {
             qs += '&routername=' + encodeURIComponent(previewRouter);
         }
         preview.src = basePreviewUrl + qs;
     }
+    updatePreviewUrl();
     titleInput.addEventListener('input', updatePreviewUrl);
     var routerSelect = document.querySelector('select[name="hotspot_login_router"]');
     if (routerSelect) {
@@ -403,6 +393,79 @@ document.addEventListener('DOMContentLoaded', function () {
             previewRouter = routerSelect.value || '';
             updatePreviewUrl();
         });
+    }
+
+    var wizardForm = document.getElementById('hs-wizard-form');
+    var sendBtn = document.getElementById('hs-send-mikrotik-btn');
+    if (wizardForm && sendBtn) {
+        wizardForm.addEventListener('submit', function (event) {
+            var submitter = event.submitter;
+            if (!submitter || submitter.name !== 'send_mikrotik') {
+                return;
+            }
+            var routerSelect = document.getElementById('hotspot_login_router');
+            if (routerSelect && !routerSelect.value) {
+                event.preventDefault();
+                if (window.hsWizardGoToStep) {
+                    window.hsWizardGoToStep(1);
+                }
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Routeur requis',
+                        text: 'Sélectionnez un routeur à l\'étape 1 (ex. MK) avant d\'envoyer vers MikroTik.',
+                        confirmButtonText: 'OK'
+                    });
+                }
+                return;
+            }
+            var sendInput = wizardForm.querySelector('input[type="hidden"][name="send_mikrotik"]');
+            if (!sendInput) {
+                sendInput = document.createElement('input');
+                sendInput.type = 'hidden';
+                sendInput.name = 'send_mikrotik';
+                wizardForm.appendChild(sendInput);
+            }
+            sendInput.value = '1';
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi vers MikroTik…';
+            // Le serveur PHP intégré est mono-thread : libérer l'iframe pour ne pas bloquer l'envoi.
+            preview.dataset.suspended = '1';
+            preview.src = 'about:blank';
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Envoi en cours',
+                    text: 'En général 10 à 30 secondes (écriture directe via API MikroTik). Ne fermez pas l\'onglet.',
+                    showConfirmButton: false,
+                    allowOutsideClick: false,
+                    didOpen: function () { Swal.showLoading(); }
+                });
+            }
+        });
+
+        // A required field hidden in a previous wizard step blocks submission silently.
+        // Jump back to its step and surface the native validation message.
+        wizardForm.addEventListener('invalid', function (event) {
+            var field = event.target;
+            var stepEl = field.closest('[id^="hs-step-"]');
+            if (stepEl && window.hsWizardGoToStep) {
+                window.hsWizardGoToStep(stepEl.id.replace('hs-step-', ''));
+            }
+            setTimeout(function () {
+                if (typeof field.reportValidity === 'function') {
+                    field.reportValidity();
+                }
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Formulaire incomplet',
+                        text: 'Sélectionnez un routeur avant d\'envoyer vers MikroTik (Réseau → Routeurs si la liste est vide).',
+                        confirmButtonText: 'OK'
+                    });
+                }
+            }, 100);
+        }, true);
     }
 });
 </script>

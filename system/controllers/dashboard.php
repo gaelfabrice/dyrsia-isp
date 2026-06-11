@@ -105,13 +105,20 @@ $ui->assign('w_commission', $w_commission);
 if ($admin['user_type'] == 'Admin') {
     $adminSubscription = AdminSubscription::getForAdmin((int) $admin['id']);
     $adminSubscriptionDate = $adminSubscription->status === 'trial' ? $adminSubscription->trial_end : $adminSubscription->subscription_end;
+    if ($adminSubscription->status === 'trial' && empty($adminSubscriptionDate) && !empty($adminSubscription->trial_start)) {
+        $adminSubscriptionDate = date('Y-m-d H:i:s', strtotime($adminSubscription->trial_start . ' +' . AdminSubscription::demoTrialDays() . ' days'));
+    }
     $ui->assign('admin_subscription', $adminSubscription);
     $ui->assign('admin_subscription_days_remaining', AdminSubscription::daysRemaining($adminSubscriptionDate));
+    $ui->assign('admin_subscription_expires_at', $adminSubscriptionDate ?: '');
+    $ui->assign('admin_subscription_expires_ts', $adminSubscriptionDate ? (int) strtotime($adminSubscriptionDate) : 0);
     $ui->assign('admin_demo_trial_days', AdminSubscription::demoTrialDays());
     $ui->assign('subscription_settings', AdminSubscription::settings());
 } else {
     $ui->assign('admin_subscription', null);
     $ui->assign('admin_subscription_days_remaining', 0);
+    $ui->assign('admin_subscription_expires_at', '');
+    $ui->assign('admin_subscription_expires_ts', 0);
     $ui->assign('admin_demo_trial_days', AdminSubscription::demoTrialDays());
     $ui->assign('subscription_settings', AdminSubscription::settings());
 }

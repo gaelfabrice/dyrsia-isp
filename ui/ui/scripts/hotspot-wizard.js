@@ -45,13 +45,10 @@
         var color = val('hotspot_login_color') || 'green';
         var shape = val('hotspot_card_shape') || 'rounded';
         var banner = (val('hotspot_banner_text') || '').trim();
-        var chat = val('hotspot_chat_service') || 'disabled';
-        var planOrder = labelForSelect('hotspot_plan_order');
 
         var scheme = schemes[color] || schemes.green;
         var screen = $('hs-preview-screen');
         var bannerEl = $('hs-preview-banner');
-        var chatEl = $('hs-preview-chat');
 
         if (screen) {
             screen.style.background = scheme.bg;
@@ -77,34 +74,10 @@
         var btn = $('hs-preview-btn');
         if (btn) btn.style.background = scheme.accent;
 
-        var orderEl = $('hs-preview-order');
-        if (orderEl) orderEl.textContent = planOrder;
-
         if (bannerEl) {
             bannerEl.style.display = banner ? 'block' : 'none';
             var text = bannerEl.querySelector('.hs-banner-text');
             if (text) text.textContent = banner;
-        }
-
-        if (chatEl) {
-            var chatOn = chat === 'enabled' || chat === 'whatsapp' || chat === 'telegram';
-            chatEl.style.display = chatOn ? 'flex' : 'none';
-        }
-
-        var pkgData = $('hs-preview-pkg-data');
-        var pkgUnlim = $('hs-preview-pkg-unlim');
-        var order = val('hotspot_plan_order');
-        if (pkgData && pkgUnlim) {
-            pkgData.style.order = '';
-            pkgUnlim.style.order = '';
-            if (order === 'price_desc') {
-                pkgData.style.order = '2';
-                pkgUnlim.style.order = '1';
-            }
-            var parent = pkgData.parentNode;
-            if (parent && !parent.classList.contains('hs-preview-packages')) {
-                parent.classList.add('hs-preview-packages');
-            }
         }
     }
 
@@ -140,7 +113,6 @@
         }).join(', ') : '—';
 
         var poolMode = val('hotspot_pool_mode') === 'existing' ? 'Pool existant' : 'Nouveau pool';
-        var chatLabel = val('hotspot_chat_service') === 'enabled' ? 'Activé' : 'Désactivé';
 
         var rows = [
             ['Titre', val('hotspot_page_title')],
@@ -149,9 +121,7 @@
             ['Couleur', labelForSelect('hotspot_login_color')],
             ['Forme des cartes', labelForSelect('hotspot_card_shape')],
             ['Affichage cartes', labelForSelect('hotspot_card_display')],
-            ['Ordre forfaits', labelForSelect('hotspot_plan_order')],
-            ['Bandeau', val('hotspot_banner_text') || '(vide)'],
-            ['Chat', chatLabel],
+            ['Panneau publicitaire', val('hotspot_banner_text') || '(vide)'],
             ['Nom Hotspot', val('hotspot_name')],
             ['Interface', labelForSelect('hotspot_interface')],
             ['Profil', val('hotspot_profile')],
@@ -185,7 +155,7 @@
         var names = [
             'hotspot_page_title', 'hotspot_page_tagline', 'hotspot_login_router',
             'hotspot_login_color', 'hotspot_card_shape', 'hotspot_card_display',
-            'hotspot_plan_order', 'hotspot_banner_text', 'hotspot_chat_service'
+            'hotspot_banner_text'
         ];
         names.forEach(function (name) {
             var el = document.querySelector('[name="' + name + '"]');
@@ -194,6 +164,17 @@
             el.addEventListener('change', updatePreview);
         });
     }
+
+    // Exposed so the page can jump to the step containing an invalid (hidden) field,
+    // otherwise the browser blocks submission silently ("not focusable" console error).
+    window.hsWizardGoToStep = function (step) {
+        step = parseInt(step, 10);
+        if (!step || step < 1 || step > TOTAL_STEPS) {
+            return;
+        }
+        currentStep = step;
+        updateStepUi();
+    };
 
     function init() {
         var prevBtn = $('hs-btn-preview');

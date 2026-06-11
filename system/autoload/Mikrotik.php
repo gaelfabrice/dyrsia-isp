@@ -779,6 +779,649 @@ class Mikrotik
     }
 
     /**
+     * Remove a file from the router file store.
+     */
+    public static function removeRouterFile($client, $path)
+    {
+        $path = trim((string) $path);
+        if ($path === '') {
+            return;
+        }
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/file/remove'))->setArgument('numbers', $path)
+            );
+            usleep(300000);
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+    }
+
+    /**
+     * Rename a router file (RouterOS has no dedicated rename command).
+     */
+    public static function renameRouterFile($client, $from, $to)
+    {
+        $from = trim((string) $from);
+        $to = trim((string) $to);
+        if ($from === '' || $to === '' || $from === $to) {
+            return $from === $to;
+        }
+        if (self::getRouterFileSize($client, $from) <= 0) {
+            return false;
+        }
+        self::removeRouterFile($client, $to);
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/set'))
+                    ->setArgument('numbers', $from)
+                    ->setArgument('name', $to)
+            );
+            foreach ($responses as $response) {
+                if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
+                    return false;
+                }
+            }
+            usleep(500000);
+            return self::getRouterFileSize($client, $to) > 0;
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * RouterOS /tool fetch sometimes saves HTML as login.html.txt — fix name after download.
+     *
+     * @return string|null Final path when the expected file exists, null otherwise.
+     */
+    public static function normalizeRouterFetchedFile($client, $expectedPath)
+    {
+        $expectedPath = trim((string) $expectedPath);
+        if ($expectedPath === '') {
+            return null;
+        }
+
+        if (self::getRouterFileSize($client, $expectedPath) > 0) {
+            $wrongTxt = $expectedPath . '.txt';
+            if (self::getRouterFileSize($client, $wrongTxt) > 0) {
+                self::removeRouterFile($client, $wrongTxt);
+            }
+            return $expectedPath;
+        }
+
+        $wrongPaths = [
+            $expectedPath . '.txt',
+        ];
+        foreach ($wrongPaths as $wrongPath) {
+            if (self::getRouterFileSize($client, $wrongPath) > 0) {
+                if (self::renameRouterFile($client, $wrongPath, $expectedPath)) {
+                    return $expectedPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Write large router files in API-safe chunks (RouterOS limits single /file/set payloads).
+     */
+    public static function tryRouterFileWriteChunked($client, $path, $contents)
+    {
+        $path = trim((string) $path);
+        $contents = (string) $contents;
+        $length = strlen($contents);
+        if ($path === '' || $length === 0) {
+            return false;
+        }
+
+        if ($length <= 4000) {
+            $util = new RouterOS\Util($client);
+            return self::tryRouterFileWrite($util, $path, $contents);
+        }
+
+        self::removeRouterFile($client, $path);
+        self::removeRouterFile($client, $path . '.txt');
+
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/file/print'))->setArgument('file', $path)
+            );
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+        usleep(100000);
+
+        $chunkSize = 3500;
+        $written = '';
+        for ($offset = 0; $offset < $length; $offset += $chunkSize) {
+            $written .= substr($contents, $offset, $chunkSize);
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/file/set'))
+                        ->setArgument('numbers', $path)
+                        ->setArgument('contents', $written)
+                );
+            } catch (Throwable $e) {
+                return false;
+            } catch (Exception $e) {
+                return false;
+            }
+            usleep(50000);
+        }
+
+        $minOkSize = max(4000, (int) floor($length * 0.9));
+        if (self::getRouterFileSize($client, $path) >= $minOkSize) {
+            return true;
+        }
+
+        // Some RouterOS builds store text payloads as "<name>.txt" (e.g. login.html.txt).
+        $normalized = self::normalizeRouterFetchedFile($client, $path);
+        return $normalized !== null && self::getRouterFileSize($client, $normalized) >= $minOkSize;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function buildHotspotLoginFetchUrls($apiUrl, $appUrl, $fetchTs = null)
+    {
+        $fetchTs = $fetchTs ?? time();
+        $bases = array_values(array_unique(array_filter([
+            rtrim((string) $apiUrl, '/'),
+            rtrim((string) $appUrl, '/'),
+        ], function ($base) {
+            return self::isRouterFetchableUrl($base);
+        })));
+        if (empty($bases)) {
+            return [];
+        }
+
+        $urls = [];
+        foreach ([
+            $bases[0] . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs,
+            $bases[0] . '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs,
+        ] as $url) {
+            if (self::isRouterFetchableUrl($url)) {
+                $urls[] = $url;
+            }
+        }
+
+        return array_values(array_unique($urls));
+    }
+
+    /**
+     * Autorise le serveur API dans le walled-garden hotspot (avant fetch login.html).
+     *
+     * @return array{ok: bool, errors?: array<int, string>}
+     */
+    public static function ensureHotspotWalledGarden($client, $apiUrl)
+    {
+        $apiUrl = trim((string) $apiUrl);
+        $apiHost = parse_url($apiUrl, PHP_URL_HOST);
+        if (!$apiHost) {
+            return ['ok' => false, 'errors' => ['Hotspot API URL invalide']];
+        }
+        $apiPort = parse_url($apiUrl, PHP_URL_PORT);
+        $apiScheme = parse_url($apiUrl, PHP_URL_SCHEME);
+        if (!$apiPort) {
+            $apiPort = $apiScheme === 'https' ? 443 : 80;
+        }
+
+        $apiIsIp = filter_var($apiHost, FILTER_VALIDATE_IP) !== false;
+        $queryField = $apiIsIp ? 'dst-address' : 'dst-host';
+        $walledGardenPaths = ['/ip/hotspot/walled-garden/ip', '/ip hotspot walled-garden ip'];
+        $errors = [];
+
+        foreach ($walledGardenPaths as $wgPath) {
+            try {
+                $walledGarden = $client->sendSync(
+                    (new RouterOS\Request($wgPath . '/print'))
+                        ->setArgument('.proplist', '.id')
+                        ->setQuery(RouterOS\Query::where($queryField, $apiHost))
+                );
+                if (count($walledGarden) == 0) {
+                    $client->sendSync(
+                        (new RouterOS\Request($wgPath . '/add'))
+                            ->setArgument($queryField, $apiHost)
+                            ->setArgument('protocol', 'tcp')
+                            ->setArgument('dst-port', (string) $apiPort)
+                            ->setArgument('action', 'accept')
+                            ->setArgument('comment', 'WifiZone hotspot API ' . $apiUrl)
+                    );
+                }
+
+                return ['ok' => true];
+            } catch (Throwable $e) {
+                $errors[] = $wgPath . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = $wgPath . ': ' . $e->getMessage();
+            }
+        }
+
+        return ['ok' => false, 'errors' => $errors];
+    }
+
+    /**
+     * IP du serveur hotspot sur le routeur (ex. 192.168.88.5 affiché dans le portail captif).
+     */
+    public static function getHotspotServerAddress($client, $hotspotName = '')
+    {
+        $hotspotName = trim((string) $hotspotName);
+        $fallback = '';
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', 'name,address')
+            );
+            foreach ($responses as $row) {
+                $address = trim((string) $row->getProperty('address'));
+                if ($address === '' || !preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
+                    continue;
+                }
+                $ip = $match[1];
+                if ($fallback === '') {
+                    $fallback = $ip;
+                }
+                $name = (string) $row->getProperty('name');
+                if ($hotspotName === '' || strcasecmp($name, $hotspotName) === 0) {
+                    return $ip;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return $fallback;
+    }
+
+    /**
+     * Proxy NAT : clients hotspot joignent l'IP locale du routeur, redirigée vers le serveur DYRSIA.
+     *
+     * @return array{ok: bool, captive_url?: string, errors?: array<int, string>}
+     */
+    public static function ensureHotspotApiNatProxy($client, $listenIp, $backendHost, $port = 8080)
+    {
+        $listenIp = trim((string) $listenIp);
+        $backendHost = trim((string) $backendHost);
+        $port = (int) $port;
+        if ($listenIp === '' || $backendHost === '' || $port <= 0) {
+            return ['ok' => false, 'errors' => ['IP hotspot ou serveur API invalide']];
+        }
+
+        $captiveUrl = 'http://' . $listenIp . ($port === 80 ? '' : ':' . $port);
+        if ($listenIp === $backendHost) {
+            return ['ok' => true, 'captive_url' => $captiveUrl];
+        }
+
+        $comment = 'WifiZone hotspot API proxy';
+        try {
+            $existing = $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/print'))
+                    ->setArgument('.proplist', '.id,comment,to-addresses,to-ports')
+                    ->setQuery(RouterOS\Query::where('comment', $comment))
+            );
+            $hasRule = false;
+            foreach ($existing as $row) {
+                $hasRule = true;
+                break;
+            }
+            if (!$hasRule) {
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/nat/add'))
+                        ->setArgument('chain', 'dstnat')
+                        ->setArgument('protocol', 'tcp')
+                        ->setArgument('dst-address', $listenIp)
+                        ->setArgument('dst-port', (string) $port)
+                        ->setArgument('action', 'dst-nat')
+                        ->setArgument('to-addresses', $backendHost)
+                        ->setArgument('to-ports', (string) $port)
+                        ->setArgument('comment', $comment)
+                );
+            }
+
+            $snatComment = 'WifiZone hotspot API SNAT';
+            $snatExisting = $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/print'))
+                    ->setArgument('.proplist', '.id,comment')
+                    ->setQuery(RouterOS\Query::where('comment', $snatComment))
+            );
+            $hasSnat = false;
+            foreach ($snatExisting as $row) {
+                $hasSnat = true;
+                break;
+            }
+            if (!$hasSnat) {
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/nat/add'))
+                        ->setArgument('chain', 'srcnat')
+                        ->setArgument('protocol', 'tcp')
+                        ->setArgument('dst-address', $backendHost)
+                        ->setArgument('dst-port', (string) $port)
+                        ->setArgument('action', 'masquerade')
+                        ->setArgument('comment', $snatComment)
+                );
+            }
+
+            self::ensureHotspotWalledGarden($client, $captiveUrl);
+
+            return ['ok' => true, 'captive_url' => $captiveUrl];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'errors' => [$e->getMessage()]];
+        } catch (Exception $e) {
+            return ['ok' => false, 'errors' => [$e->getMessage()]];
+        }
+    }
+
+    /**
+     * Met à jour APP_URL / liens de paiement dans login.html pour le réseau captif.
+     */
+    public static function patchHotspotLoginCaptiveApi($html, $captiveApiUrl, $dnsName = '')
+    {
+        $html = (string) $html;
+        $captiveApiUrl = rtrim(trim((string) $captiveApiUrl), '/');
+        $dnsName = trim((string) $dnsName);
+        if ($captiveApiUrl === '') {
+            return $html;
+        }
+
+        $html = preg_replace(
+            '/const APP_URL = .*?;/s',
+            'const APP_URL = ' . json_encode($captiveApiUrl) . ';',
+            $html,
+            1
+        ) ?? $html;
+
+        $dnsJs = 'const HOTSPOT_DNS_NAME = ' . json_encode($dnsName) . ';';
+        if (preg_match('/const HOTSPOT_DNS_NAME = .*?;/s', $html)) {
+            $html = preg_replace('/const HOTSPOT_DNS_NAME = .*?;/s', $dnsJs, $html, 1) ?? $html;
+        } elseif (strpos($html, 'let CLIENT_MAC') !== false) {
+            $html = str_replace('let CLIENT_MAC = \'\';', 'let CLIENT_MAC = \'\';' . "\n    " . $dnsJs, $html);
+        }
+
+        if (strpos($html, 'HOTSPOT_EMBEDDED_PLANS') !== false) {
+            $html = preg_replace_callback(
+                '/const HOTSPOT_EMBEDDED_PLANS = (\[[\s\S]*?\]);/',
+                static function ($matches) use ($captiveApiUrl) {
+                    $plans = json_decode($matches[1], true);
+                    if (!is_array($plans)) {
+                        return $matches[0];
+                    }
+                    foreach ($plans as &$plan) {
+                        if (!empty($plan['paymentlink']) && is_string($plan['paymentlink'])) {
+                            $parts = parse_url($plan['paymentlink']);
+                            $query = $parts['query'] ?? '';
+                            if ($query !== '') {
+                                $plan['paymentlink'] = $captiveApiUrl . '/index.php?' . $query;
+                            }
+                        }
+                    }
+                    unset($plan);
+
+                    return 'const HOTSPOT_EMBEDDED_PLANS = ' . json_encode($plans, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';';
+                },
+                $html,
+                1
+            ) ?? $html;
+        }
+
+        return $html;
+    }
+
+    /**
+     * Entrée DNS statique sur le routeur : dns-name hotspot → IP du serveur DYRSIA.
+     *
+     * @return array{ok: bool, skipped?: bool, errors?: array<int, string>}
+     */
+    public static function ensureHotspotDnsStatic($client, $dnsName, $serverIp)
+    {
+        $dnsName = strtolower(trim((string) $dnsName));
+        $serverIp = trim((string) $serverIp);
+        if ($dnsName === '' || $serverIp === '' || !filter_var($serverIp, FILTER_VALIDATE_IP)) {
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        try {
+            $existing = $client->sendSync(
+                (new RouterOS\Request('/ip/dns/static/print'))
+                    ->setArgument('.proplist', '.id,address')
+                    ->setQuery(RouterOS\Query::where('name', $dnsName))
+            );
+            $existingId = null;
+            $currentIp = '';
+            foreach ($existing as $row) {
+                $existingId = $row->getProperty('.id');
+                $currentIp = (string) $row->getProperty('address');
+                break;
+            }
+            if ($existingId !== null) {
+                if ($currentIp === $serverIp) {
+                    return ['ok' => true];
+                }
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/dns/static/set'))
+                        ->setArgument('numbers', $existingId)
+                        ->setArgument('address', $serverIp)
+                );
+
+                return ['ok' => true];
+            }
+
+            $client->sendSync(
+                (new RouterOS\Request('/ip/dns/static/add'))
+                    ->setArgument('name', $dnsName)
+                    ->setArgument('address', $serverIp)
+                    ->setArgument('comment', 'WifiZone hotspot DNS')
+            );
+
+            return ['ok' => true];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'errors' => [$e->getMessage()]];
+        } catch (Exception $e) {
+            return ['ok' => false, 'errors' => [$e->getMessage()]];
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function localServerHosts()
+    {
+        static $hosts = null;
+        if ($hosts !== null) {
+            return $hosts;
+        }
+
+        $hosts = ['127.0.0.1', 'localhost', '::1'];
+        if (!empty($_SERVER['SERVER_ADDR'])) {
+            $hosts[] = strtolower((string) $_SERVER['SERVER_ADDR']);
+        }
+        if (!empty($_SERVER['HTTP_HOST'])) {
+            $hosts[] = strtolower((string) preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST']));
+        }
+        if (defined('APP_URL')) {
+            $appHost = parse_url(APP_URL, PHP_URL_HOST);
+            if (is_string($appHost) && $appHost !== '') {
+                $hosts[] = strtolower($appHost);
+            }
+        }
+
+        if (stripos(PHP_OS_FAMILY, 'Windows') === false) {
+            $output = @shell_exec("ifconfig 2>/dev/null | awk '/inet / {print $2}'");
+            if (is_string($output) && $output !== '') {
+                foreach (preg_split('/\s+/', trim($output)) as $ip) {
+                    $ip = strtolower(trim($ip));
+                    if ($ip !== '') {
+                        $hosts[] = $ip;
+                    }
+                }
+            }
+        }
+
+        $hosts = array_values(array_unique(array_filter($hosts)));
+
+        return $hosts;
+    }
+
+    private static function isLocalHotspotFetchUrl($url)
+    {
+        $host = strtolower((string) parse_url((string) $url, PHP_URL_HOST));
+        if ($host === '') {
+            return false;
+        }
+
+        return in_array($host, self::localServerHosts(), true);
+    }
+
+    /**
+     * Vérifie que login.html est prêt avant un fetch RouterOS.
+     * Évite un HTTP vers soi-même : le serveur PHP intégré est mono-thread et se bloquerait.
+     *
+     * @return true|string
+     */
+    public static function verifyHotspotFetchUrl($url, $timeout = 5)
+    {
+        $url = trim((string) $url);
+        if ($url === '' || !self::isRouterFetchableUrl($url)) {
+            return 'URL de fetch invalide ou en localhost';
+        }
+
+        if (self::isLocalHotspotFetchUrl($url)) {
+            global $UPLOAD_PATH;
+            if (empty($UPLOAD_PATH)) {
+                return true;
+            }
+            $loginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+            if (is_file($loginFile) && is_readable($loginFile) && filesize($loginFile) > 0) {
+                return true;
+            }
+
+            return 'login.html introuvable ou vide sur ce serveur (' . $loginFile . ')';
+        }
+
+        if (!function_exists('curl_init')) {
+            return true;
+        }
+
+        $ch = curl_init($url);
+        if ($ch === false) {
+            return true;
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => max(1, (int) $timeout),
+            CURLOPT_TIMEOUT => max(2, (int) $timeout),
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_RANGE => '0-0',
+        ]);
+        curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($httpCode >= 200 && $httpCode < 400) {
+            return true;
+        }
+
+        if ($curlError !== '') {
+            return 'URL injoignable (' . $url . ') : ' . $curlError;
+        }
+
+        return 'URL injoignable (' . $url . ') : HTTP ' . $httpCode;
+    }
+
+    /**
+     * @return string|null Error message on failure, null on success.
+     */
+    private static function attemptToolFetch($client, $url, $dstPath)
+    {
+        self::removeRouterFile($client, $dstPath);
+        self::removeRouterFile($client, $dstPath . '.txt');
+
+        $mode = stripos($url, 'https://') === 0 ? 'https' : 'http';
+        $fetchAttempts = [
+            (new RouterOS\Request('/tool/fetch'))
+                ->setArgument('url', $url)
+                ->setArgument('dst-path', $dstPath)
+                ->setArgument('mode', $mode)
+                ->setArgument('output', 'file')
+                ->setArgument('check-certificate', 'no'),
+            (new RouterOS\Request('/tool/fetch'))
+                ->setArgument('url', $url)
+                ->setArgument('dst-path', $dstPath)
+                ->setArgument('output', 'file')
+                ->setArgument('check-certificate', 'no'),
+        ];
+
+        $responses = null;
+        $attemptErrors = [];
+        foreach ($fetchAttempts as $request) {
+            try {
+                $responses = $client->sendSync($request);
+            } catch (Throwable $e) {
+                $msg = $e->getMessage();
+                if (stripos($msg, 'unknown parameter') !== false) {
+                    continue;
+                }
+                $attemptErrors[] = $msg;
+                continue;
+            } catch (Exception $e) {
+                $msg = $e->getMessage();
+                if (stripos($msg, 'unknown parameter') !== false) {
+                    continue;
+                }
+                $attemptErrors[] = $msg;
+                continue;
+            }
+
+            $status = '';
+            $message = '';
+            $responseError = null;
+            foreach ($responses as $response) {
+                $status = $status ?: (string) $response->getProperty('status');
+                $message = $message ?: (string) $response->getProperty('message');
+                if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
+                    $responseError = trim($message) !== '' ? $message : 'fetch RouterOS error';
+                }
+            }
+
+            if ($responseError !== null) {
+                if (stripos($responseError, 'unknown parameter') !== false) {
+                    continue;
+                }
+                return $responseError;
+            }
+
+            if ($status !== '' && stripos($status, 'fail') !== false) {
+                $failMessage = trim($message) !== '' ? $message : ('fetch status: ' . $status);
+                if (stripos($failMessage, 'unknown parameter') !== false) {
+                    continue;
+                }
+                return $failMessage;
+            }
+
+            break;
+        }
+
+        if ($responses === null) {
+            return implode(' | ', array_filter($attemptErrors)) ?: 'fetch RouterOS impossible';
+        }
+
+        for ($attempt = 0; $attempt < 12; $attempt++) {
+            usleep(250000);
+            if (self::normalizeRouterFetchedFile($client, $dstPath) !== null) {
+                return null;
+            }
+        }
+
+        return 'fichier non créé après fetch';
+    }
+
+    /**
      * Download a remote file onto the router via /tool fetch.
      *
      * @return string|null Error message on failure, null on success.
@@ -791,50 +1434,26 @@ class Mikrotik
             return 'URL ou chemin destination vide';
         }
 
-        $util = new RouterOS\Util($client);
-        try {
-            $util->filePutContents($dstPath, null);
-        } catch (Throwable $e) {
-        } catch (Exception $e) {
+        $fetchError = self::attemptToolFetch($client, $url, $dstPath);
+        if ($fetchError === null) {
+            return null;
         }
 
-        $mode = stripos($url, 'https://') === 0 ? 'https' : 'http';
-        $request = (new RouterOS\Request('/tool/fetch'))
-            ->setArgument('url', $url)
-            ->setArgument('dst-path', $dstPath)
-            ->setArgument('mode', $mode)
-            ->setArgument('check-certificate', 'no');
-
-        try {
-            $responses = $client->sendSync($request);
-        } catch (Throwable $e) {
-            return $e->getMessage();
-        } catch (Exception $e) {
-            return $e->getMessage();
-        }
-
-        $status = '';
-        $message = '';
-        foreach ($responses as $response) {
-            $status = $status ?: (string) $response->getProperty('status');
-            $message = $message ?: (string) $response->getProperty('message');
-            if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
-                return trim($message) !== '' ? $message : 'fetch RouterOS error';
-            }
-        }
-
-        if ($status !== '' && stripos($status, 'fail') !== false) {
-            return trim($message) !== '' ? $message : ('fetch status: ' . $status);
-        }
-
-        for ($attempt = 0; $attempt < 6; $attempt++) {
-            usleep(400000);
-            if (self::getRouterFileSize($client, $dstPath) > 0) {
+        // Fallback: dst-path as directory — RouterOS uses the URL filename (login.html).
+        $dir = dirname($dstPath);
+        if ($dir !== '.' && $dir !== '') {
+            $dirPath = rtrim($dir, '/') . '/';
+            $dirFetchError = self::attemptToolFetch($client, $url, $dirPath);
+            if ($dirFetchError === null && self::normalizeRouterFetchedFile($client, $dstPath) !== null) {
                 return null;
             }
+            if ($dirFetchError !== null) {
+                return $fetchError . ' | ' . $dirFetchError;
+            }
+            return $fetchError . ' | fichier créé avec un nom incorrect après fetch';
         }
 
-        return 'fichier non créé après fetch';
+        return $fetchError;
     }
 
     public static function isRouterFetchableUrl($url)
@@ -848,17 +1467,19 @@ class Mikrotik
             return false;
         }
         $host = strtolower($host);
+        // Loopback can never be reached by a remote router (it would resolve to the
+        // router itself), so it is the only host family we reject outright.
         if (in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
             return false;
         }
         if (filter_var($host, FILTER_VALIDATE_IP)) {
-            if (preg_match('/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/', $host)) {
+            // Reject loopback (127/8) and link-local (169.254/16). Private LAN/VPN ranges
+            // (10/8, 192.168/16, 172.16/12) are allowed on purpose: the billing server and
+            // the MikroTik are very commonly on the same LAN or VPN, which is the only way
+            // the router can fetch large assets (login.html >4 KB) that the API cannot write.
+            if (preg_match('/^(127\.|169\.254\.)/', $host)) {
                 return false;
             }
-        }
-        $port = (int) (parse_url($url, PHP_URL_PORT) ?: 0);
-        if ($port === 8080 || $port === 8000 || $port === 3000) {
-            return false;
         }
 
         return true;
@@ -899,13 +1520,36 @@ class Mikrotik
      */
     public static function getRouterFileSize($client, $path)
     {
+        $path = trim((string) $path);
+        if ($path === '') {
+            return 0;
+        }
         try {
             $responses = $client->sendSync(
                 (new RouterOS\Request('/file/print'))
-                    ->setArgument('.proplist', 'size')
+                    ->setArgument('.proplist', 'name,size')
                     ->setQuery(RouterOS\Query::where('name', $path))
             );
             foreach ($responses as $response) {
+                $size = $response->getProperty('size');
+                if ($size !== null && $size !== '') {
+                    return (int) $size;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/print'))
+                    ->setArgument('.proplist', 'name,size')
+            );
+            foreach ($responses as $response) {
+                $name = (string) $response->getProperty('name');
+                if ($name !== $path) {
+                    continue;
+                }
                 $size = $response->getProperty('size');
                 if ($size !== null && $size !== '') {
                     return (int) $size;
@@ -919,7 +1563,8 @@ class Mikrotik
     }
 
     /**
-     * Upload hotspot/login.html — fichiers >4 Ko via /tool fetch (limite API RouterOS).
+     * Upload hotspot/login.html — API par blocs en priorité (rapide, pas de HTTP).
+     * Fallback /tool fetch si l'écriture API échoue (fichiers >4 Ko).
      *
      * @param array<int, string> $fetchUrls
      * @return array{ok: bool, path?: string, method?: string, errors?: array<int, string>}
@@ -927,25 +1572,27 @@ class Mikrotik
     public static function deployHotspotLoginHtml($client, $html, array $fetchUrls = [])
     {
         $html = (string) $html;
-        $fetchUrls = self::filterRouterFetchUrls($fetchUrls);
+        $fetchUrls = array_slice(self::filterRouterFetchUrls($fetchUrls), 0, 2);
         $paths = ['hotspot/login.html', 'login.html'];
         $errors = [];
-        $util = new RouterOS\Util($client);
 
         self::ensureRouterDirectory($client, 'hotspot');
 
         foreach ($paths as $path) {
-            if (self::tryRouterFileWrite($util, $path, $html)) {
+            self::removeRouterFile($client, $path);
+            self::removeRouterFile($client, $path . '.txt');
+
+            if (self::tryRouterFileWriteChunked($client, $path, $html)) {
                 return ['ok' => true, 'path' => $path, 'method' => 'api'];
             }
             $errors[] = $path . ': écriture API refusée (' . strlen($html) . ' octets)';
 
             foreach ($fetchUrls as $url) {
                 $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
-                if ($fetchError === null) {
+                if ($fetchError === null && self::normalizeRouterFetchedFile($client, $path) !== null) {
                     return ['ok' => true, 'path' => $path, 'method' => 'fetch'];
                 }
-                $errors[] = $path . ' (fetch): ' . $fetchError;
+                $errors[] = $path . ' (fetch): ' . ($fetchError ?? 'nom de fichier incorrect');
             }
         }
 
@@ -967,21 +1614,20 @@ class Mikrotik
         $fetchUrls = self::filterRouterFetchUrls($fetchUrls);
         $paths = ['hotspot/' . $filename, $filename];
         $errors = [];
-        $util = new RouterOS\Util($client);
 
         self::ensureRouterDirectory($client, 'hotspot');
 
         foreach ($paths as $path) {
-            if (self::tryRouterFileWrite($util, $path, $binary)) {
+            if (self::tryRouterFileWriteChunked($client, $path, $binary)) {
                 return ['ok' => true, 'path' => $path, 'method' => 'api'];
             }
 
             foreach ($fetchUrls as $url) {
                 $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
-                if ($fetchError === null) {
+                if ($fetchError === null && self::normalizeRouterFetchedFile($client, $path) !== null) {
                     return ['ok' => true, 'path' => $path, 'method' => 'fetch'];
                 }
-                $errors[] = $path . ' (fetch): ' . $fetchError;
+                $errors[] = $path . ' (fetch): ' . ($fetchError ?? 'nom de fichier incorrect');
             }
 
             $errors[] = $path . ': écriture API refusée (' . strlen($binary) . ' octets)';

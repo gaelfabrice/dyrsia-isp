@@ -533,6 +533,35 @@ function prepareMikrotikLogin(form) {
 JS;
     }
 
+    public static function stripHotspotLightTheme($html)
+    {
+        $html = preg_replace('/<div\s+class="theme-switch"[\s\S]*?<\/div>\s*<\/div>/', '', $html, 1) ?? $html;
+        $html = preg_replace('/\/\*\s*=====+\s*TH[EÈ]?ME\s*=====+\s*\*\/[\s\S]*?(?=\/\*\s*=====+)/u', '', $html) ?? $html;
+        $html = preg_replace('/function\s+toggleTheme\s*\(\)\s*\{[\s\S]*?\}\s*/', '', $html, 1) ?? $html;
+        $html = preg_replace('/\(function\s+initTheme\s*\(\)\s*\{[\s\S]*?\}\)\(\)\s*;?/', '', $html, 1) ?? $html;
+        $html = preg_replace(
+            '/\}\s*else\s*\{\s*document\.body\.classList\.add\(\'light\'\);\s*localStorage\.setItem\(\'theme\',\s*\'light\'\);\s*\}\s*\}/',
+            '',
+            $html
+        ) ?? $html;
+        $html = preg_replace('/<body([^>]*)\sclass="[^"]*\blight\b[^"]*"/i', '<body$1', $html) ?? $html;
+
+        $html = preg_replace_callback(
+            '/<style([^>]*)>([\s\S]*?)<\/style>/i',
+            static function ($match) {
+                $css = $match[2];
+                $css = preg_replace('/\/\*\s*=====+\s*TH[EÈ]ME CLAIR\s*=====+\s*\*\//u', '', $css) ?? $css;
+                $css = preg_replace('/body\.light[^{]*\{[^}]*\}/', '', $css) ?? $css;
+                $css = preg_replace('/\.theme-switch(?:-inner)?(?:::after)?\s*\{[^}]*\}/', '', $css) ?? $css;
+
+                return '<style' . $match[1] . '>' . $css . '</style>';
+            },
+            $html
+        ) ?? $html;
+
+        return $html;
+    }
+
     public static function repairHotspotLoginHtml($html)
     {
         if (strpos($html, '/* ===== CONNEXION ===== */') === false && strpos($html, 'function showVoucherError') !== false) {
@@ -585,33 +614,33 @@ JS;
             }
         }
 
-        return self::patchHotspotApiBases($html);
+        $html = self::patchHotspotApiBases($html);
+
+        return self::stripHotspotLightTheme($html);
     }
 
     public static function patchHotspotApiBases($html)
     {
-        $html = preg_replace(
-            '/async function fetchHotspotEndpoint\(route, options\) \{[\s\S]*?(?=\/\/ Récupération MAC|const MAC_REGEX)/',
-            '',
-            $html,
-            1
-        ) ?? $html;
-        $html = preg_replace(
-            '/function hotspotApiBases\(\) \{[\s\S]*?(?=async function fetchHotspotEndpoint|\/\/ Récupération MAC|const MAC_REGEX)/',
-            '',
-            $html,
-            1
-        ) ?? $html;
-
         $replacement = <<<'JS'
 function hotspotApiBases() {
         const bases = [];
         const appBase = APP_URL ? String(APP_URL).replace(/\/$/, '') : '';
+        const dnsName = (typeof HOTSPOT_DNS_NAME !== 'undefined' && HOTSPOT_DNS_NAME) ? String(HOTSPOT_DNS_NAME).trim() : '';
         const origin = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? window.location.origin : '';
         const isLocalPreview = /localhost|127\.0\.0\.1|:8080|ngrok/i.test(origin || '');
         if (isLocalPreview && origin) bases.push(origin);
         if (appBase) bases.push(appBase);
-        if (!isLocalPreview && origin && origin !== appBase) bases.push(origin);
+        if (dnsName) {
+            let scheme = 'http';
+            let port = '';
+            try {
+                const u = new URL(appBase || 'http://' + dnsName);
+                scheme = u.protocol.replace(':', '');
+                if (u.port && u.port !== '80' && u.port !== '443') port = ':' + u.port;
+            } catch (e) {}
+            const dnsBase = scheme + '://' + dnsName + port;
+            if (dnsBase !== appBase) bases.push(dnsBase);
+        }
         return [...new Set(bases.filter(Boolean))];
     }
     async function fetchHotspotEndpoint(route, options) {
@@ -619,7 +648,8 @@ function hotspotApiBases() {
         const headers = Object.assign({ 'ngrok-skip-browser-warning': '1' }, options.headers || {});
         options = Object.assign({}, options, { headers: headers });
         let lastError = null;
-        for (const base of hotspotApiBases()) {
+        const bases = hotspotApiBases();
+        for (const base of bases) {
             try {
                 const response = await fetch(base + '/index.php?_route=plugin/' + route, options);
                 const contentType = (response.headers.get('content-type') || '').toLowerCase();
@@ -629,24 +659,50 @@ function hotspotApiBases() {
                 lastError = error;
             }
         }
-        throw lastError || new Error('API hotspot indisponible');
+        const hint = bases.length ? bases.join(' ou ') : (APP_URL || 'Hotspot API URL');
+        throw lastError || new Error('API injoignable depuis le hotspot (' + hint + ')');
     }
 JS;
 
-        if (strpos($html, 'let CLIENT_MAC') !== false) {
-            return str_replace(
-                'let CLIENT_MAC = \'\';',
-                'let CLIENT_MAC = \'\';' . "\n    " . trim($replacement),
-                $html
-            );
+        $dnsLine = '';
+        if (preg_match('/const HOTSPOT_DNS_NAME\s*=\s*[^;]+;/', $html, $dnsMatch)) {
+            $dnsLine = '    ' . trim($dnsMatch[0]) . "\n";
         }
 
-        return preg_replace(
-            '/(const HOTSPOT_EMBEDDED_PLANS = [\s\S]*?;\n)/',
-            '$1' . trim($replacement) . "\n",
-            $html,
-            1
+        $insert = "let CLIENT_MAC = '';\n"
+            . $dnsLine
+            . '    ' . trim($replacement) . "\n";
+
+        // Remplace tout le bloc API (y compris fragments corrompus) jusqu'au commentaire MAC.
+        if (preg_match('/let CLIENT_MAC\s*=\s*\'\'\s*;/', $html)) {
+            $patched = preg_replace(
+                '/let CLIENT_MAC\s*=\s*\'\'\s*;[\s\S]*?(?=\/\/ Récupération MAC)/',
+                $insert,
+                $html,
+                1
+            );
+            if (is_string($patched) && $patched !== '') {
+                $html = $patched;
+            }
+        } elseif (strpos($html, 'const MAC_REGEX') !== false) {
+            $patched = preg_replace(
+                '/(?:function hotspotApiBases|async function fetchHotspotEndpoint|const headers = Object\.assign)[\s\S]*?(?=const MAC_REGEX)/',
+                $insert,
+                $html,
+                1
+            );
+            if (is_string($patched) && $patched !== '') {
+                $html = $patched;
+            }
+        }
+
+        $html = preg_replace(
+            '/\s*if\s*\(\s*!isLocalPreview\s*&&\s*origin\s*&&\s*origin\s*!==\s*appBase\s*\)\s*bases\.push\(origin\)\s*;/',
+            '',
+            $html
         ) ?? $html;
+
+        return $html;
     }
 
     public static function patchHotspotLoginPaymentBlock($html)

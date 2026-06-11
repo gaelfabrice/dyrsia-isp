@@ -5,16 +5,32 @@
  **/
 
 $pluginFn = $routes[1] ?? '';
+
+// A missing plugin function must not pollute the session flash (notify). Background
+// dashboard polls to removed endpoints (e.g. old hotspot_ticker) would otherwise leave
+// a stale "Function not found" message that surfaces on the next real action.
+$plugin_not_found = function () {
+    if (function_exists('wifizone_json_response_requested') && wifizone_json_response_requested()) {
+        wifizone_json_error('Function not found', 404);
+    }
+    if (!headers_sent()) {
+        header('HTTP/1.1 404 Not Found');
+        header('Content-Type: text/plain; charset=utf-8');
+    }
+    echo 'Function not found';
+    exit;
+};
+
 if ($pluginFn === '') {
-    r2(getUrl('dashboard'), 'e', 'Function not found');
+    $plugin_not_found();
 }
 
 if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $pluginFn)) {
-    r2(getUrl('dashboard'), 'e', 'Function not found');
+    $plugin_not_found();
 }
 
 $publicPlugins = [
-    'hotspot_login', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
+    'hotspot_login', 'hotspot_login_file', 'hotspot_ticker', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
     'wifizone_reseller_api',
 ];
 if (!in_array($pluginFn, $publicPlugins, true)) {
@@ -36,6 +52,49 @@ if ($pluginFn === 'hotspot_log' && !function_exists('hotspot_log')) {
         $safeCode = $code !== '' ? substr(preg_replace('/[^A-Za-z0-9_.@\-]/', '', $code), 0, 80) : 'vide';
         _log('Hotspot captive portal: ' . $message . ' | code=' . $safeCode . ' | mac=' . $mac . ' | ip=' . $ip . ' | router=' . $router, 'Hotspot', 0);
         echo json_encode(['success' => true]);
+        exit;
+    }
+}
+
+if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')) {
+    function hotspot_login_file()
+    {
+        global $UPLOAD_PATH;
+        $file = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+        if (!is_file($file) || !is_readable($file)) {
+            if (!headers_sent()) {
+                header('HTTP/1.1 404 Not Found');
+                header('Content-Type: text/plain; charset=utf-8');
+            }
+            echo 'login.html introuvable';
+            exit;
+        }
+        if (!headers_sent()) {
+            header('Content-Type: text/html; charset=utf-8');
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            header('Pragma: no-cache');
+        }
+        readfile($file);
+        exit;
+    }
+}
+
+if ($pluginFn === 'hotspot_ticker' && !function_exists('hotspot_ticker')) {
+    function hotspot_ticker()
+    {
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
+        if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+            exit;
+        }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => true,
+            'message' => '',
+            'items' => [],
+            'data' => [],
+        ]);
         exit;
     }
 }
@@ -196,5 +255,5 @@ if ($pluginFn === 'hotspot_verify') {
 if (function_exists($pluginFn)) {
     call_user_func($pluginFn);
 } else {
-    r2(getUrl('dashboard'), 'e', 'Function not found');
+    $plugin_not_found();
 }

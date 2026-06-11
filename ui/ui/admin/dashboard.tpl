@@ -33,17 +33,35 @@
     {/if}
 
     {if $admin_subscription}
-    <div class="wz-cc-card wz-cc-subscription" style="margin-bottom:16px;border-color:{if $admin_subscription->status eq 'active'}rgba(34,197,94,.35){elseif $admin_subscription->status eq 'trial'}rgba(249,115,22,.35){else}rgba(239,68,68,.35){/if}">
-        <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center">
+        {if $admin_subscription->status eq 'trial'}
+        <div class="wz-cc-demo-bar" id="wzDemoBar"
+            data-expires="{$admin_subscription_expires_at|escape:'html'}"
+            data-expires-ts="{$admin_subscription_expires_ts|default:0}">
+            <div class="wz-cc-demo-bar-inner">
+                <div class="wz-cc-demo-bar-left">
+                    <span class="wz-cc-demo-icon" aria-hidden="true"><i class="fa fa-gift"></i></span>
+                    <div class="wz-cc-demo-text">
+                        <strong class="wz-cc-demo-title">{Lang::T('Demo_Mode')}</strong>
+                        <span class="wz-cc-demo-countdown" id="wzDemoCountdown" aria-live="polite">—</span>
+                        <span class="wz-cc-demo-label">{Lang::T('Demo_trial_countdown_label')}</span>
+                    </div>
+                </div>
+                <a href="{Text::url('admin/subscription')}" class="wz-cc-demo-cta">
+                    <i class="fa fa-credit-card"></i> {Lang::T('Pay_Subscribe')}
+                </a>
+            </div>
+        </div>
+        {else}
+        <div class="wz-cc-sub-bar {if $admin_subscription->status eq 'active'}is-active{else}is-expired{/if}">
             <div>
-                <strong>{if $admin_subscription->status eq 'trial'}Mode Démo{elseif $admin_subscription->status eq 'active'}Abonnement actif{else}Abonnement{/if}</strong>
-                {if $admin_subscription->status eq 'trial'}
-                — {$admin_subscription_days_remaining} jour(s) restant(s)
+                <strong>{if $admin_subscription->status eq 'active'}{Lang::T('Active_subscription')}{else}{Lang::T('Subscription')}{/if}</strong>
+                {if $admin_subscription->status eq 'active' && $admin_subscription->subscription_end}
+                — {Lang::T('Valid_until')} {$admin_subscription->subscription_end|date_format:"%d/%m/%Y"}
                 {/if}
             </div>
-            <a href="{Text::url('admin/subscription')}" class="btn btn-primary btn-sm"><i class="fa fa-credit-card"></i> Payer / Souscrire</a>
+            <a href="{Text::url('admin/subscription')}" class="btn btn-primary btn-sm"><i class="fa fa-credit-card"></i> {Lang::T('Pay_Subscribe')}</a>
         </div>
-    </div>
+        {/if}
     {/if}
 
     <div class="wz-kpi-grid">
@@ -242,7 +260,49 @@ var WZ_CC = {
         pppoe_expired: {$pppoe_expired|default:0}
     }
 };
+window.WZ_DEMO_EXPIRED = '{Lang::T('Demo_trial_expired')|escape:'javascript'}';
+</script>
+<script>
 {literal}
+function wzInitDemoCountdown() {
+    var bar = document.getElementById('wzDemoBar');
+    var el = document.getElementById('wzDemoCountdown');
+    if (!bar || !el) return;
+
+    var exp = parseInt(bar.getAttribute('data-expires-ts') || '0', 10) * 1000;
+    if (!exp || isNaN(exp)) {
+        var raw = (bar.getAttribute('data-expires') || '').trim();
+        if (raw) {
+            exp = new Date(raw.replace(' ', 'T')).getTime();
+        }
+    }
+    if (!exp || isNaN(exp)) {
+        el.textContent = '—';
+        return;
+    }
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function tick() {
+        var left = exp - Date.now();
+        if (left <= 0) {
+            el.innerHTML = '<span class="wz-cc-demo-expired">' + (window.WZ_DEMO_EXPIRED || 'Trial expired') + '</span>';
+            return;
+        }
+        var d = Math.floor(left / 86400000);
+        var h = Math.floor((left % 86400000) / 3600000);
+        var m = Math.floor((left % 3600000) / 60000);
+        var s = Math.floor((left % 60000) / 1000);
+        el.innerHTML = d + '<small>d</small> ' + h + '<small>h</small> ' + pad(m) + '<small>m</small> ' + pad(s) + '<small>s</small>';
+    }
+    tick();
+    setInterval(tick, 1000);
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wzInitDemoCountdown);
+} else {
+    wzInitDemoCountdown();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     if (typeof Chart !== 'undefined') {
         var gridColor = document.body.classList.contains('theme-light') ? 'rgba(15,23,42,0.08)' : 'rgba(148,163,184,0.12)';

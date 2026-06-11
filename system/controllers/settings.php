@@ -1597,6 +1597,10 @@ HTML;
         $saveHotspotSettings = function () use ($hotspotKeys, &$config) {
             foreach ($hotspotKeys as $key) {
                 $value = $key == 'hotspot_login_methods' ? implode(',', $_POST[$key] ?? []) : ($_POST[$key] ?? '');
+                // Wizard step 3 hides the router field; an empty POST must not wipe the saved router.
+                if ($key === 'hotspot_login_router' && trim((string) $value) === '') {
+                    continue;
+                }
                 $d = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
                 if ($d) {
                     $d->value = $value;
@@ -1665,16 +1669,31 @@ HTML;
 
         if (_post('send_mikrotik') == '1') {
             @set_time_limit(120);
-            @ini_set('default_socket_timeout', '12');
+            @ini_set('max_execution_time', '120');
+            @ini_set('default_socket_timeout', '30');
             @ignore_user_abort(true);
             $saveHotspotSettings();
             $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+            if ($routerName === '') {
+                $savedRouter = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_login_router')->find_one();
+                $routerName = trim((string) ($savedRouter['value'] ?? ''));
+                if ($routerName !== '') {
+                    $config['hotspot_login_router'] = $routerName;
+                }
+            }
+            if ($routerName === '') {
+                r2(
+                    getUrl('settings/hotspot'),
+                    'e',
+                    'Aucun routeur sélectionné. À l\'étape 1 de l\'assistant, choisissez votre routeur (ex. MK) ou ajoutez un routeur dans Réseau → Routeurs.'
+                );
+            }
             if ($routerName !== '') {
                 $syncHotspotPlansForRouter($routerName);
             }
             $renderedLoginHtml = $buildHotspotLoginHtml();
             if ($renderedLoginHtml === null) {
-                r2(getUrl('settings/hotspot'), 'e', 'Login.html default file not found');
+                r2(getUrl('settings/hotspot'), 'e', 'Échec de l\'envoi vers MikroTik : fichier login.html introuvable');
             }
             $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
             if (!is_dir($loginDir)) {
@@ -1695,34 +1714,103 @@ HTML;
                 }
             }
             if (!$mikrotik) {
-                r2(getUrl('settings/hotspot'), 'e', Lang::T('Router not found') . ': ' . $routerName);
+                r2(getUrl('settings/hotspot'), 'e', 'Échec de l\'envoi vers MikroTik : ' . Lang::T('Router not found') . ' (' . ($routerName !== '' ? $routerName : 'aucun routeur sélectionné') . ')');
             }
             if ($_app_stage == 'Demo') {
                 r2(getUrl('settings/hotspot'), 'e', 'You cannot perform this action in Demo mode');
             }
+            if (strlen($renderedLoginHtml) > 4000) {
+                $apiUrlForCheck = trim((string) ($config['hotspot_api_url'] ?? ''));
+                $routerFetchUrls = Mikrotik::buildHotspotLoginFetchUrls($apiUrlForCheck, APP_URL);
+                if (empty($routerFetchUrls)) {
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'login.html fait '
+                        . strlen($renderedLoginHtml)
+                        . ' octets : le routeur doit le télécharger via HTTP. Renseignez Hotspot API URL avec l\'IP LAN du Mac joignable par le MikroTik (ex. http://10.0.0.2:8080 — pas localhost ni l\'IP du routeur).'
+                    );
+                }
+            }
             try {
-                $client = Mikrotik::getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password']);
+                $client = Mikrotik::getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password'], 45);
+                if (!$client) {
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'Connexion MikroTik impossible : compte démo ou synchronisation routeur désactivée pour cet utilisateur.'
+                    );
+                }
                 if (($config['hotspot_pool_mode'] ?? 'new') !== 'existing') {
                     $poolName = $config['hotspot_pool_name'] ?: 'hs-pool';
                     $poolRange = $config['hotspot_pool_range'] ?: '10.5.50.2-10.5.50.254';
                     Mikrotik::setPool($client, $poolName, $poolRange);
                 }
                 $fetchTs = time();
-                $fetchBases = array_values(array_unique(array_filter([
-                    rtrim(APP_URL, '/'),
-                    rtrim((string) ($config['hotspot_api_url'] ?? ''), '/'),
-                ])));
-                $loginFetchUrls = [];
-                $assetFetchUrlsByName = [];
-                foreach ($fetchBases as $fetchBase) {
-                    $loginUrl = $fetchBase . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs;
-                    if (Mikrotik::isRouterFetchableUrl($loginUrl)) {
-                        $loginFetchUrls[] = $loginUrl;
+                $apiUrlForFetch = trim((string) ($config['hotspot_api_url'] ?? ''));
+                $wgResult = Mikrotik::ensureHotspotWalledGarden($client, $apiUrlForFetch);
+                if (empty($wgResult['ok'])) {
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'Échec walled-garden : ' . implode(' | ', $wgResult['errors'] ?? ['erreur inconnue'])
+                    );
+                }
+                $apiHostForDns = parse_url($apiUrlForFetch, PHP_URL_HOST);
+                $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
+                if ($dnsName !== '' && $apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
+                    $dnsResult = Mikrotik::ensureHotspotDnsStatic($client, $dnsName, $apiHostForDns);
+                    if (empty($dnsResult['ok'])) {
+                        r2(
+                            getUrl('settings/hotspot'),
+                            'e',
+                            'DNS statique hotspot non configuré (' . $dnsName . ' → ' . $apiHostForDns . ') : '
+                            . implode(' | ', $dnsResult['errors'] ?? ['erreur inconnue'])
+                        );
                     }
+                }
+                $apiPort = (int) (parse_url($apiUrlForFetch, PHP_URL_PORT) ?: 8080);
+                $captiveApiUrl = rtrim($apiUrlForFetch, '/');
+                $hotspotServerName = trim((string) ($config['hotspot_name'] ?? ''));
+                $hotspotListenIp = Mikrotik::getHotspotServerAddress($client, $hotspotServerName);
+                if ($hotspotListenIp !== '' && $apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
+                    $natResult = Mikrotik::ensureHotspotApiNatProxy($client, $hotspotListenIp, $apiHostForDns, $apiPort);
+                    if (!empty($natResult['ok']) && !empty($natResult['captive_url'])) {
+                        $captiveApiUrl = $natResult['captive_url'];
+                    }
+                }
+                $renderedLoginHtml = Mikrotik::patchHotspotLoginCaptiveApi($renderedLoginHtml, $captiveApiUrl, $dnsName);
+                file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml);
+                $loginFetchUrls = Mikrotik::buildHotspotLoginFetchUrls($apiUrlForFetch, APP_URL, $fetchTs);
+                if (empty($loginFetchUrls)) {
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'Hotspot API URL invalide pour le routeur. Utilisez l’IP LAN de ce Mac, ex. http://192.168.1.240:8080 (pas localhost).'
+                    );
+                }
+                $fetchPreflight = Mikrotik::verifyHotspotFetchUrl($loginFetchUrls[0], 6);
+                if ($fetchPreflight !== true) {
+                    r2(
+                        getUrl('settings/hotspot'),
+                        'e',
+                        'Échec de l\'envoi vers MikroTik : ' . $fetchPreflight
+                        . '. Vérifiez que le serveur écoute sur 0.0.0.0 et que le pare-feu autorise le port 8080.'
+                    );
+                }
+                $fetchBases = array_values(array_unique(array_filter([
+                    rtrim($apiUrlForFetch, '/'),
+                    rtrim(APP_URL, '/'),
+                ], function ($fetchBase) {
+                    return Mikrotik::isRouterFetchableUrl($fetchBase);
+                })));
+                $assetFetchUrlsByName = [];
+                $assetFetchBase = $fetchBases[0] ?? '';
+                if ($assetFetchBase !== '') {
                     foreach (['MTN.png', 'orange.png'] as $assetName) {
-                        $assetUrl = $fetchBase . '/system/uploads/mikrotik_hotspot/' . rawurlencode($assetName) . '?ts=' . $fetchTs;
+                        $assetUrl = $assetFetchBase . '/system/uploads/mikrotik_hotspot/' . rawurlencode($assetName) . '?ts=' . $fetchTs;
                         if (Mikrotik::isRouterFetchableUrl($assetUrl)) {
-                            $assetFetchUrlsByName[$assetName][] = $assetUrl;
+                            $assetFetchUrlsByName[$assetName] = [$assetUrl];
                         }
                     }
                 }
@@ -1733,10 +1821,12 @@ HTML;
                     r2(
                         getUrl('settings/hotspot'),
                         'e',
-                        'MikroTik: impossible d envoyer login.html (' . implode(' | ', $sendErrors)
-                        . '). Vérifiez que le routeur peut joindre '
+                        'Échec de l\'envoi vers MikroTik : login.html non envoyé (' . implode(' | ', $sendErrors)
+                        . '). Vérifiez que le MikroTik (10.0.0.3) peut joindre '
                         . ($fetchBases[0] ?? 'votre serveur')
-                        . ' (DNS + Internet) ou téléchargez login.html manuellement.'
+                        . ' : pare-feu macOS, port 8080, même réseau/VPN. Test routeur : /tool fetch url="'
+                        . ($loginFetchUrls[0] ?? '')
+                        . '" dst-path=hotspot/login.html mode=http'
                     );
                 }
                 $sentPath = (string) ($deployResult['path'] ?? 'hotspot/login.html');
@@ -1755,63 +1845,26 @@ HTML;
                     $assetFetchUrls = $assetFetchUrlsByName[$assetName] ?? [];
                     Mikrotik::deployHotspotAssetFile($client, $assetName, $assetBinary, $assetFetchUrls);
                 }
-                $apiUrl = trim($config['hotspot_api_url'] ?? 'https://wifizones.org');
-                $apiHost = parse_url($apiUrl, PHP_URL_HOST);
-                $apiPort = parse_url($apiUrl, PHP_URL_PORT);
-                $apiScheme = parse_url($apiUrl, PHP_URL_SCHEME);
-                if (!$apiPort) {
-                    $apiPort = $apiScheme === 'https' ? 443 : 80;
+                $dnsNote = '';
+                if ($dnsName !== '' && !empty($apiHostForDns) && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
+                    $dnsNote = ' DNS ' . $dnsName . ' → ' . $apiHostForDns . '.';
                 }
-                if ($apiHost) {
-                    $apiIsIp = filter_var($apiHost, FILTER_VALIDATE_IP) !== false;
-                    $queryField = $apiIsIp ? 'dst-address' : 'dst-host';
-                    $walledGardenPaths = ['/ip/hotspot/walled-garden/ip', '/ip hotspot walled-garden ip'];
-                    $walledGardenAdded = false;
-                    $walledGardenErrors = [];
-                    foreach ($walledGardenPaths as $wgPath) {
-                        try {
-                            $walledGarden = $client->sendSync(
-                                (new PEAR2\Net\RouterOS\Request($wgPath . '/print'))
-                                    ->setArgument('.proplist', '.id')
-                                    ->setQuery(PEAR2\Net\RouterOS\Query::where($queryField, $apiHost))
-                            );
-                            if (count($walledGarden) == 0) {
-                                $request = (new PEAR2\Net\RouterOS\Request($wgPath . '/add'))
-                                    ->setArgument($queryField, $apiHost)
-                                    ->setArgument('protocol', 'tcp')
-                                    ->setArgument('dst-port', (string) $apiPort)
-                                    ->setArgument('action', 'accept')
-                                    ->setArgument('comment', 'WifiZone hotspot API ' . $apiUrl);
-                                $client->sendSync($request);
-                            }
-                            $walledGardenAdded = true;
-                            break;
-                        } catch (Throwable $e) {
-                            $walledGardenErrors[] = $wgPath . ': ' . $e->getMessage();
-                        } catch (Exception $e) {
-                            $walledGardenErrors[] = $wgPath . ': ' . $e->getMessage();
-                        }
-                    }
-                    if (!$walledGardenAdded) {
-                        r2(getUrl('settings/hotspot'), 'e', 'MikroTik: login.html envoyé mais walled garden non créé (' . implode(' | ', $walledGardenErrors) . ')');
-                    }
-                }
+                $captiveNote = ($captiveApiUrl !== rtrim($apiUrlForFetch, '/'))
+                    ? ' API captive : ' . $captiveApiUrl . ' (proxy NAT vers ' . $apiHostForDns . ').'
+                    : '';
                 r2(
                     getUrl('settings/hotspot'),
                     's',
-                    Lang::T('Settings Saved Successfully')
-                    . ' — pool, '
+                    'Envoi réussi vers MikroTik (' . $routerName . ') : pool, '
                     . $sentPath
-                    . ' ('
-                    . $deployMethod
-                    . ') et walled garden envoyés vers MikroTik ('
-                    . $routerName
-                    . ').'
+                    . ' (' . $deployMethod . '), walled-garden OK.'
+                    . $dnsNote
+                    . $captiveNote
                 );
             } catch (Throwable $e) {
-                r2(getUrl('settings/hotspot'), 'e', 'MikroTik: ' . $e->getMessage());
+                r2(getUrl('settings/hotspot'), 'e', 'Échec de l\'envoi vers MikroTik (' . $routerName . ') : ' . $e->getMessage());
             } catch (Exception $e) {
-                r2(getUrl('settings/hotspot'), 'e', 'MikroTik: ' . $e->getMessage());
+                r2(getUrl('settings/hotspot'), 'e', 'Échec de l\'envoi vers MikroTik (' . $routerName . ') : ' . $e->getMessage());
             }
         }
 

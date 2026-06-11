@@ -35,6 +35,31 @@ body.wz-command .content.wz-admin-content {
     background: transparent !important;
 }
 
+/* Pages custom — éviter le titre coupé (margin-top négatif des wrappers) */
+body.wz-command .content.wz-admin-content:has(.ra-page),
+body.wz-command .content.wz-admin-content:has(.rv-page),
+body.wz-command .content.wz-admin-content:has(.rx-page),
+body.wz-command .content.wz-admin-content:has(.au-page),
+body.wz-command .content.wz-admin-content:has(.ac-page),
+body.wz-command .content.wz-admin-content:has(.du-page),
+body.wz-command .content.wz-admin-content:has(.wz-orbit-page),
+body.wz-command .content.wz-admin-content:has(.sub-page),
+body.wz-command .content.wz-admin-content:has(.isp-page) {
+    padding-top: 18px !important;
+}
+
+body.wz-command .ra-page,
+body.wz-command .rv-page,
+body.wz-command .rx-page,
+body.wz-command .au-page,
+body.wz-command .ac-page,
+body.wz-command .du-page,
+body.wz-command .wz-orbit-page,
+body.wz-command .sub-page,
+body.wz-command .isp-page {
+    margin-top: 0 !important;
+}
+
 body.wz-command .wz-page {
     font-family: Inter, system-ui, -apple-system, Segoe UI, Arial, sans-serif;
     color: var(--wz-p-text);
@@ -72,7 +97,9 @@ body.wz-command .content-wrapper:has(.au-page) > .content-header,
 body.wz-command .content-wrapper:has(.wz-cc) > .content-header,
 body.wz-command .content-wrapper:has(.wz-orbit-page) > .content-header,
 body.wz-command .content-wrapper:has(.rx-page) > .content-header,
-body.wz-command .content-wrapper:has(.rv-page) > .content-header {
+body.wz-command .content-wrapper:has(.rv-page) > .content-header,
+body.wz-command .content-wrapper:has(.sub-page) > .content-header,
+body.wz-command .content-wrapper:has(.isp-page) > .content-header {
     display: none !important;
 }
 

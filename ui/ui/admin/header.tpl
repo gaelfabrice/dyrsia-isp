@@ -755,20 +755,33 @@ body.theme-dark .sidebar-menu li a {
             </section>
 
             <section class="content wz-admin-content">
-                {if isset($notify)}
+                {if isset($notify) && $notify neq ''}
+                    <div id="wz-flash-alert" class="alert alert-{if $notify_t == 's'}success{elseif $notify_t == 'i' || $notify_t == 'w'}warning{else}danger{/if} alert-dismissible" style="margin-bottom:16px;border-radius:10px;">
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Fermer"><span aria-hidden="true">&times;</span></button>
+                        <strong>{if $notify_t == 's'}Succès{elseif $notify_t == 'i' || $notify_t == 'w'}Information{else}Erreur{/if} :</strong>
+                        {$notify}
+                    </div>
                     <script>
-                        // Display SweetAlert toast notification
-                        Swal.fire({
-                            icon: '{if $notify_t == "s"}success{elseif $notify_t == "i" || $notify_t == "w"}info{else}error{/if}',
-                            title: '{$notify|escape:'javascript'}',
-                            position: 'top-end',
-                            showConfirmButton: false,
-                            timer: 5000,
-                            timerProgressBar: true,
-                            didOpen: (toast) => {
-                                toast.addEventListener('mouseenter', Swal.stopTimer)
-                                toast.addEventListener('mouseleave', Swal.resumeTimer)
+                        document.addEventListener('DOMContentLoaded', function () {
+                            if (typeof Swal === 'undefined') {
+                                return;
                             }
+                            var flashIcon = '{if $notify_t == "s"}success{elseif $notify_t == "i" || $notify_t == "w"}warning{else}error{/if}';
+                            var flashText = '{$notify|escape:'javascript'}';
+                            Swal.fire({
+                                toast: true,
+                                icon: flashIcon,
+                                title: flashText,
+                                position: 'top-end',
+                                showConfirmButton: false,
+                                timer: 8000,
+                                timerProgressBar: true,
+                                width: 'min(520px, 92vw)',
+                                didOpen: function (toast) {
+                                    toast.addEventListener('mouseenter', Swal.stopTimer);
+                                    toast.addEventListener('mouseleave', Swal.resumeTimer);
+                                }
+                            });
                         });
                     </script>
                 {/if}

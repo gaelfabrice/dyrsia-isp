@@ -19,7 +19,7 @@
     --ac-shadow: 0 10px 40px rgba(15, 23, 42, 0.06);
     font-family: Inter, system-ui, -apple-system, Segoe UI, Arial, sans-serif;
     color: var(--ac-text);
-    margin: -15px -15px 0;
+    margin: 0 -15px 0;
     padding: 0 15px 28px;
 }
 body.theme-dark .ac-page {

@@ -1429,6 +1429,7 @@
     "Hotspot_Card_Auto__Manual_Display": "Hotspot Card Auto\/ Manual Display",
     "Ordre_d___affichage_des_forfaits": "Ordre d\u2019affichage des forfaits",
     "Texte_du_bandeau": "Texte du bandeau",
+    "Panneau_publicitaire": "Panneau publicitaire",
     "Service_de_chat": "Service de chat",
     "Hotspot_Setup_Wizard": "Hotspot Setup Wizard",
     "Monitoring": "Monitoring",
@@ -1673,5 +1674,16 @@
     "Search_admin_users_placeholder": "Username, email, name, phone...",
     "No_administrators_found": "No administrators found",
     "Delete_this_administrator_": "Delete this administrator?",
-    "No_vouchers_available": "No vouchers available"
+    "No_vouchers_available": "No vouchers available",
+    "Demo_Mode": "Demo Mode",
+    "Demo_trial_countdown_label": "left on your free demo trial",
+    "Pay_Subscribe": "Pay \/ Subscribe",
+    "Active_subscription": "Active subscription",
+    "Valid_until": "Valid until",
+    "Demo_trial_expired": "Trial expired",
+    "No_activity_logs_found": "No activity logs found",
+    "Active_Gateway": "Active Gateway",
+    "After_uploading_new_DYRSIA_files__click_Update_Database_to_create_missing_tables_and_columns__Hotspot__FTTH_mapping__login_requests__etc___": "After uploading new DYRSIA files, click Update Database to create missing tables and columns (Hotspot, FTTH mapping, login requests, etc.).",
+    "Notify_Admin": "Notify Admin",
+    "_is_required_": " is required."
 }

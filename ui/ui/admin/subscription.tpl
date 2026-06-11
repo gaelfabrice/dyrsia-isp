@@ -27,7 +27,7 @@
     --sub-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
     font-family: Inter, system-ui, -apple-system, Segoe UI, Arial, sans-serif;
     color: var(--sub-text);
-    margin: -15px -15px 0;
+    margin: 0 -15px 0;
     padding: 0 15px 24px;
     background: transparent;
 }
