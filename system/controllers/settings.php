@@ -1326,6 +1326,14 @@ switch ($action) {
                         'whatsapp_label' => $config['hotspot_help_whatsapp_label'] ?? '',
                     ]);
                     $html = MobileMoneyGateway::repairHotspotLoginHtml($html);
+                    // Self-host SweetAlert so the captive portal never depends on an external CDN:
+                    // cdn.jsdelivr.net is not in the walled-garden, so it is unreachable before
+                    // hotspot authentication and the pay/voucher/recover dialogs silently fail.
+                    $html = str_replace(
+                        'https://cdn.jsdelivr.net/npm/sweetalert2@11',
+                        rtrim($apiUrl, '/') . '/ui/ui/scripts/plugins/sweetalert2.min.js',
+                        $html
+                    );
                     $minLines = array_filter(
                         array_map('ltrim', preg_split('/\r\n|\r|\n/', $html)),
                         static function ($line) {

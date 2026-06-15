@@ -1934,6 +1934,7 @@ class Mikrotik
     {
         $hosts = array_filter(array_unique([
             parse_url(self::normalizeHotspotBackendApiUrl($appUrl), PHP_URL_HOST),
+            'cdn.jsdelivr.net',
             'wa.me',
             'api.whatsapp.com',
             'web.whatsapp.com',
@@ -1964,6 +1965,7 @@ class Mikrotik
             }
         }
         $hosts = array_values(array_unique(array_filter(array_merge($hosts, [
+            'cdn.jsdelivr.net',
             'wa.me',
             'api.whatsapp.com',
             'web.whatsapp.com',
