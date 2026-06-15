@@ -429,6 +429,28 @@ body.theme-light .du-table th { background: #f8fafc; }
     </div>
 
     <div class="du-card">
+        <div class="du-card-head"><h3><i class="fa fa-users"></i> Consommation par client (PPPoE &amp; Hotspot)</h3><span class="du-badge online"><span class="du-badge-dot"></span> Total par client</span></div>
+        <div class="du-table-wrap">
+            <table class="du-table">
+                <thead>
+                    <tr>
+                        <th>Client</th>
+                        <th>{Lang::T('Username')}</th>
+                        <th>Service</th>
+                        <th>{Lang::T('Router')}</th>
+                        <th>{Lang::T('Download')}</th>
+                        <th>{Lang::T('Upload')}</th>
+                        <th>{Lang::T('Total')}</th>
+                    </tr>
+                </thead>
+                <tbody id="clients-rows">
+                    <tr><td colspan="7"><div class="du-empty"><i class="fa fa-users"></i><strong>Aucune donnée client</strong><span>Sélectionnez une période ou un service (Hotspot / PPPoE).</span></div></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="du-card">
         <div class="du-card-head"><h3><i class="fa fa-table"></i> {Lang::T('Usage Details')}</h3></div>
         <div class="du-table-wrap">
             <table class="du-table">
@@ -567,6 +589,31 @@ var WZ_DU = {
         tbody.innerHTML = html;
     }
 
+    function serviceBadge(type) {
+        var t = (type || '').toLowerCase();
+        var cls = 'warning';
+        if (t === 'hotspot') cls = 'online';
+        else if (t === 'pppoe') cls = 'offline';
+        return '<span class="du-badge ' + cls + '"><span class="du-badge-dot"></span> ' + (type || 'Autre') + '</span>';
+    }
+
+    function renderClients(rows) {
+        var tbody = document.getElementById('clients-rows');
+        if (!rows || !rows.length) {
+            tbody.innerHTML = '<tr><td colspan="7"><div class="du-empty"><i class="fa fa-users"></i><strong>Aucune donnée client</strong><span>Ajustez la période ou le service.</span></div></td></tr>';
+            return;
+        }
+        var html = '';
+        rows.forEach(function(x) {
+            var name = x.fullname && x.fullname !== '—'
+                ? '<strong>' + x.fullname + '</strong>' + (x.phonenumber ? '<div class="du-rank-sub">' + x.phonenumber + '</div>' : '')
+                : '<span style="opacity:.6">—</span>';
+            html += '<tr><td>' + name + '</td><td>' + x.username + '</td><td>' + serviceBadge(x.service_type) + '</td>' +
+                '<td>' + (x.router || '—') + '</td><td>' + x.download + '</td><td>' + x.upload + '</td><td><strong>' + x.total + '</strong></td></tr>';
+        });
+        tbody.innerHTML = html;
+    }
+
     function loadUsage() {
         var q = document.getElementById('q').value;
         var router = document.getElementById('router').value;
@@ -590,6 +637,7 @@ var WZ_DU = {
                 rankList(document.getElementById('top-users'), res.top_users, 'username', 'fullname', 'download_formatted', 'Aucun utilisateur');
                 rankList(document.getElementById('top-routers'), res.top_routers, 'name', null, 'traffic_formatted', 'Aucun routeur');
                 rankList(document.getElementById('top-services'), res.top_services, 'name', null, 'traffic_formatted', 'Aucun service');
+                renderClients(res.clients_breakdown);
                 renderTable(res.data);
             })
             .catch(function() {})

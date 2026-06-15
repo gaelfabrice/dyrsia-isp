@@ -281,6 +281,14 @@ function reports_data_usage_api_payload($admin)
 
     [$baseFrom, $baseParams] = reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType);
 
+    // Variante avec jointure client : en SQL la jointure DOIT précéder le WHERE,
+    // on l'insère donc juste après la table de base.
+    $joinFrom = str_replace(
+        ' FROM api_data_usage u WHERE ',
+        ' FROM api_data_usage u LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci WHERE ',
+        $baseFrom
+    );
+
     // Summary KPIs
     $stmt = $db->prepare("SELECT COALESCE(SUM(u.download_bytes),0) AS dl, COALESCE(SUM(u.upload_bytes),0) AS ul, COUNT(DISTINCT u.username) AS unique_users, COUNT(DISTINCT CASE WHEN u.status = 'Connected' THEN u.username END) AS active_clients" . $baseFrom);
     $stmt->execute($baseParams);
@@ -316,7 +324,7 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Top 5 users
-    $stmt = $db->prepare("SELECT u.username, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, MAX(c.fullname) AS fullname" . $baseFrom . " LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci GROUP BY u.username ORDER BY dl_bytes DESC LIMIT 5");
+    $stmt = $db->prepare("SELECT u.username, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, MAX(c.fullname) AS fullname" . $joinFrom . " GROUP BY u.username ORDER BY dl_bytes DESC LIMIT 5");
     $stmt->execute($baseParams);
     $topUsers = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -341,13 +349,32 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Top 5 services (Hotspot / PPPoE / plan actif)
-    $stmt = $db->prepare("SELECT COALESCE(NULLIF(c.service_type, ''), 'Autre') AS service_name, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci GROUP BY service_name ORDER BY ttl_bytes DESC LIMIT 5");
+    $stmt = $db->prepare("SELECT COALESCE(NULLIF(c.service_type, ''), 'Autre') AS service_name, SUM(u.total_bytes) AS ttl_bytes" . $joinFrom . " GROUP BY service_name ORDER BY ttl_bytes DESC LIMIT 5");
     $stmt->execute($baseParams);
     $topServices = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         $topServices[] = [
             'name' => $row['service_name'],
             'traffic_formatted' => reports_data_usage_format((double) $row['ttl_bytes']),
+        ];
+    }
+
+    // Consommation par client (PPPoE + Hotspot), agrégée sur la période
+    $stmt = $db->prepare("SELECT u.username, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, MAX(u.router_name) AS router_name, MAX(u.status) AS status, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $joinFrom . " GROUP BY u.username ORDER BY ttl_bytes DESC LIMIT 200");
+    $stmt->execute($baseParams);
+    $clientsBreakdown = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $clientsBreakdown[] = [
+            'username' => $row['username'],
+            'fullname' => $row['fullname'] ?: '—',
+            'phonenumber' => $row['phonenumber'] ?: '',
+            'service_type' => $row['service_type'],
+            'router' => $row['router_name'],
+            'status' => $row['status'],
+            'download' => reports_data_usage_format((double) $row['dl_bytes']),
+            'upload' => reports_data_usage_format((double) $row['ul_bytes']),
+            'total' => reports_data_usage_format((double) $row['ttl_bytes']),
+            'total_bytes' => (double) $row['ttl_bytes'],
         ];
     }
 
@@ -393,6 +420,7 @@ function reports_data_usage_api_payload($admin)
         'top_users' => $topUsers,
         'top_routers' => $topRouters,
         'top_services' => $topServices,
+        'clients_breakdown' => $clientsBreakdown,
         'routers_status' => reports_data_usage_router_status($admin),
         'data' => $formattedData,
     ];
