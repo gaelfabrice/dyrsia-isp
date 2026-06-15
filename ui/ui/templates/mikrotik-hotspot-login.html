@@ -77,10 +77,18 @@ function escHtml(s){return String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'
 
 async function api(route,opts){
   const base=(APP_URL||'').replace(/\/$/,'');
-  const bases=[base];
-  try{const h=new URL(window.location.origin).hostname;if(/^(10\.|192\.168\.)/.test(h))bases.unshift('http://'+h+':8080');}catch(e){}
+  const bases=[];
+  if(base)bases.push(base);
+  // Repli proxy local (VPN) uniquement si APP_URL échoue.
+  try{const h=new URL(window.location.origin).hostname;if(/^(10\.|192\.168\.)/.test(h)){const proxy='http://'+h+':8080';if(!bases.includes(proxy))bases.push(proxy);}}catch(e){}
   let last;
-  for(const b of[...new Set(bases)]){try{const r=await fetch(b+'/index.php?_route=plugin/'+route,opts);if(r.ok||(r.headers.get('content-type')||'').includes('json'))return r;}catch(e){last=e;}}
+  for(const b of[...new Set(bases)]){
+    try{
+      const r=await fetch(b+'/index.php?_route=plugin/'+route,opts);
+      if(r.ok||(r.headers.get('content-type')||'').toLowerCase().includes('json'))return r;
+      last=new Error('HTTP '+r.status+' via '+b);
+    }catch(e){last=e;}
+  }
   throw last||new Error('API injoignable');
 }
 

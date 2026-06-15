@@ -727,13 +727,15 @@ function hotspotApiBases() {
             try { return isPrivateHost(new URL(origin).hostname); } catch (e) { return false; }
         }
         const onCaptive = isCaptivePortal();
+        if (isLocalPreview && origin) bases.push(origin);
+        // APP_URL (endpoint public) en priorité.
+        if (appBase && !bases.includes(appBase)) bases.push(appBase);
+        // Repli proxy local (VPN) uniquement si APP_URL échoue.
         if (onCaptive && origin) {
             const routerHost = (function () { try { return new URL(origin).hostname; } catch (e) { return ''; } })();
             const proxyBase = routerHost ? ('http://' + routerHost + ':8080') : '';
-            if (proxyBase) bases.push(proxyBase);
+            if (proxyBase && !bases.includes(proxyBase)) bases.push(proxyBase);
         }
-        if (isLocalPreview && origin) bases.push(origin);
-        if (appBase && !bases.includes(appBase)) bases.push(appBase);
         if (dnsName && !isFilePreview && !onCaptive) {
             let scheme = 'http';
             let port = '';
