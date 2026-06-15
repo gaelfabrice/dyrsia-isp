@@ -135,6 +135,7 @@
 </style>
 
 <form method="post" action="{Text::url('settings/hotspot')}" id="hs-wizard-form" class="form-horizontal">
+    <input type="hidden" name="send_mikrotik" id="hs-send-mikrotik-field" value="">
     <div class="hs-wizard-wrap">
         <div class="hs-wizard-main">
             <div class="box box-primary">
@@ -166,8 +167,8 @@
                         <div class="form-group">
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
-                                <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="{$hs_api_suggested|default:'https://wifizones.org'|escape}">
-                                <p class="help-block">URL joignable par le MikroTik via WireGuard. Docker VPS : <code>http://10.0.0.1:8000</code>. Apache direct : <code>http://10.0.0.1</code> (port 80). L'envoi crée le NAT <code>192.168.88.x:8080</code> → cette URL.</p>
+                                <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="https://wifizones.org">
+                                <p class="help-block">URL publique du serveur DYRSIA (sans port MikroTik). Ex: <code>https://wifizones.org</code> — pas <code>10.0.0.3:8000</code>. Le walled-garden est créé automatiquement à l'envoi vers MikroTik.</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -238,7 +239,6 @@
                             <label class="col-md-4 control-label">Nom du Hotspot</label>
                             <div class="col-md-8">
                                 <input name="hotspot_name" class="form-control" value="{$hs_name}">
-                                <p class="help-block">Doit correspondre à la colonne <strong>NAME</strong> de <code>/ip hotspot print</code> sur le MikroTik (ex. <code>hotspot1</code>).</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -263,7 +263,6 @@
                             <label class="col-md-4 control-label">DNS Name</label>
                             <div class="col-md-8">
                                 <input name="hotspot_dns_name" class="form-control" value="{$hs_dns}" placeholder="hotspot.monreseau.net">
-                                <p class="help-block">Nom DNS du portail sur le MikroTik. À l'envoi, une entrée DNS statique <code>nom → IP du serveur</code> est créée (ex. <code>hotspot.monreseau.net → 10.0.0.2</code>).</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -343,8 +342,7 @@
                                 <a href="{Text::url('settings/hotspot&download_login=1')}" class="btn btn-info">
                                     <i class="fa fa-download"></i> Download Login.html
                                 </a>
-                                <button type="submit" name="send_mikrotik" value="1" id="hs-send-mikrotik-btn" class="btn btn-warning"
-                                    onclick="return confirm('Envoyer la configuration (pool + paramètres) vers le routeur sélectionné ?');">
+                                <button type="submit" value="1" id="hs-send-mikrotik-btn" class="btn btn-warning">
                                     <i class="fa fa-cloud-upload"></i> Send to Mikrotik
                                 </button>
                             </div>
@@ -359,7 +357,7 @@
             <div class="hs-phone">
                 <div class="hs-phone-notch"></div>
                 <div id="hs-preview-screen" class="hs-phone-screen" style="padding:0;">
-                    <iframe id="hs-real-preview" src="about:blank" data-title="{$hs_title|escape:'html'}" data-router="{$hs_router|escape:'html'}" style="width:100%;height:100%;border:0;border-radius:36px;background:#0a0c15;" title="Aperçu login hotspot"></iframe>
+                    <iframe id="hs-real-preview" src="{$app_url}/system/uploads/mikrotik_hotspot/login.html?title={$hs_title|escape:'url'}&routername={$hs_router|escape:'url'}" style="width:100%;height:100%;border:0;border-radius:36px;background:#0a0c15;" title="Aperçu login hotspot"></iframe>
                 </div>
             </div>
         </aside>
@@ -374,19 +372,15 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!titleInput || !preview) {
         return;
     }
-    var basePreviewUrl = window.location.origin + '/index.php?_route=plugin/hotspot_login_file';
-    var previewRouter = preview.getAttribute('data-router') || '';
+    var basePreviewUrl = '{$app_url}/system/uploads/mikrotik_hotspot/login.html';
+    var previewRouter = '{$hs_router|escape:'javascript'}';
     function updatePreviewUrl() {
-        if (preview.dataset.suspended === '1') {
-            return;
-        }
-        var qs = '&title=' + encodeURIComponent(titleInput.value || preview.getAttribute('data-title') || '');
+        var qs = '?title=' + encodeURIComponent(titleInput.value || '');
         if (previewRouter) {
             qs += '&routername=' + encodeURIComponent(previewRouter);
         }
         preview.src = basePreviewUrl + qs;
     }
-    updatePreviewUrl();
     titleInput.addEventListener('input', updatePreviewUrl);
     var routerSelect = document.querySelector('select[name="hotspot_login_router"]');
     if (routerSelect) {
@@ -398,10 +392,27 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var wizardForm = document.getElementById('hs-wizard-form');
     var sendBtn = document.getElementById('hs-send-mikrotik-btn');
+    var sendField = document.getElementById('hs-send-mikrotik-field');
     if (wizardForm && sendBtn) {
+        sendBtn.addEventListener('click', function () {
+            if (sendField) {
+                sendField.value = '1';
+            }
+        });
         wizardForm.addEventListener('submit', function (event) {
             var submitter = event.submitter;
-            if (!submitter || submitter.name !== 'send_mikrotik') {
+            var isSendMikrotik = (sendField && sendField.value === '1') || (submitter && submitter.id === 'hs-send-mikrotik-btn');
+            if (!isSendMikrotik) {
+                if (sendField) {
+                    sendField.value = '';
+                }
+                return;
+            }
+            if (!confirm('Envoyer la configuration (pool + paramètres) vers le routeur sélectionné ?')) {
+                event.preventDefault();
+                if (sendField) {
+                    sendField.value = '';
+                }
                 return;
             }
             var routerSelect = document.getElementById('hotspot_login_router');
@@ -420,29 +431,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 return;
             }
-            var sendInput = wizardForm.querySelector('input[type="hidden"][name="send_mikrotik"]');
-            if (!sendInput) {
-                sendInput = document.createElement('input');
-                sendInput.type = 'hidden';
-                sendInput.name = 'send_mikrotik';
-                wizardForm.appendChild(sendInput);
-            }
-            sendInput.value = '1';
             sendBtn.disabled = true;
             sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi vers MikroTik…';
-            // Le serveur PHP intégré est mono-thread : libérer l'iframe pour ne pas bloquer l'envoi.
-            preview.dataset.suspended = '1';
-            preview.src = 'about:blank';
-            if (typeof Swal !== 'undefined') {
-                Swal.fire({
-                    icon: 'info',
-                    title: 'Envoi en cours',
-                    text: 'En général 10 à 30 secondes (écriture directe via API MikroTik). Ne fermez pas l\'onglet.',
-                    showConfirmButton: false,
-                    allowOutsideClick: false,
-                    didOpen: function () { Swal.showLoading(); }
-                });
-            }
         });
 
         // A required field hidden in a previous wizard step blocks submission silently.

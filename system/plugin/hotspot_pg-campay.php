@@ -50,14 +50,22 @@ function hotspot_pg_campay_get_token()
 
 function hotspot_pg_campay_format_phone($phone)
 {
+    if (function_exists('hotspot_formatPhoneNumber')) {
+        return hotspot_formatPhoneNumber($phone);
+    }
+
     $phone = preg_replace('/[^0-9]/', '', (string) $phone);
+    if (preg_match('/^237[62]\d{8}$/', $phone)) {
+        return $phone;
+    }
+    if (strpos($phone, '237') === 0) {
+        $phone = substr($phone, 3);
+    }
+    $phone = ltrim($phone, '0');
     if (strlen($phone) === 9) {
         return '237' . $phone;
     }
-    if (!preg_match('/^237/', $phone) && strlen($phone) >= 9) {
-        return '237' . ltrim($phone, '0');
-    }
-    return $phone;
+    return '237' . $phone;
 }
 
 function hotspot_pg_campay_is_ajax()
@@ -296,6 +304,9 @@ function hotspot_processPayment_campay($data)
         $errorMsg = $result['message'] ?? $result['detail'] ?? $response;
         _log('CamPay Hotspot collect failed: HTTP ' . $httpCode . ' - ' . $errorMsg);
         Message::sendTelegram("CamPay Hotspot collect failed:\n" . json_encode($result, JSON_PRETTY_PRINT));
+        if (stripos((string) $errorMsg, 'demo system') !== false) {
+            hotspot_pg_campay_respond_error('CamPay est en mode DEMO (max 25 XAF). Passez en mode Production dans Paramètres → Passerelle de paiement → CamPay, ou testez un forfait ≤ 25 XAF.');
+        }
         hotspot_pg_campay_respond_error(Lang::T('Failed to initiate payment.') . ' ' . $errorMsg);
     }
 

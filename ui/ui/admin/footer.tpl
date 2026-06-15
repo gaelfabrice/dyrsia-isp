@@ -207,6 +207,19 @@ var CSRF_TOKEN = '{$csrf_token|escape:'javascript'}';
 </script>
 {literal}
 <script>
+/* Send CSRF token on every AJAX request that changes state (admin panel) */
+if (window.jQuery) {
+    jQuery.ajaxSetup({
+        beforeSend: function (xhr, settings) {
+            if (typeof CSRF_TOKEN !== 'undefined' && CSRF_TOKEN
+                && !/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type || 'GET')
+                && (settings.crossDomain !== true)) {
+                xhr.setRequestHeader('X-CSRF-Token', CSRF_TOKEN);
+            }
+        }
+    });
+}
+
 var listAttApi;
 var posAttApi = 0;
 

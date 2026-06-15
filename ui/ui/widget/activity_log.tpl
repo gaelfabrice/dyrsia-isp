@@ -131,6 +131,11 @@ body.dark-mode .activity-timeline li {
     font-size: 13px;
     margin: 0;
     line-height: 1.4;
+    max-height: 4.4em;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    scrollbar-width: thin;
 }
 
 /* Pagination Style */

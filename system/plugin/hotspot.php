@@ -587,11 +587,11 @@ function hotspot_pay()
 
     $payment_gateways = hotspot_getAvailablePaymentGateways();
 
-    if (isset($_GET['planid']) || isset($_GET['routername'])) {
-        $routername = $_GET['routername'] ?? '';
-        $planid = $_GET['planid'] ?? '';
-        $mac_address = $_GET['mac'] ?? '';
-        $ip_address = $_GET['ip'] ?? '';
+    if (isset($_GET['planid']) || isset($_GET['routername']) || isset($_POST['planid']) || isset($_POST['routername'])) {
+        $routername = $_GET['routername'] ?? $_POST['routername'] ?? '';
+        $planid = $_GET['planid'] ?? $_POST['planid'] ?? '';
+        $mac_address = $_GET['mac'] ?? $_POST['mac'] ?? $_POST['mac_address'] ?? '';
+        $ip_address = $_GET['ip'] ?? $_POST['ip'] ?? $_POST['ip_address'] ?? '';
 
         hotspot_validateMacAddress($mac_address);
 
@@ -605,20 +605,21 @@ function hotspot_pay()
         $validity = $plan['validity'] . ' ' . $plan['validity_unit'];
     }
 
-    if (isset($_POST['pay'])) {
-        $payment_data = hotspot_validateAndPreparePaymentData($_POST);
+    $paymentInput = hotspot_payment_payload();
+    if (isset($paymentInput['pay'])) {
+        $payment_data = hotspot_validateAndPreparePaymentData($paymentInput);
 
         // Ensure payment type is set
-        if (!isset($_POST['type'])) {
+        if (!isset($paymentInput['type'])) {
             hotspot_throwError(Lang::T("Payment type is required."));
             die();
         }
 
-        $type = $_POST['type'];
+        $type = $paymentInput['type'];
         $gateway = preg_replace('/[^a-zA-Z0-9_]/', '', $payment_data['payment_gateway']);
 
         if ($type === 'token') {
-            $token = $_POST['payment_token'] ?? null; // Avoid undefined index warnings
+            $token = $paymentInput['payment_token'] ?? null; // Avoid undefined index warnings
             if (empty($token)) {
                 hotspot_throwError(Lang::T("Payment token is required."));
                 die();
@@ -689,21 +690,109 @@ function hotspot_getHotspotPlan($planid)
         ->find_one();
 }
 
+function hotspot_resolve_payment_phone(array $data)
+{
+    foreach (['msisdn', 'hmobile', 'phonenumber', 'mobile', 'from', 'phone', 'n'] as $alias) {
+        if (!isset($data[$alias]) || $data[$alias] === '' || $data[$alias] === null) {
+            continue;
+        }
+        $value = preg_replace('/\D/', '', (string) $data[$alias]);
+        if ($value === '') {
+            continue;
+        }
+        if ($alias === 'n' && preg_match('/^(?:237)?[62]\d{8}$/', $value)) {
+            return $value;
+        }
+        if ($alias !== 'n') {
+            return $value;
+        }
+    }
+
+    if (!empty($data['pd'])) {
+        $decoded = base64_decode((string) $data['pd'], true);
+        if ($decoded !== false) {
+            $digits = preg_replace('/\D/', '', $decoded);
+            if ($digits !== '') {
+                return $digits;
+            }
+        }
+    }
+
+    return '';
+}
+
+function hotspot_payment_payload()
+{
+    $payload = is_array($_POST) ? $_POST : [];
+    $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? '');
+    $raw = file_get_contents('php://input');
+
+    if (is_string($raw) && $raw !== '') {
+        if (stripos($contentType, 'application/json') !== false) {
+            $json = json_decode($raw, true);
+            if (is_array($json)) {
+                $payload = array_merge($json, $payload);
+            }
+        } elseif (stripos($contentType, 'application/x-www-form-urlencoded') !== false || $contentType === '' || strpos($raw, '=') !== false) {
+            $parsed = [];
+            parse_str($raw, $parsed);
+            if (is_array($parsed)) {
+                $payload = array_merge($parsed, $payload);
+            }
+        }
+    }
+
+    if (is_array($_GET)) {
+        foreach ($_GET as $key => $value) {
+            if ($key === '_route' || $key === 'format') {
+                continue;
+            }
+            if (!isset($payload[$key]) || $payload[$key] === '' || $payload[$key] === null) {
+                $payload[$key] = $value;
+            }
+        }
+    }
+
+    $payload['phone'] = hotspot_resolve_payment_phone($payload);
+
+    return $payload;
+}
+
 function hotspot_validateAndPreparePaymentData($post_data)
 {
-    $required_fields = ['routername', 'planid', 'phone', 'amount'];
-    foreach ($required_fields as $field) {
+    $post_data['phone'] = hotspot_resolve_payment_phone($post_data);
+
+    foreach (['routername', 'planid', 'amount'] as $field) {
         if (empty($post_data[$field])) {
             hotspot_throwError(ucfirst($field) . ' ' . Lang::T(" is required."));
         }
     }
 
-    $phone = trim($post_data['phone']);
+    if ($post_data['phone'] === '') {
+        $receivedKeys = implode(',', array_keys($post_data));
+        _log(
+            'Hotspot pay: msisdn/phone missing, keys=' . $receivedKeys
+                . ' method=' . ($_SERVER['REQUEST_METHOD'] ?? '')
+                . ' qs=' . ($_SERVER['QUERY_STRING'] ?? ''),
+            'Hotspot',
+            0
+        );
+        hotspot_throwError('Numéro incorrect ou non reçu. Entrez 9 chiffres (ex: 677123456). Champs reçus: ' . ($receivedKeys !== '' ? $receivedKeys : 'aucun'));
+    }
+
+    $phone = $post_data['phone'];
     $phone = hotspot_formatPhoneNumber($phone);
 
-    if (!is_numeric($phone)) {
-        hotspot_throwError(Lang::T("Phone number is invalid, please check and try again."));
+    $countryCode = preg_replace('/\D/', '', (string) ($config['country_code_phone'] ?? ''));
+    if ($countryCode === '') {
+        $countryCode = '237';
     }
+    if ($countryCode === '237' && !preg_match('/^237[62]\d{8}$/', $phone)) {
+        hotspot_throwError('Numéro incorrect. Entrez 9 chiffres (ex: 677123456).');
+    } elseif (!is_numeric($phone)) {
+        hotspot_throwError(Lang::T('Phone number is invalid, please check and try again.'));
+    }
+
     if (substr($phone, 0, 3) == '220') {
         // continue
     } elseif (strlen($phone) < 9) {
@@ -738,30 +827,41 @@ function hotspot_validateAndPreparePaymentData($post_data)
 function hotspot_formatPhoneNumber($phone)
 {
     global $config;
-    $countryCode = $config['country_code_phone'];
-    if (substr($phone, 0, 1) == '+') {
-        $phone = str_replace('+', '', $phone);
-    }
-    if (substr($phone, 0, 1) == '9') {
-        $phone = preg_replace('/^9/', "{$countryCode}9", $phone);
+
+    $phone = preg_replace('/\D/', '', (string) $phone);
+    $countryCode = preg_replace('/\D/', '', (string) ($config['country_code_phone'] ?? ''));
+
+    if ($countryCode === '') {
+        $countryCode = '237';
     }
 
-    if (substr($phone, 0, 1) == '8') {
-        $phone = preg_replace('/^8/', "{$countryCode}8", $phone);
+    if ($phone === '') {
+        return $phone;
     }
 
-    if (substr($phone, 0, 1) == '0') {
-        $phone = preg_replace('/^0/', $countryCode, $phone);
-    }
-    if (substr($phone, 0, 1) == '7') {
-        $phone = preg_replace('/^7/', "{$countryCode}7", $phone);
+    // Déjà au format international Cameroun (237 + 9 chiffres)
+    if (preg_match('/^' . preg_quote($countryCode, '/') . '[62]\d{8}$/', $phone)) {
+        return $phone;
     }
 
-    if (substr($phone, 0, 1) == '1') {
-        $phone = preg_replace('/^1/', "{$countryCode}1", $phone);
+    // Retirer l'indicatif s'il est présent (ex. 237677123456 ou 237677123 tronqué)
+    if (strpos($phone, $countryCode) === 0) {
+        $phone = substr($phone, strlen($countryCode));
     }
 
-    return $phone;
+    $phone = ltrim($phone, '0');
+
+    // Numéro local 9 chiffres (ex. 677123456)
+    if (strlen($phone) === 9) {
+        return $countryCode . $phone;
+    }
+
+    // Legacy Gambie
+    if ($countryCode === '220' && strlen($phone) === 7) {
+        return $countryCode . $phone;
+    }
+
+    return $countryCode . $phone;
 }
 
 
@@ -877,7 +977,7 @@ $trx->payment_gateway = $paymentGateway;
 
 function hotspot_throwError($message)
 {
-    $isAjax = !empty($_POST['ajax'])
+    $isAjax = !empty($_POST['ajax']) || !empty($_GET['ajax'])
         || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
     if ($isAjax) {
         if (!headers_sent()) {

@@ -219,8 +219,11 @@
                     <i class="fa {if $log.type eq 'login'}fa-sign-in{elseif $log.type eq 'logout'}fa-sign-out{elseif $log.type eq 'error'}fa-exclamation-triangle{else}fa-info{/if}"></i>
                 </div>
                 <div class="wz-timeline-text">
-                    <strong>{$log.username|escape}</strong> {$log.message|escape}
-                    {if $log.sid}<span class="wz-badge-active" style="font-size:10px;margin-left:6px">{$log.sid|escape}</span>{/if}
+                    <div class="wz-log-line">
+                        <strong class="wz-log-user">{$log.username|escape}</strong>
+                        <span class="wz-log-message" title="{$log.message|escape}">{$log.message|escape}</span>
+                    </div>
+                    {if $log.sid}<span class="wz-log-ip-badge">{$log.sid|escape}</span>{/if}
                 </div>
             </div>
             {/foreach}

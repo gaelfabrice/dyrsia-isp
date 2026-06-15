@@ -49,17 +49,9 @@ class Mikrotik
     private static function mikrotikConnectionAttempts($port)
     {
         $port = (int) $port ?: 8728;
-        $attempts = [
+        return [
             ['port' => $port, 'ssl' => false, 'label' => 'API'],
         ];
-
-        if ($port === 8728) {
-            $attempts[] = ['port' => 8729, 'ssl' => true, 'label' => 'API-SSL'];
-        } elseif ($port === 8729) {
-            $attempts[] = ['port' => 8728, 'ssl' => false, 'label' => 'API'];
-        }
-
-        return $attempts;
     }
 
     private static function isRetriableMikrotikConnectionError(Throwable $e)
@@ -153,18 +145,7 @@ class Mikrotik
         $lastError = null;
         $prevErrorLevel = error_reporting(error_reporting() & ~E_DEPRECATED);
 
-        $connectTimeout = max(1, min((int) $timeout, 4));
-
         foreach ($attempts as $attempt) {
-            $reach = self::probeTcp($endpoint['host'], $attempt['port'], $connectTimeout);
-            if ($reach !== true) {
-                $lastError = new Exception(
-                    self::formatMikrotikConnectionHelp($endpoint['host'], $attempt['port'])
-                    . ' (' . $reach . ')'
-                );
-                continue;
-            }
-
             try {
                 $client = new RouterOS\Client(
                     $endpoint['host'],
@@ -221,6 +202,9 @@ class Mikrotik
         }
 
         $detail = $lastError ? $lastError->getMessage() : 'connexion impossible';
+        if (strpos($detail, Lang::T('Cannot connect to MikroTik')) !== false) {
+            throw new Exception($detail);
+        }
         throw new Exception(self::formatMikrotikConnectionHelp($endpoint['host'], $endpoint['port']) . ' (' . $detail . ')');
     }
 
@@ -784,8 +768,23 @@ class Mikrotik
     public static function removeRouterFile($client, $path)
     {
         $path = trim((string) $path);
-        if ($path === '') {
+        // A trailing slash denotes a directory — never remove it (would wipe contents).
+        if ($path === '' || substr($path, -1) === '/') {
             return;
+        }
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/print'))
+                    ->setArgument('.proplist', 'name,type')
+                    ->setQuery(RouterOS\Query::where('name', $path))
+            );
+            foreach ($responses as $response) {
+                if ((string) $response->getProperty('type') === 'directory') {
+                    return;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
         }
         try {
             $client->sendSync(
@@ -795,6 +794,32 @@ class Mikrotik
         } catch (Throwable $e) {
         } catch (Exception $e) {
         }
+    }
+
+    public static function waitRouterFileSize($client, $path, $expectedSize, $attempts = 12)
+    {
+        $path = trim((string) $path);
+        $expectedSize = (int) $expectedSize;
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
+            if (self::getRouterFileSize($client, $path) === $expectedSize) {
+                return true;
+            }
+            usleep(250000);
+        }
+        return false;
+    }
+
+    public static function waitRouterFileRemoved($client, $path, $attempts = 12)
+    {
+        $path = trim((string) $path);
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
+            if (self::getRouterFileSize($client, $path) <= 0) {
+                return true;
+            }
+            self::removeRouterFile($client, $path);
+            usleep(250000);
+        }
+        return self::getRouterFileSize($client, $path) <= 0;
     }
 
     /**
@@ -810,7 +835,14 @@ class Mikrotik
         if (self::getRouterFileSize($client, $from) <= 0) {
             return false;
         }
-        self::removeRouterFile($client, $to);
+
+        // Delete target file if it exists (RouterOS refuses to rename over existing files)
+        // Only delete files, not directories (directories have size=0 or empty)
+        $targetSize = self::getRouterFileSize($client, $to);
+        if ($targetSize > 0) {
+            self::removeRouterFile($client, $to);
+        }
+
         try {
             $responses = $client->sendSync(
                 (new RouterOS\Request('/file/set'))
@@ -865,6 +897,24 @@ class Mikrotik
         return null;
     }
 
+    public static function replaceRouterFile($client, $from, $to)
+    {
+        $from = trim((string) $from);
+        $to = trim((string) $to);
+        if ($from === '' || $to === '') {
+            return false;
+        }
+        if (self::getRouterFileSize($client, $from) <= 0) {
+            return false;
+        }
+        if ($from === $to) {
+            return true;
+        }
+        self::removeRouterFile($client, $to);
+        self::removeRouterFile($client, $to . '.txt');
+        return self::renameRouterFile($client, $from, $to);
+    }
+
     /**
      * Write large router files in API-safe chunks (RouterOS limits single /file/set payloads).
      */
@@ -877,49 +927,61 @@ class Mikrotik
             return false;
         }
 
-        if ($length <= 4000) {
+        if ($length <= 8000) {
             $util = new RouterOS\Util($client);
             return self::tryRouterFileWrite($util, $path, $contents);
         }
 
+        // Large files (>8KB): use PEAR2 Util->filePutContents which handles
+        // chunking automatically. This works over low-MTU/lossy tunnels where
+        // MikroTik /tool fetch (inbound 16KB) times out.
         self::removeRouterFile($client, $path);
         self::removeRouterFile($client, $path . '.txt');
 
+        $util = new RouterOS\Util($client);
         try {
-            $client->sendSync(
-                (new RouterOS\Request('/file/print'))->setArgument('file', $path)
-            );
+            $util->filePutContents($path, $contents);
         } catch (Throwable $e) {
+            return false;
         } catch (Exception $e) {
+            return false;
         }
-        usleep(100000);
+        usleep(300000);
 
-        $chunkSize = 3500;
-        $written = '';
-        for ($offset = 0; $offset < $length; $offset += $chunkSize) {
-            $written .= substr($contents, $offset, $chunkSize);
-            try {
-                $client->sendSync(
-                    (new RouterOS\Request('/file/set'))
-                        ->setArgument('numbers', $path)
-                        ->setArgument('contents', $written)
-                );
-            } catch (Throwable $e) {
-                return false;
-            } catch (Exception $e) {
-                return false;
-            }
-            usleep(50000);
-        }
-
-        $minOkSize = max(4000, (int) floor($length * 0.9));
-        if (self::getRouterFileSize($client, $path) >= $minOkSize) {
+        // Verify write succeeded
+        $writtenSize = self::getRouterFileSize($client, $path);
+        if ($writtenSize >= (int) ($length * 0.9)) {
             return true;
         }
 
-        // Some RouterOS builds store text payloads as "<name>.txt" (e.g. login.html.txt).
-        $normalized = self::normalizeRouterFetchedFile($client, $path);
-        return $normalized !== null && self::getRouterFileSize($client, $normalized) >= $minOkSize;
+        // Check if RouterOS created a .txt suffix
+        $txtSize = self::getRouterFileSize($client, $path . '.txt');
+        if ($txtSize >= (int) ($length * 0.9)) {
+            return self::renameRouterFile($client, $path . '.txt', $path);
+        }
+
+        return false;
+    }
+
+    /**
+     * After /file/print file=X, RouterOS creates an empty placeholder that is
+     * usually named "X.txt" (sometimes "X"). Return whichever name exists so we
+     * can write contents to it via /file/set.
+     */
+    private static function findRouterPlaceholderName($client, $path)
+    {
+        // Try exact name first
+        if (self::getRouterFileSize($client, $path) >= 0) {
+            return $path;
+        }
+
+        // Try .txt suffix (RouterOS default for created files)
+        $txtPath = $path . '.txt';
+        if (self::getRouterFileSize($client, $txtPath) >= 0) {
+            return $txtPath;
+        }
+
+        return null;
     }
 
     /**
@@ -940,8 +1002,9 @@ class Mikrotik
 
         $urls = [];
         foreach ([
-            $bases[0] . '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs,
+            $bases[0] . '/hotspot_login.html?ts=' . $fetchTs,
             $bases[0] . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs,
+            $bases[0] . '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs,
         ] as $url) {
             if (self::isRouterFetchableUrl($url)) {
                 $urls[] = $url;
@@ -1522,8 +1585,12 @@ class Mikrotik
      */
     private static function attemptToolFetch($client, $url, $dstPath)
     {
-        self::removeRouterFile($client, $dstPath);
-        self::removeRouterFile($client, $dstPath . '.txt');
+        // Never remove when dst-path is a directory (ends with '/') — RouterOS would
+        // delete the whole directory and all its contents.
+        if (substr($dstPath, -1) !== '/') {
+            self::removeRouterFile($client, $dstPath);
+            self::removeRouterFile($client, $dstPath . '.txt');
+        }
 
         $mode = stripos($url, 'https://') === 0 ? 'https' : 'http';
         $fetchAttempts = [
@@ -1755,27 +1822,44 @@ class Mikrotik
     public static function deployHotspotLoginHtml($client, $html, array $fetchUrls = [])
     {
         $html = (string) $html;
+        $length = strlen($html);
         $fetchUrls = array_slice(self::filterRouterFetchUrls($fetchUrls), 0, 2);
-        $paths = ['hotspot/login.html', 'login.html'];
         $errors = [];
 
         self::ensureRouterDirectory($client, 'hotspot');
 
-        foreach ($paths as $path) {
-            self::removeRouterFile($client, $path);
-            self::removeRouterFile($client, $path . '.txt');
+        $tmpPath = 'hotspot/dyrsia-login-new.html';
+        $finalPath = 'hotspot/login.html';
 
-            if (self::tryRouterFileWriteChunked($client, $path, $html)) {
-                return ['ok' => true, 'path' => $path, 'method' => 'api'];
+        // 1) API write first — fast and reliable even over low-MTU VPN tunnels
+        //    (outgoing data fragments correctly, unlike inbound /tool fetch of 16KB).
+        self::removeRouterFile($client, $tmpPath);
+        self::removeRouterFile($client, $tmpPath . '.txt');
+        if (self::tryRouterFileWriteChunked($client, $tmpPath, $html)) {
+            if (self::renameRouterFile($client, $tmpPath, $finalPath)) {
+                return ['ok' => true, 'path' => $finalPath, 'method' => 'api'];
             }
-            $errors[] = $path . ': écriture API refusée (' . strlen($html) . ' octets)';
+            $errors[] = $finalPath . ' (api): fichier écrit mais remplacement final impossible';
+        } else {
+            $errors[] = $finalPath . ': écriture API refusée (' . $length . ' octets)';
+        }
 
+        // 2) Fallback: /tool fetch (HTTP) — only if API write failed.
+        if (!empty($fetchUrls)) {
             foreach ($fetchUrls as $url) {
-                $fetchError = self::fetchUrlToRouterFile($client, $url, $path);
-                if ($fetchError === null && self::normalizeRouterFetchedFile($client, $path) !== null) {
-                    return ['ok' => true, 'path' => $path, 'method' => 'fetch'];
+                self::removeRouterFile($client, $tmpPath);
+                self::removeRouterFile($client, $tmpPath . '.txt');
+                $fetchError = self::fetchUrlToRouterFile($client, $url, $tmpPath);
+                $normalizedPath = self::normalizeRouterFetchedFile($client, $tmpPath);
+                $fetchedSize = $normalizedPath !== null ? self::getRouterFileSize($client, $normalizedPath) : 0;
+                if ($fetchError === null && $fetchedSize >= (int) ($length * 0.9)) {
+                    if (self::renameRouterFile($client, $normalizedPath, $finalPath)) {
+                        return ['ok' => true, 'path' => $finalPath, 'method' => 'fetch'];
+                    }
+                    $errors[] = $finalPath . ' (fetch): nouveau fichier reçu mais remplacement final impossible';
+                    continue;
                 }
-                $errors[] = $path . ' (fetch): ' . ($fetchError ?? 'nom de fichier incorrect');
+                $errors[] = $finalPath . ' (fetch): ' . ($fetchError ?? ('taille reçue ' . $fetchedSize . ' < attendue ' . $length));
             }
         }
 
@@ -1817,5 +1901,79 @@ class Mikrotik
         }
 
         return ['ok' => false, 'errors' => $errors];
+    }
+
+    public static function patchHotspotLoginHelpSection($html, array $help)
+    {
+        $html = (string) $html;
+        $title = trim((string) ($help['title'] ?? ''));
+        $text = trim((string) ($help['text'] ?? ''));
+        $whatsapp = trim((string) ($help['whatsapp'] ?? ''));
+        $whatsappLabel = trim((string) ($help['whatsapp_label'] ?? ''));
+
+        if ($title !== '') {
+            $html = preg_replace('/<h3>\s*Assistance\s*&amp;\s*Connexion\s*à\s*domicile\s*<\/h3>/is', '<h3>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h3>', $html, 1) ?? $html;
+        }
+        if ($text !== '') {
+            $html = preg_replace('/<p>\s*Une question \? Un besoin technique \?\s*<\/p>/is', '<p>' . htmlspecialchars($text, ENT_QUOTES, 'UTF-8') . '</p>', $html, 1) ?? $html;
+        }
+        if ($whatsappLabel !== '') {
+            $html = preg_replace('/WhatsApp\s*—\s*Nous contacter/is', htmlspecialchars($whatsappLabel, ENT_QUOTES, 'UTF-8'), $html, 1) ?? $html;
+        }
+        if ($whatsapp !== '') {
+            $digits = preg_replace('/\D/', '', $whatsapp);
+            if ($digits !== '') {
+                $html = preg_replace('/https?:\/\/wa\.me\/[0-9]+/i', 'https://wa.me/' . $digits, $html, 1) ?? $html;
+            }
+        }
+
+        return $html;
+    }
+
+    public static function ensureHotspotCaptiveExtrasWalledGarden($client, $appUrl)
+    {
+        $hosts = array_filter(array_unique([
+            parse_url(self::normalizeHotspotBackendApiUrl($appUrl), PHP_URL_HOST),
+            'wa.me',
+            'api.whatsapp.com',
+            'web.whatsapp.com',
+        ]));
+        foreach ($hosts as $host) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/hotspot/walled-garden/ip/add'))
+                        ->setArgument('dst-host', $host)
+                        ->setArgument('action', 'accept')
+                        ->setArgument('comment', 'DYRSIA hotspot captive extras')
+                );
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        return ['ok' => true, 'errors' => []];
+    }
+
+    public static function hotspotCaptiveWalledGardenRouterOsScript($appUrl, $apiUrl = '')
+    {
+        $hosts = [];
+        foreach ([$appUrl, $apiUrl, 'https://wifizones.org', 'https://www.wifizones.org'] as $url) {
+            $host = parse_url(self::normalizeHotspotBackendApiUrl($url), PHP_URL_HOST);
+            if ($host) {
+                $hosts[] = strtolower($host);
+            }
+        }
+        $hosts = array_values(array_unique(array_filter(array_merge($hosts, [
+            'wa.me',
+            'api.whatsapp.com',
+            'web.whatsapp.com',
+        ]))));
+
+        $lines = ['# DYRSIA Hotspot captive portal walled-garden'];
+        foreach ($hosts as $host) {
+            $lines[] = '/ip hotspot walled-garden ip add action=accept dst-host="' . str_replace('"', '', $host) . '" comment="DYRSIA hotspot captive"';
+        }
+
+        return implode("\n", $lines);
     }
 }

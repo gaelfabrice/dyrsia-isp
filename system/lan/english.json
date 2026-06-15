@@ -1685,5 +1685,6 @@
     "Active_Gateway": "Active Gateway",
     "After_uploading_new_DYRSIA_files__click_Update_Database_to_create_missing_tables_and_columns__Hotspot__FTTH_mapping__login_requests__etc___": "After uploading new DYRSIA files, click Update Database to create missing tables and columns (Hotspot, FTTH mapping, login requests, etc.).",
     "Notify_Admin": "Notify Admin",
-    "_is_required_": " is required."
+    "_is_required_": " is required.",
+    "Payment_gateway_authentication_failed__Please_try_again_": "Payment gateway authentication failed. Please try again."
 }

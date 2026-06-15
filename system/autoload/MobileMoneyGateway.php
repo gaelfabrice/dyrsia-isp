@@ -193,16 +193,16 @@ class MobileMoneyGateway
         return [
             'gateway' => $gateway,
             'prefix' => $prefix,
-            'prefixDisplay' => '+' . $prefix,
+            'prefixDisplay' => '',
             'country' => 'Cameroun',
             'badge' => 'Mobile Money · Cameroun',
             'subtitle' => 'MTN MoMo ou Orange Money',
-            'placeholder' => '6XX XXX XXX',
+            'placeholder' => '677123456',
             'localLength' => 9,
             'localPattern' => '^[26]',
             'errors' => [
-                'length' => 'Entrez 9 chiffres après +' . $prefix . ' (ex: 677123456)',
-                'format' => 'Numéro camerounais invalide (doit commencer par 6 ou 2)',
+                'length' => 'Entrez 9 chiffres (ex: 677123456)',
+                'format' => 'Numéro incorrect (doit commencer par 6 ou 2)',
             ],
             'operators' => [
                 ['img' => 'MTN.png', 'alt' => 'MoMo MTN', 'class' => 'mtn'],
@@ -302,24 +302,30 @@ class MobileMoneyGateway
     }
     function normalizeLocalPhone(value) {
         let digits = String(value || '').replace(/\D/g, '');
-        const prefix = String(HOTSPOT_PAYMENT_PROFILE.prefix || '');
+        const prefix = String(HOTSPOT_PAYMENT_PROFILE.prefix || '').replace(/\D/g, '');
+        const localLen = HOTSPOT_PAYMENT_PROFILE.localLength || 9;
         if (prefix && digits.indexOf(prefix) === 0) digits = digits.slice(prefix.length);
-        if (digits.indexOf('0') === 0) digits = digits.slice(1);
-        return digits.slice(0, HOTSPOT_PAYMENT_PROFILE.localLength || 9);
+        digits = digits.replace(/^0+/, '');
+        return digits.slice(0, localLen);
+    }
+    function toCampayMsisdn(localDigits) {
+        const prefix = String(HOTSPOT_PAYMENT_PROFILE.prefix || '237').replace(/\D/g, '');
+        const localLen = HOTSPOT_PAYMENT_PROFILE.localLength || 9;
+        let digits = String(localDigits || '').replace(/\D/g, '');
+        if (prefix && digits.indexOf(prefix) === 0) digits = digits.slice(prefix.length);
+        digits = digits.replace(/^0+/, '').slice(0, localLen);
+        if (digits.length !== localLen) return '';
+        return prefix + digits;
     }
     function formatDisplayPhone(phone) {
-        const local = normalizeLocalPhone(phone);
-        const pfx = HOTSPOT_PAYMENT_PROFILE.prefixDisplay || '';
-        if (local.length === (HOTSPOT_PAYMENT_PROFILE.localLength || 9)) {
-            return pfx + ' ' + local.slice(0, 3) + ' ' + local.slice(3, 6) + ' ' + local.slice(6);
-        }
-        return pfx + ' ' + local;
+        return normalizeLocalPhone(phone);
     }
     function validateHotspotPhone(phone) {
         const p = HOTSPOT_PAYMENT_PROFILE;
         const local = normalizeLocalPhone(phone);
         if (local.length !== (p.localLength || 9)) return p.errors.length;
         if (!new RegExp(p.localPattern).test(local)) return p.errors.format;
+        if (!toCampayMsisdn(phone)) return p.errors.length;
         return null;
     }
     function detectMobileOperator(phone, apiOperator, apiUssd) {
@@ -372,9 +378,47 @@ class MobileMoneyGateway
             willClose: function () { if (campayCountdownTimer) { clearInterval(campayCountdownTimer); campayCountdownTimer = null; } }
         });
     }
+    function isHotspotCaptivePortal() {
+        try {
+            const origin = window.location.origin || '';
+            if (!origin || window.location.protocol === 'file:') return false;
+            const host = new URL(origin).hostname;
+            return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+        } catch (e) {
+            return false;
+        }
+    }
     async function initiateCampayPayment(params) {
-        const body = new URLSearchParams(params); body.set('ajax', '1');
-        const res = await fetchHotspotEndpoint('hotspot_pay', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: body.toString() });
+        params = params || {};
+        const localPhone = normalizeLocalPhone(params.msisdn || params.phonenumber || params.phone || '');
+        const msisdn = toCampayMsisdn(localPhone);
+        const query = new URLSearchParams();
+        ['pay', 'type', 'payment_gateway', 'routername', 'planid', 'amount', 'plan_name', 'mac_address', 'ip_address', 'fullname', 'address'].forEach(function (k) {
+            let val = params[k];
+            if (k === 'ajax') val = '1';
+            if (val !== undefined && val !== null && String(val) !== '') query.set(k, String(val));
+        });
+        query.set('pay', '1');
+        query.set('type', params.type || 'gateways');
+        query.set('payment_gateway', params.payment_gateway || HOTSPOT_PAYMENT_GATEWAY);
+        query.set('ajax', '1');
+        if (localPhone) query.set('n', localPhone);
+        if (msisdn) {
+            query.set('hmobile', msisdn);
+            query.set('phone', msisdn);
+            query.set('phonenumber', msisdn);
+            try { query.set('pd', btoa(msisdn)); } catch (e) {}
+            query.set('msisdn', msisdn);
+        }
+        const route = query.toString() ? ('hotspot_pay&' + query.toString()) : 'hotspot_pay';
+        const headers = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+        const onCaptive = isHotspotCaptivePortal();
+        const fetchOptions = {
+            method: 'POST',
+            headers: Object.assign({}, headers, { 'Content-Type': 'application/x-www-form-urlencoded' }),
+            body: query.toString()
+        };
+        const res = await fetchHotspotEndpoint(route, fetchOptions);
         const text = await res.text();
         try {
             return JSON.parse(text);
@@ -405,9 +449,22 @@ class MobileMoneyGateway
     }
     function buildPaymentModalHtml(planName, price, currency, validity) {
         const p = HOTSPOT_PAYMENT_PROFILE;
-        return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro de téléphone</label><div class="campay-phone-wrap"><span class="campay-phone-prefix">' + escapeHtml(p.prefixDisplay) + '</span><input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + escapeHtml(String(p.localLength || 9)) + '" /></div><div class="campay-operators">' + buildPaymentOperatorsHtml() + '</div></div></div>';
+        const prefixLabel = String(p.prefixDisplay || '').trim();
+        const prefixHtml = prefixLabel ? '<span class="campay-phone-prefix">' + escapeHtml(prefixLabel) + '</span>' : '';
+        const maxLen = String((p.localLength || 9) + (prefixLabel ? String(p.prefix || '').replace(/\D/g, '').length : 0));
+        return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro Mobile Money</label><div class="campay-phone-wrap">' + prefixHtml + '<input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + escapeHtml(maxLen) + '" /></div><p class="campay-pay-hint" style="margin:8px 0 0;font-size:12px;color:#94a3b8">9 chiffres, ex: 677123456</p><div class="campay-operators">' + buildPaymentOperatorsHtml() + '</div></div></div>';
     }
-    function bindPaymentPhoneInput() { const input = document.getElementById('campayPhoneInput'); if (!input) return; input.addEventListener('input', function () { input.value = normalizeLocalPhone(input.value); }); setTimeout(function () { input.focus(); }, 80); }
+    function bindPaymentPhoneInput() {
+        const input = document.getElementById('campayPhoneInput');
+        if (!input) return;
+        input.addEventListener('input', function () { input.value = normalizeLocalPhone(input.value); });
+        input.addEventListener('paste', function (e) {
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData).getData('text');
+            input.value = normalizeLocalPhone(text);
+        });
+        setTimeout(function () { input.focus(); }, 80);
+    }
     function buildPaymentSuccessHtml(planName, validity) {
         return '<div class="hotspot-pay-success">' +
             '<div class="hotspot-pay-success-ring"><svg viewBox="0 0 48 48"><path d="M12 24l8 8 16-16"/></svg></div>' +
@@ -449,7 +506,7 @@ class MobileMoneyGateway
         if (!result.isConfirmed) return;
         const phone = normalizeLocalPhone(result.value || '');
         let initResult;
-        try { initResult = await initiateCampayPayment({ pay: '1', type: 'gateways', payment_gateway: HOTSPOT_PAYMENT_GATEWAY, phone: phone, routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : '$(identity)'), planid: meta.planid, amount: meta.amount || price, plan_name: planName, mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)', fullname: 'Client Hotspot', address: 'Hotspot' }); }
+        try { initResult = await initiateCampayPayment({ pay: '1', type: 'gateways', payment_gateway: HOTSPOT_PAYMENT_GATEWAY, msisdn: toCampayMsisdn(phone), phonenumber: toCampayMsisdn(phone), routername: meta.routername || (typeof HOTSPOT_ROUTER_NAME !== 'undefined' ? HOTSPOT_ROUTER_NAME : '$(identity)'), planid: meta.planid, amount: meta.amount || price, plan_name: planName, mac_address: CLIENT_MAC || '$(mac)', ip_address: '$(ip)', fullname: 'Client Hotspot', address: 'Hotspot' }); }
         catch (e) { await Swal.fire({ title: 'Erreur réseau', text: (e && e.message) ? e.message : 'Impossible de contacter le serveur.', icon: 'error' }); return; }
         if (!initResult.ok) { await Swal.fire({ title: 'Paiement refusé', text: initResult.message || 'Erreur', icon: 'error' }); return; }
         const operator = detectMobileOperator(phone, initResult.operator, initResult.ussd_code);
@@ -492,10 +549,23 @@ function renderHotspotPlans(plans) {
         const planId = pkg.planid || pkg.planId || '';
         const paymentLink = pkg.paymentlink || (APP_URL + '/index.php?_route=plugin/hotspot_pay&routername=' + encodeURIComponent(routerName) + '&planid=' + encodeURIComponent(planId) + '&amount=' + encodeURIComponent(pkg.price || ''));
         const url = paymentLink + (paymentLink.indexOf('?') >= 0 ? '&' : '?') + 'mac=$(mac)&ip=$(ip)';
-        return '<a class="package-item" href="' + url + '" target="_self" onclick="event.preventDefault(); handlePlanPayment(\'' + escapeHtml(pkg.planname || pkg.name || '') + '\', \'' + (pkg.price || '') + '\', \'' + (pkg.currency || 'Fcfa') + '\', \'' + escapeHtml(pkg.validity || '') + '\', this.href)">' +
+        return '<a class="package-item" href="' + url + '" target="_self" data-plan-name="' + escapeHtml(pkg.planname || pkg.name || '') + '" data-plan-price="' + (pkg.price || '') + '" data-plan-currency="' + (pkg.currency || 'Fcfa') + '" data-plan-validity="' + escapeHtml(pkg.validity || '') + '" data-payment-url="' + url + '">' +
             '<div class="package-name"><b>' + escapeHtml(pkg.planname || pkg.name || '') + '</b><span class="package-price">' + (pkg.price || '') + ' ' + (pkg.currency || 'Fcfa') + '</span></div>' +
             '<div class="package-desc"><span>⏱️ Validité: ' + escapeHtml(pkg.validity || '—') + '</span><span class="badge-unlimited">♾️ ILLIMITÉ</span></div></a>';
     }).join('');
+
+    // Add click handlers via event delegation
+    container.querySelectorAll('.package-item').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+            e.preventDefault();
+            const nom = this.dataset.planName;
+            const prix = this.dataset.planPrice;
+            const currency = this.dataset.planCurrency;
+            const validite = this.dataset.planValidity;
+            const url = this.dataset.paymentUrl;
+            handlePlanPayment(nom, prix, currency, validite, url);
+        });
+    });
 }
 async function loadPlans() {
     const container = document.getElementById('packagesList');

@@ -688,14 +688,14 @@ body.theme-dark .sidebar-menu li a {
                         </li>
                         <li class="dropdown user user-menu">
                             <a href="#" class="dropdown-toggle" data-toggle="dropdown">
-                                <img src="{$app_url}/{$UPLOAD_PATH}{$_admin['photo']}.thumb.jpg"
+                                <img src="{$app_url}/{$UPLOAD_PATH}{if strpos($_admin['photo'], 'default') !== false}{$_admin['photo']}{else}{$_admin['photo']}.thumb.jpg{/if}"
                                     onerror="this.src='{$app_url}/{$UPLOAD_PATH}/admin.default.png'" class="user-image"
                                     alt="Avatar">
                                 <span class="hidden-xs">{$_admin['fullname']}</span>
                             </a>
                             <ul class="dropdown-menu">
                                 <li class="user-header">
-                                    <img src="{$app_url}/{$UPLOAD_PATH}{$_admin['photo']}.thumb.jpg"
+                                    <img src="{$app_url}/{$UPLOAD_PATH}{if strpos($_admin['photo'], 'default') !== false}{$_admin['photo']}{else}{$_admin['photo']}.thumb.jpg{/if}"
                                         onerror="this.src='{$app_url}/{$UPLOAD_PATH}/admin.default.png'" class="img-circle"
                                         alt="Avatar">
                                     <p>

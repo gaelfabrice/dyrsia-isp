@@ -121,16 +121,19 @@ switch ($action) {
         if (Validator::Length($name, 256, 0) == false) {
             $msg .= 'Name should be between 1 to 255 characters' . '<br>';
         }
+        if (!is_numeric($rate_down) || !is_numeric($rate_up)) {
+            $msg .= Lang::T('Rate must be a number') . '<br>';
+        }
 
         if ($rate_down_unit == 'Kbps') {
-            $unit_rate_down = $rate_down * 1024;
+            $unit_rate_down = (float) $rate_down * 1024;
         } else {
-            $unit_rate_down = $rate_down * 1048576;
+            $unit_rate_down = (float) $rate_down * 1048576;
         }
         if ($rate_up_unit == 'Kbps') {
-            $unit_rate_up = $min_up * 1024;
+            $unit_rate_up = (float) $rate_up * 1024;
         } else {
-            $unit_rate_up = $min_up * 1048576;
+            $unit_rate_up = (float) $rate_up * 1048576;
         }
 
         $d = ORM::for_table('tbl_bandwidth')->where('name_bw', $name)->find_one();
@@ -180,6 +183,9 @@ switch ($action) {
         if (Validator::Length($name, 256, 0) == false) {
             $msg .= 'Name should be between 1 to 255 characters' . '<br>';
         }
+        if (!is_numeric($rate_down) || !is_numeric($rate_up)) {
+            $msg .= Lang::T('Rate must be a number') . '<br>';
+        }
 
         $id = _post('id');
         $d = ORM::for_table('tbl_bandwidth')->find_one($id);
@@ -188,7 +194,7 @@ switch ($action) {
             $msg .= Lang::T('Data Not Found') . '<br>';
         }
 
-        if ($d['name_bw'] != $name) {
+        if ($d && $d['name_bw'] != $name) {
             $c = ORM::for_table('tbl_bandwidth')->where('name_bw', $name)->find_one();
             if ($c) {
                 $msg .= Lang::T('Name Bandwidth Already Exist') . '<br>';

@@ -356,6 +356,9 @@ function wifizone_verify_csrf()
         return;
     }
     $token = _post('csrf_token') ?: _req('csrf_token');
+    if ($token === '' && !empty($_SERVER['HTTP_X_CSRF_TOKEN'])) {
+        $token = trim($_SERVER['HTTP_X_CSRF_TOKEN']);
+    }
     if ($token === '') {
         if (wifizone_json_response_requested()) {
             wifizone_json_error(Lang::T('Invalid or Expired CSRF Token') . '.', 403);

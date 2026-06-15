@@ -82,17 +82,25 @@ if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')
             }
         }
         if (!is_file($file) || !is_readable($file)) {
+            $message = 'login.html introuvable — enregistrez Paramètres Hotspot pour générer la page.';
             if (!headers_sent()) {
                 header('HTTP/1.1 404 Not Found');
                 header('Content-Type: text/plain; charset=utf-8');
+                header('Content-Length: ' . strlen($message));
             }
-            echo 'login.html introuvable — enregistrez Paramètres Hotspot pour générer la page.';
+            echo $message;
             exit;
         }
+        $size = filesize($file);
+        ob_implicit_flush(true);
         if (!headers_sent()) {
             header('Content-Type: text/html; charset=utf-8');
             header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
             header('Pragma: no-cache');
+            header('Expires: 0');
+            if ($size !== false) {
+                header('Content-Length: ' . $size);
+            }
         }
         readfile($file);
         exit;
@@ -219,20 +227,41 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             echo json_encode(['success' => false, 'message' => 'Le numéro doit contenir 9 chiffres']);
             exit;
         }
+        // Hotspot accounts often store the phone as the username (phonenumber field empty),
+        // so look the customer up by phonenumber AND by username.
         $customer = ORM::for_table('tbl_customers')->where('phonenumber', $phone)->find_one();
+        if (!$customer) {
+            $customer = ORM::for_table('tbl_customers')->where('username', $phone)->find_one();
+        }
         if (!$customer) {
             $customer = ORM::for_table('tbl_customers')->where_like('phonenumber', '%' . $phone)->find_one();
         }
-        $recharge = $customer ? ORM::for_table('tbl_user_recharges')->where('customer_id', $customer['id'])->where('status', 'on')->order_by_desc('id')->find_one() : null;
+
+        $recharge = null;
+        if ($customer) {
+            $recharge = ORM::for_table('tbl_user_recharges')
+                ->where('customer_id', $customer['id'])
+                ->where('status', 'on')
+                ->order_by_desc('id')
+                ->find_one();
+        }
+        // Fall back to matching the recharge directly by username (= phone).
+        if (!$recharge) {
+            $recharge = ORM::for_table('tbl_user_recharges')
+                ->where('username', $phone)
+                ->where('status', 'on')
+                ->order_by_desc('id')
+                ->find_one();
+        }
         $plan = $recharge ? ORM::for_table('tbl_plans')->where('id', $recharge['plan_id'])->find_one() : null;
-        if (!$customer || !$recharge || !$plan) {
+        if (!$recharge || !$plan) {
             echo json_encode(['success' => false, 'message' => 'Aucun forfait actif trouvé pour ce numéro']);
             exit;
         }
         echo json_encode([
             'success' => true,
             'message' => 'Forfait retrouvé',
-            'username' => $recharge['username'] ?? $customer['username'],
+            'username' => $recharge['username'] ?: ($customer['username'] ?? ''),
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',

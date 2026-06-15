@@ -11,14 +11,10 @@ if ! git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! git -C "$ROOT_DIR" diff-index --quiet HEAD -- 2>/dev/null; then
-  echo "Warning: uncommitted changes detected — dist reflects the last commit only." >&2
-fi
-
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGING"
 
-git -C "$ROOT_DIR" archive HEAD | tar -x -C "$STAGING"
+git -C "$ROOT_DIR" ls-files -z ':!:dist/*' | tar -C "$ROOT_DIR" --null -T - -cf - | tar -x -C "$STAGING"
 
 if [ -f "$STAGING/.htaccess.example" ]; then
   cp "$STAGING/.htaccess.example" "$STAGING/.htaccess"
