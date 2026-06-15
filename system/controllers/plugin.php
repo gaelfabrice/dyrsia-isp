@@ -262,6 +262,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             'success' => true,
             'message' => 'Forfait retrouvé',
             'username' => $recharge['username'] ?: ($customer['username'] ?? ''),
+            'password' => ($customer['password'] ?? '') ?: HotspotCustomer::defaultPassword(),
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',
