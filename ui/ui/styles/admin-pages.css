@@ -327,6 +327,34 @@ body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(
     overflow-x: auto;
 }
 
+/* Corrige les fonds blancs forcés en inline (ex. vue client) */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .table-responsive[style*="white"],
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) [style*="background-color: white"],
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) [style*="background-color:white"] {
+    background: transparent !important;
+}
+
+/* ── Listes d'infos (list-group AdminLTE) lisibles en thème sombre ── */
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .list-group-item {
+    background: transparent !important;
+    border-color: var(--wz-p-line) !important;
+    color: var(--wz-p-text) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .list-group-item b,
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .list-group-item strong {
+    color: var(--wz-p-heading) !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .list-group-item input {
+    color: var(--wz-p-text) !important;
+    background: transparent !important;
+}
+
+body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .list-group-item a {
+    color: var(--wz-p-brand) !important;
+}
+
 /* DataTables */
 body.wz-command .wz-page:not(:has(.wz-orbit-page)):not(:has(.rx-page)):not(:has(.rv-page)) .dataTables_wrapper .dataTables_paginate .paginate_button {
     border-radius: 8px !important;

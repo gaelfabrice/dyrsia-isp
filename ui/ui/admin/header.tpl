@@ -24,7 +24,7 @@
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/inter/inter.css">
     <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-command.css?2026.06.08" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/styles/7.css" />
-    <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-pages.css?2026.06.08b" />
+    <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-pages.css?2026.06.15" />
 
     <script src="{$app_url}/ui/ui/scripts/sweetalert2.all.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.5.1/dist/chart.min.js"></script>
