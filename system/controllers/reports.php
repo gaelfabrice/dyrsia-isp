@@ -53,6 +53,13 @@ function reports_data_usage_install()
         }
     } catch (Exception $e) {
     }
+    try {
+        $columns = $db->query("SHOW COLUMNS FROM tbl_routers LIKE 'admin_id'")->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($columns)) {
+            $db->exec("ALTER TABLE `tbl_routers` ADD COLUMN `admin_id` int(11) DEFAULT NULL AFTER `id`");
+        }
+    } catch (Exception $e) {
+    }
 }
 
 function reports_data_usage_format($bytes)
@@ -106,7 +113,17 @@ function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', 
     $usageFilter = $usageFilter ?? trim((string) _req('usage_filter'));
 
     if ($admin['user_type'] != 'SuperAdmin') {
-        $sql .= " AND ({$prefix}.admin_id = ? OR c.created_by = ?)";
+        $sql .= " AND (
+            {$prefix}.admin_id = ?
+            OR c.created_by = ?
+            OR EXISTS (
+                SELECT 1 FROM tbl_routers r
+                WHERE r.name = {$prefix}.router_name
+                  AND r.enabled = 1
+                  AND r.admin_id = ?
+            )
+        )";
+        $params[] = $admin['id'];
         $params[] = $admin['id'];
         $params[] = $admin['id'];
         if (strpos($usageFilter, 'customer:') === 0) {
@@ -180,12 +197,7 @@ function reports_data_usage_router_status($admin)
     foreach ($routers as $router) {
         $name = $router['name'];
         $params = [$name];
-        $scopeSql = " AND router_name = ?";
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $scopeSql .= " AND admin_id = ?";
-            $params[] = $admin['id'];
-        }
-        $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ?" . ($admin['user_type'] != 'SuperAdmin' ? " AND admin_id = ?" : ""));
+        $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ?");
         $stmt->execute($params);
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $lastSync = $row['last_sync'] ?? null;
@@ -210,6 +222,7 @@ function reports_data_usage_router_status($admin)
             'status' => $apiState,
             'last_sync' => $lastSync ? date('d/m/Y H:i', strtotime($lastSync)) : Lang::T('Never'),
             'last_sync_raw' => $lastSync,
+            'error' => (is_array($meta) && !empty($meta['error'])) ? (string) $meta['error'] : '',
         ];
     }
     return $statusList;

@@ -794,7 +794,8 @@ var WZ_DU = {
         var labels = { online: 'En ligne', warning: 'Retard sync', offline: 'Hors ligne' };
         var html = '';
         list.forEach(function(r) {
-            html += '<div class="du-router-item"><div><div class="du-router-name"><i class="fa fa-wifi"></i> ' + r.name + '</div><div class="du-router-meta">' + (r.ip || '') + ' · Sync: ' + r.last_sync + '</div></div>' +
+            var err = r.error ? '<div class="du-router-meta" style="color:#f87171;margin-top:4px">' + r.error + '</div>' : '';
+            html += '<div class="du-router-item"><div><div class="du-router-name"><i class="fa fa-wifi"></i> ' + r.name + '</div><div class="du-router-meta">' + (r.ip || '') + ' · Sync: ' + r.last_sync + '</div>' + err + '</div>' +
                 '<span class="du-badge ' + r.status + '"><span class="du-badge-dot"></span> ' + (labels[r.status] || r.status) + '</span></div>';
         });
         el.innerHTML = html;

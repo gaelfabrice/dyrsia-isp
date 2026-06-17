@@ -37,6 +37,28 @@ function cron_data_usage_install()
         }
     } catch (Exception $e) {
     }
+    try {
+        $columns = $db->query("SHOW COLUMNS FROM tbl_routers LIKE 'admin_id'")->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($columns)) {
+            $db->exec("ALTER TABLE `tbl_routers` ADD COLUMN `admin_id` int(11) DEFAULT NULL AFTER `id`");
+        }
+    } catch (Exception $e) {
+    }
+}
+
+function cron_data_usage_resolve_admin_id($username, $routerAdminId)
+{
+    $adminId = ($routerAdminId > 0) ? (int) $routerAdminId : null;
+    if ($adminId !== null) {
+        return $adminId;
+    }
+    $customer = ORM::for_table('tbl_customers')
+        ->where_raw('username = ? OR pppoe_username = ?', [$username, $username])
+        ->find_one();
+    if ($customer && (int) ($customer['created_by'] ?? 0) > 0) {
+        return (int) $customer['created_by'];
+    }
+    return null;
 }
 
 cron_data_usage_install();
@@ -101,6 +123,19 @@ function cron_data_usage_sync()
     $db = ORM::get_db();
     $currentTime = date('Y-m-d H:i:s');
     $db->exec("DELETE FROM `api_data_usage` WHERE `log_date` < NOW() - INTERVAL 365 DAY");
+    try {
+        $db->exec("UPDATE api_data_usage u
+            INNER JOIN tbl_customers c ON (
+                u.username = c.username OR u.username = c.pppoe_username
+            )
+            SET u.admin_id = c.created_by
+            WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND c.created_by > 0");
+        $db->exec("UPDATE api_data_usage u
+            INNER JOIN tbl_routers r ON r.name = u.router_name
+            SET u.admin_id = r.admin_id
+            WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND r.admin_id > 0");
+    } catch (Exception $e) {
+    }
     $routers = ORM::for_table('tbl_routers')->where('enabled', 1)->find_many();
     $lastRows = $db->query("SELECT meta_key, meta_value FROM api_data_usage_meta WHERE meta_key LIKE 'last_router_counters_%'")->fetchAll(PDO::FETCH_KEY_PAIR);
     $totalInserted = 0;
@@ -108,7 +143,7 @@ function cron_data_usage_sync()
 
     foreach ($routers as $router) {
         $routerName = $router['name'];
-        $routerAdminId = isset($router['admin_id']) ? (int) $router['admin_id'] : null;
+        $routerAdminId = (int) ($router['admin_id'] ?? 0);
         $metaKey = 'last_router_counters_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
         $lastCounters = isset($lastRows[$metaKey]) ? json_decode($lastRows[$metaKey], true) : [];
         if (!is_array($lastCounters)) {
@@ -116,16 +151,14 @@ function cron_data_usage_sync()
         }
         $currentCounters = [];
         try {
-            $password = $router['password'];
-            if (function_exists('lcg_decrypt')) {
-                $password = rtrim(lcg_decrypt($password));
-            } elseif (class_exists('Encryption') && method_exists('Encryption', 'decrypt')) {
-                $password = rtrim(Encryption::decrypt($password));
-            }
+            $password = class_exists('Mikrotik')
+                ? Mikrotik::routerPassword($router['password'])
+                : $router['password'];
             if (!class_exists('Mikrotik')) {
+                $errors[] = $routerName . ': classe Mikrotik indisponible';
                 continue;
             }
-            $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password);
+            $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password, 20);
             if (!$client) {
                 $errors[] = $routerName . ': connexion API impossible';
                 continue;
@@ -153,8 +186,9 @@ function cron_data_usage_sync()
                 if ($diffDl <= 0 && $diffUl <= 0) {
                     continue;
                 }
+                $usageAdminId = cron_data_usage_resolve_admin_id($username, $routerAdminId);
                 $stmt = $db->prepare("INSERT INTO api_data_usage (admin_id, username, router_name, download_bytes, upload_bytes, total_bytes, status, log_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$routerAdminId, $username, $routerName, $diffDl, $diffUl, $diffDl + $diffUl, $metrics['status'], $currentTime]);
+                $stmt->execute([$usageAdminId, $username, $routerName, $diffDl, $diffUl, $diffDl + $diffUl, $metrics['status'], $currentTime]);
                 $totalInserted++;
             }
             $json = json_encode($currentCounters);

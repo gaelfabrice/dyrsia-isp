@@ -80,6 +80,12 @@ if (is_file(__DIR__ . '/cron_data_usage.php')) {
     require_once __DIR__ . '/cron_data_usage.php';
     $usageResult = cron_data_usage_sync();
     echo "Data usage rows inserted: " . (int) ($usageResult['inserted'] ?? 0) . "\n";
+    if (!empty($usageResult['errors'])) {
+        echo "Data usage errors:\n";
+        foreach ($usageResult['errors'] as $usageError) {
+            echo "  - $usageError\n";
+        }
+    }
 }
 
 flock($lock, LOCK_UN);
