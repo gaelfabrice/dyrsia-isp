@@ -23,11 +23,11 @@
             {$_MENU_AFTER_REPORTS}
 
             <li class="header wz-nav-section">{Lang::T('Customer_Management')}</li>
-            <li class="{if $_system_menu eq 'customers' || $_routes[0] eq 'customers' || $_system_menu eq 'quickadd'}active menu-open{/if} treeview">
+            <li class="{if $_system_menu eq 'customers' || $_routes[0] eq 'customers'}active menu-open{/if} treeview">
                 <a href="#"><i class="fa fa-users"></i> <span class="wz-nav-label">{Lang::T('Customer_Management')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
                 <ul class="treeview-menu">
-                    <li {if $_system_menu eq 'customers'}class="active"{/if}><a href="{Text::url('customers')}"><i class="fa fa-user"></i> {Lang::T('Customer')}</a></li>
-                    <li {if $_system_menu eq 'quickadd'}class="active"{/if}><a href="{Text::url('plugin/quickadd')}"><i class="ion ion-person-add"></i> {Lang::T('Add_Customer')}</a></li>
+                    <li {if $_system_menu eq 'customers' && $_routes[1] neq 'add'}class="active"{/if}><a href="{Text::url('customers')}"><i class="fa fa-user"></i> {Lang::T('Customer')}</a></li>
+                    <li {if $_routes[1] eq 'add'}class="active"{/if}><a href="{Text::url('customers/add')}"><i class="ion ion-person-add"></i> {Lang::T('Add_Customer')}</a></li>
                     <li {if $_routes[1] eq 'olt_management'}class="active"{/if}><a href="{Text::url('plugin/olt_management')}"><i class="ion ion-network"></i> {Lang::T('OLT_Management')}</a></li>
                     {if in_array($_admin['user_type'], ['SuperAdmin','Admin','Agent'])}
                     <li {if $_routes[1] eq 'users'}class="active"{/if}><a href="{Text::url('settings/users')}"><i class="ion ion-person-stalker"></i> {Lang::T('Administrator_Users')}</a></li>
