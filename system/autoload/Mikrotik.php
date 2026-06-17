@@ -645,7 +645,6 @@ class Mikrotik
             $expirePlan->routers = $routerName;
             $expirePlan->pool = $refPlan['pool'];
             $expirePlan->enabled = 1;
-            $expirePlan->allow_purchase = 'no';
             $expirePlan->prepaid = 'yes';
             $expirePlan->plan_type = 'Personal';
             $expirePlan->device = 'MikrotikPppoe';
@@ -656,10 +655,6 @@ class Mikrotik
             $changed = false;
             if ((int) $expirePlan->enabled !== 1) {
                 $expirePlan->enabled = 1;
-                $changed = true;
-            }
-            if ((string) $expirePlan->allow_purchase !== 'no') {
-                $expirePlan->allow_purchase = 'no';
                 $changed = true;
             }
             if ((float) $expirePlan->price != 0.0) {

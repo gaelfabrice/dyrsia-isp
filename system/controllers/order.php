@@ -68,6 +68,7 @@ switch ($action) {
                     ->where('enabled', '1')
                     ->where('is_radius', 1)
                     ->where('type', 'PPPOE')
+                    ->where_not_equal('name_plan', 'EXPIRE')
                     ->where('prepaid', 'yes')->find_many();
                 $radius_hotspot = ORM::for_table('tbl_plans')
                     ->where('plan_type', $account_type)
@@ -87,6 +88,7 @@ switch ($action) {
                     ->where_in('routers', $rs)
                     ->where('is_radius', 0)
                     ->where('type', 'PPPOE')
+                    ->where_not_equal('name_plan', 'EXPIRE')
                     ->where('prepaid', 'yes')
                     ->find_many();
                 $plans_hotspot = ORM::for_table('tbl_plans')
@@ -104,6 +106,7 @@ switch ($action) {
                 ->where('enabled', '1')
                 ->where('is_radius', 1)
                 ->where('type', 'PPPOE')
+                ->where_not_equal('name_plan', 'EXPIRE')
                 ->where('prepaid', 'yes')
                 ->find_many();
             $radius_hotspot = ORM::for_table('tbl_plans')
@@ -120,6 +123,7 @@ switch ($action) {
                 ->where('enabled', '1')
                 ->where('is_radius', 0)
                 ->where('type', 'PPPOE')
+                ->where_not_equal('name_plan', 'EXPIRE')
                 ->where('prepaid', 'yes')
                 ->find_many();
             $plans_hotspot = ORM::for_table('tbl_plans')
