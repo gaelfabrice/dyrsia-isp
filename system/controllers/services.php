@@ -34,6 +34,37 @@ function services_scoped_plan_query($admin)
  *
  * @return string|null Error message when sync failed, null on success.
  */
+function services_ensure_pppoe_expire_plans($admin)
+{
+    global $_app_stage;
+
+    if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+        return;
+    }
+
+    $routerQuery = ORM::for_table('tbl_plans')
+        ->distinct()
+        ->select('routers')
+        ->where('type', 'PPPOE')
+        ->where('is_radius', 0)
+        ->where_not_equal('routers', '');
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $routerQuery->where('admin_id', $admin['id']);
+    }
+
+    $routers = [];
+    foreach ($routerQuery->find_many() as $row) {
+        $name = trim((string) ($row['routers'] ?? ''));
+        if ($name !== '') {
+            $routers[$name] = true;
+        }
+    }
+
+    foreach (array_keys($routers) as $routerName) {
+        Mikrotik::ensurePppoeExpiredPlanDb($routerName, $admin);
+    }
+}
+
 function services_sync_plan_to_device($deviceClass, $plan, $action, $oldPlan = null)
 {
     global $_app_stage;
@@ -659,6 +690,7 @@ case 'hotspot-bulk-delete':
         if (DemoShowcase::isActive($admin)) {
             DemoShowcase::injectPlansList($ui, 'PPPoE', 20, $append_url);
         } else {
+            services_ensure_pppoe_expire_plans($admin);
             $d = Paginator::findMany($query, ['name' => $name], 20, $append_url);
             $ui->assign('d', $d);
         }
@@ -736,6 +768,9 @@ case 'hotspot-bulk-delete':
 
         $d = ORM::for_table('tbl_plans')->find_one($id);
         if ($d) {
+            if (Mikrotik::isPppoeSystemExpirePlan($d)) {
+                r2(getUrl('services/pppoe'), 'e', Lang::T('PPPoE system EXPIRE plan cannot be deleted'));
+            }
             run_hook('delete_ppoe'); #HOOK
 
             $dvc = Package::getDevice($d);
@@ -766,6 +801,9 @@ case 'hotspot-bulk-delete':
         $d = ORM::for_table('tbl_plans')->find_one($id);
 
         if ($d) {
+            if (Mikrotik::isPppoeSystemExpirePlan($d)) {
+                continue;
+            }
             run_hook('delete_ppoe');
 
             $dvc = Package::getDevice($d);
@@ -810,6 +848,9 @@ break;
         }
         if ($name == '' or $id_bw == '' or $price == '' or $validity == '' or $pool == '') {
             $msg .= Lang::T('All field is required') . '<br>';
+        }
+        if (strtoupper(trim((string) $name)) === 'EXPIRE') {
+            $msg .= Lang::T('The EXPIRE plan name is reserved for the system plan') . '<br>';
         }
         if (empty($radius)) {
             if ($routers == '') {
@@ -871,6 +912,19 @@ break;
             $d->device = $device;
             $d->save();
 
+            if (!$d->is_radius && !empty($d->routers) && strtoupper(trim((string) $d->name_plan)) !== 'EXPIRE') {
+                Mikrotik::ensurePppoeExpiredPlanDb($d->routers, $admin);
+                $expirePlan = ORM::for_table('tbl_plans')
+                    ->where('type', 'PPPOE')
+                    ->where('routers', $d->routers)
+                    ->where('name_plan', 'EXPIRE')
+                    ->find_one();
+                if ($expirePlan && (int) $d->plan_expired !== (int) $expirePlan->id) {
+                    $d->plan_expired = (int) $expirePlan->id;
+                    $d->save();
+                }
+            }
+
             $syncError = services_sync_plan_to_device($d['device'], $d, 'add');
             if ($syncError) {
                 r2(
@@ -925,9 +979,13 @@ break;
 
         $d = ORM::for_table('tbl_plans')->where('id', $id)->find_one();
         $old = ORM::for_table('tbl_plans')->where('id', $id)->find_one();
+        $isSystemExpire = $d && Mikrotik::isPppoeSystemExpirePlan($d);
         if ($d) {
         } else {
             $msg .= Lang::T('Data Not Found') . '<br>';
+        }
+        if (!$isSystemExpire && strtoupper(trim((string) $name)) === 'EXPIRE') {
+            $msg .= Lang::T('The EXPIRE plan name is reserved for the system plan') . '<br>';
         }
         run_hook('edit_ppoe'); #HOOK
         if ($msg == '') {
@@ -949,6 +1007,13 @@ break;
             $rate = $b['rate_up'] . $unitup . "/" . $b['rate_down'] . $unitdown;
             $radiusRate = $b['rate_up'] . $radup . '/' . $b['rate_down'] . $raddown . '/' . $b['burst'];
             $rate = trim($rate . " " . $b['burst']);
+
+            if ($isSystemExpire) {
+                $name = 'EXPIRE';
+                $enabled = 1;
+                $price = 0;
+                $plan_expired = 0;
+            }
 
             $d->name_plan = $name;
             $d->id_bw = $id_bw;

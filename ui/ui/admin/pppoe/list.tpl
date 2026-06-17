@@ -145,8 +145,13 @@
                             <tbody>
                                 {foreach $d as $ds}
                                     <tr {if $ds['enabled'] !=1}class="danger" title="disabled" {/if}>
+                                        {if $ds['name_plan'] == 'EXPIRE'}
+                                        <td></td>
+                                        <td>{$ds['name_plan']} <span class="label label-default">{Lang::T('System')}</span></td>
+                                        {else}
                                         <td><input type="checkbox" name="ids[]" value="{$ds['id']}" class="checkItem"></td>
                                         <td>{$ds['name_plan']}</td>
+                                        {/if}
                                         <td>{$ds['plan_type']} {if $ds['prepaid'] != 'yes'}<b>{Lang::T('Postpaid')}</b>{else}{Lang::T('Prepaid')}{/if}</td>
                                         <td>{$ds['name_bw']}</td>
                                         <td>{Lang::moneyFormat($ds['price'])}{if !empty($ds['price_old'])}<sup style="text-decoration: line-through; color: red">{Lang::moneyFormat($ds['price_old'])}</sup>{/if}</td>
@@ -171,7 +176,7 @@
                 {include file="pagination.tpl"}
                 <div class="bs-callout bs-callout-info" id="callout-navbar-role">
                     <h4>{Lang::T('Create expired Internet Plan')}</h4>
-                    <p>{Lang::T('When customer expired, you can move it to Expired Internet Plan')}</p>
+                    <p>{Lang::T('The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan.')}</p>
                 </div>
             </div>
         </div>

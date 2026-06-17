@@ -578,16 +578,35 @@ class Mikrotik
     }
 
     /**
-     * Ensure EXPIRE PPPoE plan exists in DB, linked to active plans, and synced on MikroTik.
+     * Whether a plan row is the protected PPPoE EXPIRE system plan.
+     */
+    public static function isPppoeSystemExpirePlan($plan)
+    {
+        if (is_object($plan) && method_exists($plan, 'as_array')) {
+            $plan = $plan->as_array();
+        }
+        if (!is_array($plan)) {
+            return false;
+        }
+
+        return strtoupper((string) ($plan['type'] ?? '')) === 'PPPOE'
+            && strtoupper(trim((string) ($plan['name_plan'] ?? ''))) === 'EXPIRE';
+    }
+
+    /**
+     * Ensure EXPIRE PPPoE plan exists in DB and is linked from other PPPoE plans on the router.
      *
      * @return array{ok: bool, plan_id: int, linked: int, errors: array<int, string>}
      */
-    public static function ensurePppoeExpiredPlan($client, $routerName, $admin = null)
+    public static function ensurePppoeExpiredPlanDb($routerName, $admin = null)
     {
         global $_app_stage;
         $routerName = trim((string) $routerName);
         if ($routerName === '') {
             return ['ok' => false, 'plan_id' => 0, 'linked' => 0, 'errors' => ['Router name required']];
+        }
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'plan_id' => 0, 'linked' => 0, 'errors' => []];
         }
 
         $refPlan = ORM::for_table('tbl_plans')
@@ -597,10 +616,13 @@ class Mikrotik
             ->where_not_equal('name_plan', 'EXPIRE')
             ->find_one();
         if (!$refPlan) {
-            return ['ok' => false, 'plan_id' => 0, 'linked' => 0, 'errors' => ['Aucun forfait PPPoE actif sur ce routeur']];
+            $refPlan = ORM::for_table('tbl_plans')
+                ->where('type', 'PPPOE')
+                ->where('routers', $routerName)
+                ->where_not_equal('name_plan', 'EXPIRE')
+                ->find_one();
         }
 
-        $adminId = is_array($admin) ? (int) ($admin['id'] ?? $refPlan['admin_id']) : (int) $refPlan['admin_id'];
         $expirePlan = ORM::for_table('tbl_plans')
             ->where('type', 'PPPOE')
             ->where('routers', $routerName)
@@ -608,9 +630,10 @@ class Mikrotik
             ->find_one();
 
         if (!$expirePlan) {
-            if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
-                return ['ok' => true, 'plan_id' => 0, 'linked' => 0, 'errors' => []];
+            if (!$refPlan) {
+                return ['ok' => false, 'plan_id' => 0, 'linked' => 0, 'errors' => ['Aucun forfait PPPoE sur ce routeur']];
             }
+            $adminId = is_array($admin) ? (int) ($admin['id'] ?? $refPlan['admin_id']) : (int) $refPlan['admin_id'];
             $expirePlan = ORM::for_table('tbl_plans')->create();
             $expirePlan->admin_id = $adminId;
             $expirePlan->name_plan = 'EXPIRE';
@@ -629,8 +652,36 @@ class Mikrotik
             $expirePlan->plan_expired = 0;
             $expirePlan->expired_date = 0;
             $expirePlan->save();
+        } else {
+            $changed = false;
+            if ((int) $expirePlan->enabled !== 1) {
+                $expirePlan->enabled = 1;
+                $changed = true;
+            }
+            if ((string) $expirePlan->allow_purchase !== 'no') {
+                $expirePlan->allow_purchase = 'no';
+                $changed = true;
+            }
+            if ((float) $expirePlan->price != 0.0) {
+                $expirePlan->price = 0;
+                $changed = true;
+            }
+            if ($refPlan) {
+                if (empty($expirePlan->pool)) {
+                    $expirePlan->pool = $refPlan['pool'];
+                    $changed = true;
+                }
+                if (empty($expirePlan->id_bw)) {
+                    $expirePlan->id_bw = $refPlan['id_bw'];
+                    $changed = true;
+                }
+            }
+            if ($changed) {
+                $expirePlan->save();
+            }
         }
 
+        $adminId = is_array($admin) ? (int) ($admin['id'] ?? $expirePlan['admin_id']) : (int) $expirePlan['admin_id'];
         $linked = 0;
         $linkQuery = ORM::for_table('tbl_plans')
             ->where('type', 'PPPOE')
@@ -647,6 +698,32 @@ class Mikrotik
                 $planRow->save();
                 $linked++;
             }
+        }
+
+        return [
+            'ok' => true,
+            'plan_id' => (int) $expirePlan->id,
+            'linked' => $linked,
+            'errors' => [],
+        ];
+    }
+
+    /**
+     * Ensure EXPIRE PPPoE plan exists in DB, linked to active plans, and synced on MikroTik.
+     *
+     * @return array{ok: bool, plan_id: int, linked: int, errors: array<int, string>}
+     */
+    public static function ensurePppoeExpiredPlan($client, $routerName, $admin = null)
+    {
+        global $_app_stage;
+        $dbResult = self::ensurePppoeExpiredPlanDb($routerName, $admin);
+        if (!$dbResult['ok'] || $dbResult['plan_id'] === 0) {
+            return $dbResult;
+        }
+
+        $expirePlan = ORM::for_table('tbl_plans')->find_one($dbResult['plan_id']);
+        if (!$expirePlan) {
+            return ['ok' => false, 'plan_id' => 0, 'linked' => 0, 'errors' => ['EXPIRE plan not found']];
         }
 
         $errors = [];
@@ -679,7 +756,7 @@ class Mikrotik
         return [
             'ok' => empty($errors),
             'plan_id' => (int) $expirePlan->id,
-            'linked' => $linked,
+            'linked' => $dbResult['linked'],
             'errors' => $errors,
         ];
     }
@@ -697,6 +774,8 @@ class Mikrotik
         }
 
         $routerName = trim((string) $routerName);
+        self::ensurePppoeExpiredPlanDb($routerName, $admin);
+
         $plansQuery = ORM::for_table('tbl_plans')
             ->where('type', 'PPPOE')
             ->where('enabled', 1)
@@ -706,7 +785,7 @@ class Mikrotik
             $plansQuery->where('admin_id', (int) ($admin['id'] ?? 0));
         }
 
-        $expectedNames = ['default'];
+        $expectedNames = ['default', 'EXPIRE'];
         $upserted = 0;
         $errors = [];
         $expiredOnUp = ':if ($remote-address!="") do={ /ip firewall address-list add list=pppoe-expired address=$remote-address comment=$user }';

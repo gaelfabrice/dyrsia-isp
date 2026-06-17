@@ -1696,5 +1696,9 @@
     "Your_account_has_been_approved": "Your account has been approved",
     "Request_approved_and_customer_created": "Request approved and customer created",
     "View_report": "View report",
-    "Rate_must_be_a_number": "Rate must be a number"
+    "Rate_must_be_a_number": "Rate must be a number",
+    "System": "System",
+    "PPPoE system EXPIRE plan cannot be deleted": "The PPPoE EXPIRE system plan cannot be deleted",
+    "The EXPIRE plan name is reserved for the system plan": "The EXPIRE plan name is reserved for the system plan",
+    "The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan.": "The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan."
 }

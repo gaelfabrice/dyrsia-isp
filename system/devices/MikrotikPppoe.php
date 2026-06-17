@@ -404,6 +404,9 @@ class MikrotikPppoe
 
     function remove_plan($plan)
     {
+        if (strcasecmp(trim((string) ($plan['name_plan'] ?? '')), 'EXPIRE') === 0) {
+            return;
+        }
         $client = $this->routerClient($plan['routers']);
         $printRequest = new RouterOS\Request(
             '/ppp profile print .proplist=.id',
