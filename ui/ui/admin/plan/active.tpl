@@ -458,7 +458,7 @@ body.theme-dark .ac-status.off { color: #f87171; }
                         <td>{if $ds.method}{$ds.method}{else}—{/if}</td>
                         <td>{if $ds.routers}{$ds.routers}{else}—{/if}</td>
                         <td>
-                            {if $ds.status == 'on'}
+                            {if $ds.is_active}
                             <span class="ac-status on"><span class="ac-status-dot"></span> {Lang::T('Active')}</span>
                             {else}
                             <span class="ac-status off"><i class="fa fa-exclamation-circle"></i> {Lang::T('Expired')}</span>
@@ -468,7 +468,7 @@ body.theme-dark .ac-status.off { color: #f87171; }
                             <a href="{Text::url('plan/edit/')}{$ds.id}" class="ac-edit">
                                 <i class="fa fa-pencil"></i> {Lang::T('Edit')}
                             </a>
-                            {if $ds.status == 'off' && $_c['extend_expired']}
+                            {if !$ds.is_active && $_c['extend_expired']}
                             <a href="javascript:void(0)" onclick="extend('{$ds.id}')" class="ac-edit" style="margin-left:8px">
                                 {Lang::T('Extend')}
                             </a>

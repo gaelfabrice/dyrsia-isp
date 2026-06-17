@@ -10,6 +10,150 @@
 class Package
 {
     /**
+     * When extending an active plan, never stack time from a past expiry.
+     */
+    private static function extensionBaseTimestamp($expiration, $time)
+    {
+        $expiryTs = strtotime(trim((string) $expiration . ' ' . (string) $time));
+        if ($expiryTs === false) {
+            return time();
+        }
+
+        return max(time(), $expiryTs);
+    }
+
+    public static function rechargeExpiresAt($recharge)
+    {
+        $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
+        $ts = strtotime(trim((string) ($row['expiration'] ?? '') . ' ' . (string) ($row['time'] ?? '')));
+        return $ts !== false ? $ts : 0;
+    }
+
+    public static function isRechargeActive($recharge)
+    {
+        $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
+        if (($row['status'] ?? '') !== 'on') {
+            return false;
+        }
+
+        return self::rechargeExpiresAt($row) > time();
+    }
+
+    /**
+     * Suspend expired accounts on Mikrotik and mark recharges as off (cron + lightweight web trigger).
+     */
+    public static function processExpiredRecharges(array $options = [])
+    {
+        global $config, $_app_stage, $CACHE_PATH;
+
+        $silent = !empty($options['silent']);
+        $minInterval = (int) ($options['min_interval'] ?? 60);
+        if ($silent && $minInterval > 0) {
+            $stampFile = rtrim((string) $CACHE_PATH, '/') . '/expired_recharges.lastrun';
+            if (is_file($stampFile) && (time() - (int) @filemtime($stampFile)) < $minInterval) {
+                return 0;
+            }
+            @touch($stampFile);
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $due = ORM::for_table('tbl_user_recharges')
+            ->where('status', 'on')
+            ->where_raw("CONCAT(expiration, ' ', time) <= ?", [$now])
+            ->find_many();
+
+        if (count($due) === 0) {
+            return 0;
+        }
+
+        $textExpired = Lang::getNotifText('expired');
+        $processed = 0;
+
+        foreach ($due as $ds) {
+            try {
+                if (!$silent) {
+                    echo $ds['expiration'] . ' ' . $ds['time'] . ' : ' . $ds['username'] . " : EXPIRED \r\n";
+                }
+
+                $u = ORM::for_table('tbl_user_recharges')->find_one($ds['id']);
+                if (!$u) {
+                    throw new Exception('User recharge record not found for ID: ' . $ds['id']);
+                }
+
+                $c = ORM::for_table('tbl_customers')->find_one($ds['customer_id']);
+                if (!$c) {
+                    $c = $u;
+                }
+
+                $p = ORM::for_table('tbl_plans')->find_one($u['plan_id']);
+                if (!$p) {
+                    throw new Exception('Plan not found for ID: ' . $u['plan_id']);
+                }
+
+                $dvc = self::getDevice($p);
+                if ($_app_stage != 'demo' && $_app_stage != 'Demo') {
+                    if (file_exists($dvc)) {
+                        require_once $dvc;
+                        (new $p['device'])->remove_customer($c, $p);
+                    } else {
+                        throw new Exception('Devices ' . $p['device'] . ' not found, cannot suspend ' . $c['username']);
+                    }
+                }
+
+                try {
+                    if (!$silent) {
+                        echo Message::sendPackageNotification(
+                            $c,
+                            $u['namebp'],
+                            $p['price'],
+                            Message::getMessageType($p['type'], $textExpired),
+                            $config['user_notification_expired']
+                        ) . "\n";
+                    }
+                    $u->status = 'off';
+                    $u->save();
+                } catch (Throwable $e) {
+                    _log($e->getMessage());
+                    if (!$silent) {
+                        sendTelegram($e->getMessage());
+                        echo 'Error: ' . $e->getMessage() . "\n";
+                    }
+                }
+
+                if ($config['enable_balance'] == 'yes' && $c['auto_renewal']) {
+                    [$bills, $add_cost] = User::getBills($ds['customer_id']);
+                    if ($add_cost != 0) {
+                        $p['price'] += $add_cost;
+                    }
+                    if ($p && $c['balance'] >= $p['price']) {
+                        if (self::rechargeUser($ds['customer_id'], $ds['routers'], $p['id'], 'Customer', 'Balance')) {
+                            Balance::min($ds['customer_id'], $p['price']);
+                            if (!$silent) {
+                                echo "auto renewal Success\n";
+                            }
+                        } elseif (!$silent) {
+                            echo "auto renewal Failed\n";
+                            Message::sendTelegram("FAILED RENEWAL #cron\n\n#u." . $c['username'] . " #buy #" . $p['type'] . " \n" . $p['name_plan'] .
+                                "\nRouter: " . $p['routers'] .
+                                "\nPrice: " . $p['price']);
+                        }
+                    }
+                }
+
+                $processed++;
+            } catch (Throwable $e) {
+                _log($e->getMessage());
+                if (!$silent) {
+                    sendTelegram($e->getMessage());
+                    echo 'Unexpected Error: ' . $e->getMessage() . "\n";
+                }
+            }
+        }
+
+        return $processed;
+    }
+
+    /**
      * @param int   $id_customer String user identifier
      * @param string $router_name router name for this package
      * @param int   $plan_id plan id for this package
@@ -197,26 +341,27 @@ class Package
             $isChangePlan = false;
             if ($b['namebp'] == $p['name_plan'] && $b['status'] == 'on' && $config['extend_expiry'] == 'yes') {
                 // if it same internet plan, expired will extend
+                $baseTs = self::extensionBaseTimestamp($b['expiration'], $b['time']);
                 switch ($p['validity_unit']) {
                     case 'Months':
-                        $date_exp = date("Y-m-d", strtotime($b['expiration'] . ' +' . $p['validity'] . ' months'));
-                        $time = $b['time'];
+                        $date_exp = date("Y-m-d", strtotime('+' . $p['validity'] . ' months', $baseTs));
+                        $time = date("H:i:s", $baseTs);
                         break;
                     case 'Period':
-                        $date_exp = date("Y-m-$day_exp", strtotime($b['expiration'] . ' +' . $p['validity'] . ' months'));
+                        $date_exp = date("Y-m-$day_exp", strtotime('+' . $p['validity'] . ' months', $baseTs));
                         $time = date("23:59:00");
                         break;
                     case 'Days':
-                        $date_exp = date("Y-m-d", strtotime($b['expiration'] . ' +' . $p['validity'] . ' days'));
-                        $time = $b['time'];
+                        $date_exp = date("Y-m-d", strtotime('+' . $p['validity'] . ' days', $baseTs));
+                        $time = date("H:i:s", $baseTs);
                         break;
                     case 'Hrs':
-                        $datetime = explode(' ', date("Y-m-d H:i:s", strtotime($b['expiration'] . ' ' . $b['time'] . ' +' . $p['validity'] . ' hours')));
+                        $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' hours', $baseTs)));
                         $date_exp = $datetime[0];
                         $time = $datetime[1];
                         break;
                     case 'Mins':
-                        $datetime = explode(' ', date("Y-m-d H:i:s", strtotime($b['expiration'] . ' ' . $b['time'] . ' +' . $p['validity'] . ' minutes')));
+                        $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' minutes', $baseTs)));
                         $date_exp = $datetime[0];
                         $time = $datetime[1];
                         break;

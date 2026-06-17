@@ -22,9 +22,9 @@
     <link rel="stylesheet" href="{$app_url}/ui/ui/summernote/summernote.min.css" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/styles/wifizones.css?2025.5.22" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/inter/inter.css">
-    <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-command.css?2026.06.08" />
+    <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-command.css?2026.06.16" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/styles/7.css" />
-    <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-pages.css?2026.06.15" />
+    <link rel="stylesheet" href="{$app_url}/ui/ui/styles/admin-pages.css?2026.06.16" />
 
     <script src="{$app_url}/ui/ui/scripts/sweetalert2.all.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.5.1/dist/chart.min.js"></script>
@@ -809,7 +809,7 @@ body.theme-dark .sidebar-menu li a {
 })();
 </script>
 {assign var="wz_use_page_shell" value=true}
-{if $_system_menu eq 'dashboard' || $_routes[0] eq 'finance' || ($_routes[0] eq 'reports' && $_routes[1] eq 'data-usage') || ($_routes[0] eq 'reports' && ($_routes[1] eq '' || $_routes[1] eq 'daily-report')) || ($_routes[0] eq 'plan' && $_routes[1] eq 'list') || ($_routes[0] eq 'settings' && $_routes[1] eq 'users')}
+{if $_system_menu eq 'dashboard' || $_routes[0] eq 'finance' || $_routes[0] eq 'monitoring' || $_routes[0] eq 'registration_requests' || ($_routes[0] eq 'reports' && $_routes[1] eq 'data-usage') || ($_routes[0] eq 'reports' && ($_routes[1] eq '' || $_routes[1] eq 'daily-report')) || ($_routes[0] eq 'plan' && $_routes[1] eq 'list') || ($_routes[0] eq 'settings' && $_routes[1] eq 'users')}
     {assign var="wz_use_page_shell" value=false}
 {/if}
 {if $wz_use_page_shell}<div class="wz-page">{/if}

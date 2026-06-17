@@ -40,77 +40,149 @@ function cron_data_usage_install()
 }
 
 cron_data_usage_install();
-$db = ORM::get_db();
-$currentTime = date('Y-m-d H:i:s');
-$db->exec("DELETE FROM `api_data_usage` WHERE `log_date` < NOW() - INTERVAL 365 DAY");
-$routers = ORM::for_table('tbl_routers')->where('enabled', 1)->find_many();
-$lastRows = $db->query("SELECT meta_key, meta_value FROM api_data_usage_meta WHERE meta_key LIKE 'last_router_counters_%'")->fetchAll(PDO::FETCH_KEY_PAIR);
-$totalInserted = 0;
 
-foreach ($routers as $router) {
-    $routerName = $router['name'];
-    $routerAdminId = isset($router['admin_id']) ? (int) $router['admin_id'] : null;
-    $metaKey = 'last_router_counters_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
-    $lastCounters = isset($lastRows[$metaKey]) ? json_decode($lastRows[$metaKey], true) : [];
-    if (!is_array($lastCounters)) {
-        $lastCounters = [];
-    }
-    $currentCounters = [];
+function cron_data_usage_collect_pppoe_users($client)
+{
+    $users = [];
+
     try {
-        $password = $router['password'];
-        if (function_exists('lcg_decrypt')) {
-            $password = rtrim(lcg_decrypt($password));
-        } elseif (class_exists('Encryption') && method_exists('Encryption', 'decrypt')) {
-            $password = rtrim(Encryption::decrypt($password));
-        }
-        if (!class_exists('Mikrotik')) {
-            continue;
-        }
-        $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password);
-        if (!$client) {
-            continue;
-        }
-        $users = [];
         $pppoeRequest = new PEAR2\Net\RouterOS\Request('/interface/print');
+        $pppoeRequest->setArgument('.proplist', 'name,type,tx-byte,rx-byte');
         $pppoeRequest->setQuery(PEAR2\Net\RouterOS\Query::where('type', 'pppoe-in'));
         foreach ($client->sendSync($pppoeRequest) as $iface) {
-            $username = str_replace(['<pppoe-', '>', 'pppoe-'], '', $iface->getProperty('name'));
-            if ($username !== '') {
-                $users[$username] = ['download' => (double) $iface->getProperty('tx-byte'), 'upload' => (double) $iface->getProperty('rx-byte'), 'status' => 'Connected'];
-            }
-        }
-        $hotspotRequest = new PEAR2\Net\RouterOS\Request('/ip/hotspot/active/print');
-        foreach ($client->sendSync($hotspotRequest) as $active) {
-            $username = $active->getProperty('user');
-            if ($username !== '' && !isset($users[$username])) {
-                $users[$username] = ['download' => (double) $active->getProperty('bytes-out'), 'upload' => (double) $active->getProperty('bytes-in'), 'status' => 'Connected'];
-            }
-        }
-        foreach ($users as $username => $metrics) {
-            $currentCounters[$username] = ['dl' => $metrics['download'], 'ul' => $metrics['upload']];
-            $old = $lastCounters[$username] ?? null;
-            $diffDl = $old && $metrics['download'] >= $old['dl'] ? $metrics['download'] - $old['dl'] : $metrics['download'];
-            $diffUl = $old && $metrics['upload'] >= $old['ul'] ? $metrics['upload'] - $old['ul'] : $metrics['upload'];
-            if ($diffDl <= 0 && $diffUl <= 0) {
+            $ifaceName = (string) $iface->getProperty('name');
+            if (!preg_match('/pppoe[-<]([^>]+)>?/', $ifaceName, $matches)) {
                 continue;
             }
-            $stmt = $db->prepare("INSERT INTO api_data_usage (admin_id, username, router_name, download_bytes, upload_bytes, total_bytes, status, log_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$routerAdminId, $username, $routerName, $diffDl, $diffUl, $diffDl + $diffUl, $metrics['status'], $currentTime]);
-            $totalInserted++;
+            $username = trim($matches[1]);
+            if ($username === '') {
+                continue;
+            }
+            $users[$username] = [
+                'download' => (double) $iface->getProperty('tx-byte'),
+                'upload' => (double) $iface->getProperty('rx-byte'),
+                'status' => 'Connected',
+            ];
         }
-        $json = json_encode($currentCounters);
-        $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
-        $stmt->execute([$metaKey, $json, $json]);
-        $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
-        $statusJson = json_encode(['ok' => true, 'at' => $currentTime]);
-        $stmt->execute([$statusKey, $statusJson, $statusJson]);
     } catch (Exception $e) {
-        $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
-        $statusJson = json_encode(['ok' => false, 'at' => $currentTime, 'error' => $e->getMessage()]);
-        $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
-        $stmt->execute([$statusKey, $statusJson, $statusJson]);
-        continue;
     }
+
+    if (!empty($users)) {
+        return $users;
+    }
+
+    try {
+        $pppActiveRequest = new PEAR2\Net\RouterOS\Request('/ppp/active/print');
+        $pppActiveRequest->setArgument('.proplist', 'name,bytes-in,bytes-out');
+        foreach ($client->sendSync($pppActiveRequest) as $active) {
+            $username = trim((string) $active->getProperty('name'));
+            if ($username === '') {
+                continue;
+            }
+            $download = (double) $active->getProperty('bytes-out');
+            $upload = (double) $active->getProperty('bytes-in');
+            if ($download <= 0 && $upload <= 0) {
+                continue;
+            }
+            $users[$username] = [
+                'download' => $download,
+                'upload' => $upload,
+                'status' => 'Connected',
+            ];
+        }
+    } catch (Exception $e) {
+    }
+
+    return $users;
 }
 
-echo "Data usage sync completed. Rows inserted: " . $totalInserted . PHP_EOL;
+function cron_data_usage_sync()
+{
+    $db = ORM::get_db();
+    $currentTime = date('Y-m-d H:i:s');
+    $db->exec("DELETE FROM `api_data_usage` WHERE `log_date` < NOW() - INTERVAL 365 DAY");
+    $routers = ORM::for_table('tbl_routers')->where('enabled', 1)->find_many();
+    $lastRows = $db->query("SELECT meta_key, meta_value FROM api_data_usage_meta WHERE meta_key LIKE 'last_router_counters_%'")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $totalInserted = 0;
+    $errors = [];
+
+    foreach ($routers as $router) {
+        $routerName = $router['name'];
+        $routerAdminId = isset($router['admin_id']) ? (int) $router['admin_id'] : null;
+        $metaKey = 'last_router_counters_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
+        $lastCounters = isset($lastRows[$metaKey]) ? json_decode($lastRows[$metaKey], true) : [];
+        if (!is_array($lastCounters)) {
+            $lastCounters = [];
+        }
+        $currentCounters = [];
+        try {
+            $password = $router['password'];
+            if (function_exists('lcg_decrypt')) {
+                $password = rtrim(lcg_decrypt($password));
+            } elseif (class_exists('Encryption') && method_exists('Encryption', 'decrypt')) {
+                $password = rtrim(Encryption::decrypt($password));
+            }
+            if (!class_exists('Mikrotik')) {
+                continue;
+            }
+            $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password);
+            if (!$client) {
+                $errors[] = $routerName . ': connexion API impossible';
+                continue;
+            }
+            $users = cron_data_usage_collect_pppoe_users($client);
+            $hotspotRequest = new PEAR2\Net\RouterOS\Request('/ip/hotspot/active/print');
+            foreach ($client->sendSync($hotspotRequest) as $active) {
+                $username = $active->getProperty('user');
+                if ($username !== '' && !isset($users[$username])) {
+                    $users[$username] = [
+                        'download' => (double) $active->getProperty('bytes-out'),
+                        'upload' => (double) $active->getProperty('bytes-in'),
+                        'status' => 'Connected',
+                    ];
+                }
+            }
+            foreach ($users as $username => $metrics) {
+                if ($username === '') {
+                    continue;
+                }
+                $currentCounters[$username] = ['dl' => $metrics['download'], 'ul' => $metrics['upload']];
+                $old = $lastCounters[$username] ?? null;
+                $diffDl = $old && $metrics['download'] >= $old['dl'] ? $metrics['download'] - $old['dl'] : $metrics['download'];
+                $diffUl = $old && $metrics['upload'] >= $old['ul'] ? $metrics['upload'] - $old['ul'] : $metrics['upload'];
+                if ($diffDl <= 0 && $diffUl <= 0) {
+                    continue;
+                }
+                $stmt = $db->prepare("INSERT INTO api_data_usage (admin_id, username, router_name, download_bytes, upload_bytes, total_bytes, status, log_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$routerAdminId, $username, $routerName, $diffDl, $diffUl, $diffDl + $diffUl, $metrics['status'], $currentTime]);
+                $totalInserted++;
+            }
+            $json = json_encode($currentCounters);
+            $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
+            $stmt->execute([$metaKey, $json, $json]);
+            $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
+            $statusJson = json_encode(['ok' => true, 'at' => $currentTime]);
+            $stmt->execute([$statusKey, $statusJson, $statusJson]);
+        } catch (Exception $e) {
+            $errors[] = $routerName . ': ' . $e->getMessage();
+            $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
+            $statusJson = json_encode(['ok' => false, 'at' => $currentTime, 'error' => $e->getMessage()]);
+            $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
+            $stmt->execute([$statusKey, $statusJson, $statusJson]);
+            continue;
+        }
+    }
+
+    return [
+        'inserted' => $totalInserted,
+        'errors' => $errors,
+    ];
+}
+
+if (php_sapi_name() === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__)) {
+    $result = cron_data_usage_sync();
+    echo "Data usage sync completed. Rows inserted: " . (int) ($result['inserted'] ?? 0) . PHP_EOL;
+    if (!empty($result['errors'])) {
+        echo implode(PHP_EOL, $result['errors']) . PHP_EOL;
+    }
+}

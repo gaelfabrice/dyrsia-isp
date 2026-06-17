@@ -1,0 +1,43 @@
+# MikroTik RouterOS — PPPoE + portail forfait expiré (WifiZone / DYRSIA)
+# Adapter les valeurs marquées CHANGE_ME avant import :
+#   /import file-name=mikrotik-pppoe-setup.rsc
+
+# ===== 1. Pool IP clients PPPoE =====
+/ip pool
+add name=pppoe-pool ranges=10.10.10.2-10.10.10.254 comment="DYRSIA PPPoE clients"
+
+# ===== 2. Profils PPP (noms = name_plan dans l'application) =====
+/ppp profile
+add name=default local-address=10.10.10.1 remote-address=pppoe-pool comment="DYRSIA default"
+add name=EXPIRE local-address=10.10.10.1 remote-address=pppoe-pool rate-limit=128k/128k \
+    on-up=":if (\$remote-address!=\"\") do={ /ip firewall address-list add list=pppoe-expired address=\$remote-address comment=\$user }" \
+    on-down=":if (\$remote-address!=\"\") do={ /ip firewall address-list remove [find list=pppoe-expired address=\$remote-address] }" \
+    comment="DYRSIA forfait expire"
+
+# ===== 3. Serveur PPPoE sur le bridge LAN =====
+/interface pppoe-server server
+add service-name=internet interface=bridge disabled=no default-profile=default one-session-per-host=yes max-mru=1480 max-mtu=1480
+
+# ===== 4. Pare-feu : clients expires = acces portail + paiement seulement =====
+# Les regles detaillees sont poussees par l'application (Services > PPPoE > Captive expire)
+/ip firewall address-list
+add list=pppoe-expired comment="DYRSIA clients PPPoE expires"
+
+# ===== 5. NAT sortant clients PPPoE =====
+/ip firewall nat
+add chain=srcnat action=masquerade out-interface=ether1 comment="DYRSIA PPPoE NAT"
+
+# ===== 6. API (deja configure chez vous via WireGuard) =====
+# /ip service set api address=10.0.0.0/24
+# L'application pousse /ppp/secret et /ppp/profile via API
+
+# ===== CHECKLIST APPLICATION =====
+# 1. Reseau > Pools : creer pool pppoe-pool (10.10.10.2-10.10.10.254) routeur MK
+# 2. Services > PPPoE : forfaits actifs (12M, 4M…) — le plan EXPIRE est cree automatiquement au deploiement
+# 3. Tous les forfaits PPPoE sont lies au profil EXPIRE a expiration (sans deconnexion PPPoE)
+# 4. Clients : renseigner pppoe_username / pppoe_password
+# 5. Recharge client -> sync auto vers /ppp/secret
+# 6. Services > PPPoE > "Captive expire" -> deploy profils EXPIRE + firewall + portail renouvellement
+# 7. A expiration : le client reste connecte en PPPoE, internet coupe, HTTP -> portail forfaits PPPoE
+# 8. Cron : */5 * * * * php system/cron.php (obligatoire pour forfaits en minutes)
+# 9. Portail : https://wifizones.org/index.php?_route=plugin/pppoe_portal&router=MK

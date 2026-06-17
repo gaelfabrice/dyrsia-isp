@@ -107,6 +107,8 @@ if (preg_match('/^dashboard_tenant=([a-z0-9][a-z0-9-]*)$/i', $req, $tenantRouteM
     $req = 'dashboard';
 }
 
+$req = wifizone_pppoe_captive_intercept($req);
+
 $routes = explode('/', $req);
 $ui->assign('_routes', $routes);
 WifiZoneSecurity::blockDestructiveGetRequests($routes);

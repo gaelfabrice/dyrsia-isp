@@ -63,12 +63,9 @@ function services_sync_plan_to_device($deviceClass, $plan, $action, $oldPlan = n
         if (function_exists('_log')) {
             _log('[MikroTik] ' . $action . ' plan "' . ($plan['name_plan'] ?? '') . '": ' . $e->getMessage(), 'Error');
         }
-        return $e->getMessage();
-    } catch (Exception $e) {
-        if (function_exists('_log')) {
-            _log('[MikroTik] ' . $action . ' plan "' . ($plan['name_plan'] ?? '') . '": ' . $e->getMessage(), 'Error');
-        }
-        return $e->getMessage();
+        return class_exists('WifiZoneSecurity')
+            ? WifiZoneSecurity::safeExceptionMessage($e)
+            : $e->getMessage();
     }
 }
 
@@ -93,15 +90,11 @@ switch ($action) {
             $plans = services_scoped_plan_query($admin)->where('type', 'Hotspot')->find_many();
             $log = '';
             foreach ($plans as $plan) {
-                $dvc = Package::getDevice($plan);
-                if ($_app_stage != 'demo') {
-                    if (file_exists($dvc)) {
-                        require_once $dvc;
-                        (new $plan['device'])->add_plan($plan);
-                        $log .= "DONE : $plan[name_plan], $plan[device]<br>";
-                    } else {
-                        $log .= "FAILED : $plan[name_plan], $plan[device] | Device Not Found<br>";
-                    }
+                $syncError = services_sync_plan_to_device($plan['device'], $plan, 'add');
+                if ($syncError) {
+                    $log .= "FAILED : $plan[name_plan] — " . htmlspecialchars($syncError, ENT_QUOTES, 'UTF-8') . "<br>";
+                } else {
+                    $log .= "DONE : $plan[name_plan], $plan[device]<br>";
                 }
             }
             r2(getUrl('services/hotspot'), 's', $log);
@@ -109,20 +102,64 @@ switch ($action) {
             $plans = services_scoped_plan_query($admin)->where('type', 'PPPOE')->find_many();
             $log = '';
             foreach ($plans as $plan) {
-                $dvc = Package::getDevice($plan);
-                if ($_app_stage != 'demo') {
-                    if (file_exists($dvc)) {
-                        require_once $dvc;
-                        (new $plan['device'])->add_plan($plan);
-                        $log .= "DONE : $plan[name_plan], $plan[device]<br>";
-                    } else {
-                        $log .= "FAILED : $plan[name_plan], $plan[device] | Device Not Found<br>";
-                    }
+                $syncError = services_sync_plan_to_device($plan['device'], $plan, 'add');
+                if ($syncError) {
+                    $log .= "FAILED : $plan[name_plan] — " . htmlspecialchars($syncError, ENT_QUOTES, 'UTF-8') . "<br>";
+                } else {
+                    $log .= "DONE : $plan[name_plan], $plan[device]<br>";
                 }
             }
             r2(getUrl('services/pppoe'), 's', $log);
         }
         r2(getUrl('services/hotspot'), 'w', 'Unknown command');
+    case 'pppoe-deploy-captive':
+        set_time_limit(180);
+        if ($_app_stage == 'Demo') {
+            r2(getUrl('services/pppoe'), 'e', 'You cannot perform this action in Demo mode');
+        }
+        $routerName = trim((string) _post('router'));
+        if ($routerName === '') {
+            r2(getUrl('services/pppoe'), 'e', 'Sélectionnez un routeur PPPoE.');
+        }
+        $router = services_scoped_router_query($admin)->where('name', $routerName)->find_one();
+        if (!$router) {
+            r2(getUrl('services/pppoe'), 'e', Lang::T('Router not found'));
+        }
+        try {
+            $routerPassword = $router['password'];
+            if (function_exists('lcg_decrypt')) {
+                $routerPassword = rtrim(lcg_decrypt($routerPassword));
+            } elseif (class_exists('Encryption') && method_exists('Encryption', 'decrypt')) {
+                $routerPassword = rtrim(Encryption::decrypt($routerPassword));
+            }
+            $client = Mikrotik::getClient($router['ip_address'], $router['username'], $routerPassword, 15);
+            if (!$client) {
+                r2(getUrl('services/pppoe'), 'e', 'Connexion MikroTik impossible.');
+            }
+            $portalUrl = rtrim(APP_URL, '/') . '/index.php?_route=plugin/pppoe_portal&router=' . rawurlencode($routerName);
+            $expiredPlan = Mikrotik::ensurePppoeExpiredPlan($client, $routerName, $admin);
+            $planSync = Mikrotik::syncPppoePlans($client, $routerName, $admin);
+            $captive = Mikrotik::ensurePppoeExpiredCaptive($client, $portalUrl, APP_URL, $routerName);
+            if (empty($planSync['ok']) || empty($captive['ok']) || empty($expiredPlan['ok'])) {
+                $errors = array_merge($planSync['errors'] ?? [], $captive['errors'] ?? [], $expiredPlan['errors'] ?? []);
+                r2(getUrl('services/pppoe'), 'e', 'Déploiement PPPoE partiel : ' . implode(' | ', $errors));
+            }
+            r2(
+                getUrl('services/pppoe'),
+                's',
+                'PPPoE déployé sur « '
+                . $routerName
+                . ' » : '
+                . (int) ($planSync['upserted'] ?? 0)
+                . ' profil(s), EXPIRE lié à '
+                . (int) ($expiredPlan['linked'] ?? 0)
+                . ' forfait(s), captive expiré OK. Portail : '
+                . $portalUrl
+            );
+        } catch (Throwable $e) {
+            r2(getUrl('services/pppoe'), 'e', 'Échec déploiement PPPoE : ' . $e->getMessage());
+        }
+        break;
     case 'hotspot':
         $name = _req('name');
         $type1 = _req('type1');
@@ -583,6 +620,8 @@ case 'hotspot-bulk-delete':
             }
         }
         $ui->assign('devices', $devices);
+        $ui->assign('mikrotik_routers', services_scoped_router_query($admin)->order_by_asc('name')->find_many());
+        $ui->assign('pppoe_portal_base', rtrim(APP_URL, '/') . '/index.php?_route=plugin/pppoe_portal&router=');
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
             ->where('tbl_plans.type', 'PPPOE');
@@ -832,14 +871,17 @@ break;
             $d->device = $device;
             $d->save();
 
-            $dvc = Package::getDevice($d);
-            if ($_app_stage != 'demo') {
-                if (file_exists($dvc)) {
-                    require_once $dvc;
-                    (new $d['device'])->add_plan($d);
-                } else {
-                    throw new Exception(Lang::T("Devices Not Found"));
-                }
+            $syncError = services_sync_plan_to_device($d['device'], $d, 'add');
+            if ($syncError) {
+                r2(
+                    getUrl('services/pppoe'),
+                    'w',
+                    Lang::T('Data Created Successfully')
+                    . '. '
+                    . Lang::T('MikroTik sync failed — plan saved in database; sync again when the router is reachable')
+                    . ': '
+                    . $syncError
+                );
             }
             r2(getUrl('services/pppoe'), 's', Lang::T('Data Created Successfully'));
         } else {
@@ -933,14 +975,17 @@ break;
             }
             $d->save();
 
-            $dvc = Package::getDevice($d);
-            if ($_app_stage != 'demo') {
-                if (file_exists($dvc)) {
-                    require_once $dvc;
-                    (new $d['device'])->update_plan($old, $d);
-                } else {
-                    throw new Exception(Lang::T("Devices Not Found"));
-                }
+            $syncError = services_sync_plan_to_device($d['device'], $d, 'update', $old);
+            if ($syncError) {
+                r2(
+                    getUrl('services/pppoe-edit/') . $id,
+                    'w',
+                    Lang::T('Data Updated Successfully')
+                    . '. '
+                    . Lang::T('MikroTik sync failed — plan saved in database; sync again when the router is reachable')
+                    . ': '
+                    . $syncError
+                );
             }
             r2(getUrl('services/pppoe'), 's', Lang::T('Data Updated Successfully'));
         } else {
@@ -1359,14 +1404,17 @@ break;
             $d->device = $device;
             $d->save();
 
-            $dvc = Package::getDevice($d);
-            if ($_app_stage != 'demo') {
-                if (file_exists($dvc)) {
-                    require_once $dvc;
-                    (new $d['device'])->add_plan($d);
-                } else {
-                    throw new Exception(Lang::T("Devices Not Found"));
-                }
+            $syncError = services_sync_plan_to_device($d['device'], $d, 'add');
+            if ($syncError) {
+                r2(
+                    getUrl('services/vpn'),
+                    'w',
+                    Lang::T('Data Created Successfully')
+                    . '. '
+                    . Lang::T('MikroTik sync failed — plan saved in database; sync again when the router is reachable')
+                    . ': '
+                    . $syncError
+                );
             }
             r2(getUrl('services/vpn'), 's', Lang::T('Data Created Successfully'));
         } else {
@@ -1460,14 +1508,17 @@ break;
             }
             $d->save();
 
-            $dvc = Package::getDevice($d);
-            if ($_app_stage != 'demo') {
-                if (file_exists($dvc)) {
-                    require_once $dvc;
-                    (new $d['device'])->update_plan($old, $d);
-                } else {
-                    throw new Exception(Lang::T("Devices Not Found"));
-                }
+            $syncError = services_sync_plan_to_device($d['device'], $d, 'update', $old);
+            if ($syncError) {
+                r2(
+                    getUrl('services/vpn-edit/') . $id,
+                    'w',
+                    Lang::T('Data Updated Successfully')
+                    . '. '
+                    . Lang::T('MikroTik sync failed — plan saved in database; sync again when the router is reachable')
+                    . ': '
+                    . $syncError
+                );
             }
             r2(getUrl('services/vpn'), 's', Lang::T('Data Updated Successfully'));
         } else {

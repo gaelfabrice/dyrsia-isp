@@ -1686,5 +1686,15 @@
     "After_uploading_new_DYRSIA_files__click_Update_Database_to_create_missing_tables_and_columns__Hotspot__FTTH_mapping__login_requests__etc___": "After uploading new DYRSIA files, click Update Database to create missing tables and columns (Hotspot, FTTH mapping, login requests, etc.).",
     "Notify_Admin": "Notify Admin",
     "_is_required_": " is required.",
-    "Payment_gateway_authentication_failed__Please_try_again_": "Payment gateway authentication failed. Please try again."
+    "Payment_gateway_authentication_failed__Please_try_again_": "Payment gateway authentication failed. Please try again.",
+    "Never": "Never",
+    "Customer_registrations": "Customer registrations",
+    "Manage_approvals___pending_verifications": "Manage approvals & pending verifications",
+    "items_selected": "items selected",
+    "Select_all_items": "Select all items",
+    "Export": "Export",
+    "Your_account_has_been_approved": "Your account has been approved",
+    "Request_approved_and_customer_created": "Request approved and customer created",
+    "View_report": "View report",
+    "Rate_must_be_a_number": "Rate must be a number"
 }

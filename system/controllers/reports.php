@@ -66,25 +66,96 @@ function reports_data_usage_format($bytes)
     return round(pow(1024, $base - $floor), 2) . ' ' . $suffixes[$floor];
 }
 
-function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u')
+function reports_data_usage_fill_chart_series(array $dayMap, $startDate, $endDate, $maxDays = 90)
 {
+    $start = new DateTime($startDate);
+    $end = new DateTime($endDate);
+    if ($start > $end) {
+        [$start, $end] = [$end, $start];
+    }
+    $totalDays = (int) $start->diff($end)->days + 1;
+    if ($totalDays > $maxDays) {
+        $start = (clone $end)->modify('-' . ($maxDays - 1) . ' days');
+    }
+
+    $labels = [];
+    $download = [];
+    $upload = [];
+    $cursor = clone $start;
+    while ($cursor <= $end) {
+        $day = $cursor->format('Y-m-d');
+        $labels[] = $day;
+        $download[] = (double) ($dayMap[$day]['dl'] ?? 0);
+        $upload[] = (double) ($dayMap[$day]['ul'] ?? 0);
+        $cursor->modify('+1 day');
+    }
+
+    return [$labels, $download, $upload];
+}
+
+function reports_data_usage_customer_join()
+{
+    return " LEFT JOIN tbl_customers c ON (
+        u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci
+        OR u.username COLLATE utf8mb4_general_ci = c.pppoe_username COLLATE utf8mb4_general_ci
+    )";
+}
+
+function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', $usageFilter = null)
+{
+    $usageFilter = $usageFilter ?? trim((string) _req('usage_filter'));
+
     if ($admin['user_type'] != 'SuperAdmin') {
-        $sql .= " AND {$prefix}.admin_id = ?";
+        $sql .= " AND ({$prefix}.admin_id = ? OR c.created_by = ?)";
         $params[] = $admin['id'];
+        $params[] = $admin['id'];
+        if (strpos($usageFilter, 'customer:') === 0) {
+            $customerId = (int) substr($usageFilter, 9);
+            if ($customerId > 0) {
+                $sql .= " AND c.id = ?";
+                $params[] = $customerId;
+            }
+        }
         return;
     }
-    $adminId = _req('admin_id');
-    if ($adminId !== '' && $adminId !== null) {
-        $sql .= " AND {$prefix}.admin_id = ?";
-        $params[] = $adminId;
+
+    if (strpos($usageFilter, 'admin:') === 0) {
+        $adminId = (int) substr($usageFilter, 6);
+        if ($adminId > 0) {
+            $sql .= " AND ({$prefix}.admin_id = ? OR c.created_by = ?)";
+            $params[] = $adminId;
+            $params[] = $adminId;
+        }
+    } elseif (strpos($usageFilter, 'customer:') === 0) {
+        $customerId = (int) substr($usageFilter, 9);
+        if ($customerId > 0) {
+            $sql .= " AND c.id = ?";
+            $params[] = $customerId;
+        }
     }
 }
 
-function reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType = '')
+function reports_data_usage_apply_service_filter(&$sql, &$params, $serviceType)
+{
+    if (empty($serviceType) || !in_array($serviceType, ['Hotspot', 'PPPoE', 'Others'], true)) {
+        return;
+    }
+    if ($serviceType === 'Hotspot') {
+        $sql .= " AND c.service_type = 'Hotspot' AND u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci";
+        return;
+    }
+    if ($serviceType === 'PPPoE') {
+        $sql .= " AND c.service_type = 'PPPoE'";
+        return;
+    }
+    $sql .= " AND (c.id IS NULL OR c.service_type IS NULL OR c.service_type = '' OR c.service_type NOT IN ('Hotspot', 'PPPoE'))";
+}
+
+function reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType = '', $usageFilter = null)
 {
     $params = [$startDate . ' 00:00:00', $endDate . ' 23:59:59'];
-    $sql = " FROM api_data_usage u WHERE u.log_date >= ? AND u.log_date <= ?";
-    reports_data_usage_apply_scope($sql, $params, $admin, 'u');
+    $sql = " FROM api_data_usage u" . reports_data_usage_customer_join() . " WHERE u.log_date >= ? AND u.log_date <= ?";
+    reports_data_usage_apply_scope($sql, $params, $admin, 'u', $usageFilter);
     if (!empty($targetUsername)) {
         $sql .= " AND u.username = ?";
         $params[] = $targetUsername;
@@ -93,17 +164,7 @@ function reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUs
         $sql .= " AND u.router_name = ?";
         $params[] = $routerFilter;
     }
-    if (!empty($serviceType) && in_array($serviceType, ['Hotspot', 'PPPoE', 'Others'], true)) {
-        $sql .= " AND u.username IN (SELECT username FROM tbl_customers WHERE service_type = ?";
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $sql .= " AND created_by = ?";
-            $params[] = $serviceType;
-            $params[] = $admin['id'];
-        } else {
-            $params[] = $serviceType;
-        }
-        $sql .= ")";
-    }
+    reports_data_usage_apply_service_filter($sql, $params, $serviceType);
     return [$sql, $params];
 }
 
@@ -269,25 +330,17 @@ function reports_data_usage_api_payload($admin)
     $targetUsername = $search;
     if (!empty($search)) {
         $customerQuery = ORM::for_table('tbl_customers')
-            ->where_raw("(`username` = ? OR `fullname` LIKE ? OR `phonenumber` LIKE ?)", [$search, "%$search%", "%$search%"]);
+            ->where_raw("(`username` = ? OR `pppoe_username` = ? OR `fullname` LIKE ? OR `phonenumber` LIKE ?)", [$search, $search, "%$search%", "%$search%"]);
         if ($admin['user_type'] != 'SuperAdmin') {
             $customerQuery->where('created_by', $admin['id']);
         }
         $customer = $customerQuery->find_one();
         if ($customer) {
-            $targetUsername = $customer['username'];
+            $targetUsername = !empty($customer['pppoe_username']) ? $customer['pppoe_username'] : $customer['username'];
         }
     }
 
     [$baseFrom, $baseParams] = reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType);
-
-    // Variante avec jointure client : en SQL la jointure DOIT précéder le WHERE,
-    // on l'insère donc juste après la table de base.
-    $joinFrom = str_replace(
-        ' FROM api_data_usage u WHERE ',
-        ' FROM api_data_usage u LEFT JOIN tbl_customers c ON u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci WHERE ',
-        $baseFrom
-    );
 
     // Summary KPIs
     $stmt = $db->prepare("SELECT COALESCE(SUM(u.download_bytes),0) AS dl, COALESCE(SUM(u.upload_bytes),0) AS ul, COUNT(DISTINCT u.username) AS unique_users, COUNT(DISTINCT CASE WHEN u.status = 'Connected' THEN u.username END) AS active_clients" . $baseFrom);
@@ -311,20 +364,20 @@ function reports_data_usage_api_payload($admin)
     $totalCustomers = (int) $customerTotal->count();
     $saturation = $totalCustomers > 0 ? round(min(100, ($activeClients / $totalCustomers) * 100), 1) : 0;
 
-    // Chart by day
+    // Chart by day (remplit les jours sans trafic pour un graphique lisible)
     $stmt = $db->prepare("SELECT DATE(u.log_date) AS log_day, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes" . $baseFrom . " GROUP BY DATE(u.log_date) ORDER BY log_day ASC");
     $stmt->execute($baseParams);
-    $chartLabels = [];
-    $chartDownload = [];
-    $chartUpload = [];
+    $dayMap = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $chartLabels[] = $row['log_day'];
-        $chartDownload[] = round(((double) $row['dl_bytes']) / 1048576, 2);
-        $chartUpload[] = round(((double) $row['ul_bytes']) / 1048576, 2);
+        $dayMap[$row['log_day']] = [
+            'dl' => round(((double) $row['dl_bytes']) / 1048576, 2),
+            'ul' => round(((double) $row['ul_bytes']) / 1048576, 2),
+        ];
     }
+    [$chartLabels, $chartDownload, $chartUpload] = reports_data_usage_fill_chart_series($dayMap, $startDate, $endDate);
 
     // Top 5 users
-    $stmt = $db->prepare("SELECT u.username, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, MAX(c.fullname) AS fullname" . $joinFrom . " GROUP BY u.username ORDER BY dl_bytes DESC LIMIT 5");
+    $stmt = $db->prepare("SELECT u.username, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, MAX(c.fullname) AS fullname" . $baseFrom . " GROUP BY u.username ORDER BY dl_bytes DESC LIMIT 5");
     $stmt->execute($baseParams);
     $topUsers = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -349,7 +402,7 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Top 5 services (Hotspot / PPPoE / plan actif)
-    $stmt = $db->prepare("SELECT COALESCE(NULLIF(c.service_type, ''), 'Autre') AS service_name, SUM(u.total_bytes) AS ttl_bytes" . $joinFrom . " GROUP BY service_name ORDER BY ttl_bytes DESC LIMIT 5");
+    $stmt = $db->prepare("SELECT COALESCE(NULLIF(c.service_type, ''), 'Autre') AS service_name, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY service_name ORDER BY ttl_bytes DESC LIMIT 5");
     $stmt->execute($baseParams);
     $topServices = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -360,7 +413,7 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Consommation par client (PPPoE + Hotspot), agrégée sur la période
-    $stmt = $db->prepare("SELECT u.username, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, MAX(u.router_name) AS router_name, MAX(u.status) AS status, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $joinFrom . " GROUP BY u.username ORDER BY ttl_bytes DESC LIMIT 200");
+    $stmt = $db->prepare("SELECT u.username, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, MAX(u.router_name) AS router_name, MAX(u.status) AS status, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY u.username ORDER BY ttl_bytes DESC LIMIT 200");
     $stmt->execute($baseParams);
     $clientsBreakdown = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -427,15 +480,33 @@ function reports_data_usage_api_payload($admin)
 }
 
 switch ($action) {
+    case 'data-usage-sync':
+        if ($_app_stage == 'Demo') {
+            r2(getUrl('reports/data-usage'), 'e', 'Action désactivée en mode démo.');
+        }
+        require_once __DIR__ . '/../cron_data_usage.php';
+        $result = cron_data_usage_sync();
+        $message = 'Synchronisation terminée : ' . (int) ($result['inserted'] ?? 0) . ' ligne(s) ajoutée(s).';
+        if (!empty($result['errors'])) {
+            $message .= ' Erreurs : ' . implode(' | ', $result['errors']);
+            r2(getUrl('reports/data-usage'), 'w', $message);
+        }
+        r2(getUrl('reports/data-usage'), 's', $message);
+        break;
+
     case 'data-usage-api':
         reports_data_usage_install();
         header('Content-Type: application/json');
-        if (_get('get_top_users') == 1) {
-            $payload = reports_data_usage_api_payload($admin);
-            echo json_encode(['status' => 'success', 'top_users' => $payload['top_users']]);
-            exit;
+        try {
+            if (_get('get_top_users') == 1) {
+                $payload = reports_data_usage_api_payload($admin);
+                echo json_encode(['status' => 'success', 'top_users' => $payload['top_users']]);
+                exit;
+            }
+            echo json_encode(reports_data_usage_api_payload($admin));
+        } catch (Throwable $e) {
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         }
-        echo json_encode(reports_data_usage_api_payload($admin));
         exit;
 
     case 'data-usage':
@@ -446,10 +517,21 @@ switch ($action) {
         }
         $admins = [];
         if ($admin['user_type'] == 'SuperAdmin') {
-            $admins = ORM::for_table('tbl_users')->select('id')->select('fullname')->select('username')->order_by_asc('fullname')->find_many();
+            $admins = ORM::for_table('tbl_users')
+                ->select('id')->select('fullname')->select('username')
+                ->where_in('user_type', ['Admin', 'SuperAdmin', 'Agent'])
+                ->order_by_asc('fullname')
+                ->find_many();
+        }
+        $customersQuery = ORM::for_table('tbl_customers')
+            ->select('id')->select('username')->select('fullname')->select('service_type')
+            ->order_by_asc('fullname');
+        if ($admin['user_type'] != 'SuperAdmin') {
+            $customersQuery->where('created_by', $admin['id']);
         }
         $ui->assign('routers', $routerQuery->find_many());
         $ui->assign('admins', $admins);
+        $ui->assign('customers', $customersQuery->find_many());
         $ui->assign('service_types', ['Hotspot', 'PPPoE', 'Others']);
         $ui->assign('_title', Lang::T('Data Usage'));
         $ui->display('admin/reports/data-usage.tpl');

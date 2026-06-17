@@ -343,6 +343,7 @@ function wifizone_verify_csrf()
     $action = $routes[1] ?? '';
     $publicPlugins = [
         'hotspot_login', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
+        'pppoe_portal', 'pppoe_plan', 'pppoe_pay', 'pppoe_verify',
         'wifizone_reseller_api', 'hotspot_resellers_login',
     ];
     if ($handler === 'plugin' && in_array($action, $publicPlugins, true)) {
@@ -403,6 +404,57 @@ function wifizone_json_error($message, $httpCode = 400)
         'message' => $message,
     ]);
     exit;
+}
+
+/**
+ * Expired PPPoE clients hitting any HTTP(S) page via MikroTik NAT are routed to the portal.
+ */
+function wifizone_pppoe_captive_intercept($currentRoute)
+{
+    if (php_sapi_name() === 'cli') {
+        return $currentRoute;
+    }
+    $currentRoute = trim((string) $currentRoute);
+    if ($currentRoute !== '' && stripos($currentRoute, 'plugin/pppoe') === 0) {
+        return $currentRoute;
+    }
+    if (strcasecmp($_SERVER['REQUEST_METHOD'] ?? 'GET', 'OPTIONS') === 0) {
+        return $currentRoute;
+    }
+
+    $clientIp = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+    if ($clientIp === '' || !filter_var($clientIp, FILTER_VALIDATE_IP)) {
+        return $currentRoute;
+    }
+
+    try {
+        $row = ORM::for_table('tbl_user_recharges')
+            ->where('type', 'PPPOE')
+            ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= NOW())")
+            ->where_raw(
+                "customer_id IN (SELECT customer_id FROM tbl_customers_fields WHERE field_name = 'pppoe_expired_ip' AND field_value = ?)",
+                [$clientIp]
+            )
+            ->order_by_desc('id')
+            ->find_one();
+        if (!$row) {
+            return $currentRoute;
+        }
+
+        $customerId = (int) $row['customer_id'];
+        $router = User::getAttribute('pppoe_expired_router', $customerId, (string) $row['routers']);
+        $login = User::getAttribute('pppoe_expired_user', $customerId, (string) $row['username']);
+        $_GET['router'] = $router;
+        $_GET['routername'] = $router;
+        $_GET['user'] = $login;
+        $_GET['pppoe_username'] = $login;
+        $_REQUEST['router'] = $router;
+        $_REQUEST['user'] = $login;
+
+        return 'plugin/pppoe_portal';
+    } catch (Throwable $e) {
+        return $currentRoute;
+    }
 }
 
 /**

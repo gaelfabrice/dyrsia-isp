@@ -44,7 +44,14 @@ function plan_list_apply_filters($query, $admin, $search, $router, $plan, $type,
         $query->where('tbl_user_recharges.type', $type);
     }
     if (!empty($status) && $status != '-') {
-        $query->where('tbl_user_recharges.status', $status);
+        if ($status === 'on') {
+            $query->where('tbl_user_recharges.status', 'on')
+                ->where_raw("CONCAT(tbl_user_recharges.expiration, ' ', tbl_user_recharges.time) > NOW()");
+        } elseif ($status === 'off') {
+            $query->where_raw("(tbl_user_recharges.status = 'off' OR CONCAT(tbl_user_recharges.expiration, ' ', tbl_user_recharges.time) <= NOW())");
+        } else {
+            $query->where('tbl_user_recharges.status', $status);
+        }
     }
     return $query;
 }
@@ -1356,6 +1363,8 @@ if (empty($show) || $show == '') {
         }
 
         $ui->assign('_title', Lang::T('Customer List'));
+
+        Package::processExpiredRecharges(['silent' => true, 'min_interval' => 60]);
         
         // ডাটা রিসিভ করা (URL বা Form থেকে)
         // প্যাগিনেশনে যেন সার্চ ডেটা না হারায় তাই _req ব্যবহার করা হলো
@@ -1413,6 +1422,14 @@ if (empty($show) || $show == '') {
             'plan'   => $plan,
             'show'   => ($show == 999999 ? 'all' : $show)
         ], $show, $append_url);
+
+        $rows = [];
+        foreach ($d as $row) {
+            $item = is_array($row) ? $row : $row->as_array();
+            $item['is_active'] = Package::isRechargeActive($item);
+            $rows[] = $item;
+        }
+        $d = $rows;
         
         run_hook('view_list_billing'); #HOOK
         

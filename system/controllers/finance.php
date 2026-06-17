@@ -224,10 +224,86 @@ switch ($action) {
         } catch (Exception $e) {
         }
 
-        $ui->assign('iday', $dailyQuery->sum('price') ?: 0);
-        $ui->assign('imonth', $monthlyQuery->sum('price') ?: 0);
+        $iday = (float) ($dailyQuery->sum('price') ?: 0);
+        $imonth = (float) ($monthlyQuery->sum('price') ?: 0);
+
+        $yesterday = date('Y-m-d', strtotime('-1 day'));
+        $prevMonthStart = date('Y-m-01', strtotime('-1 month'));
+        $prevMonthEnd = date('Y-m-t', strtotime('-1 month'));
+
+        $yesterdayQuery = ORM::for_table('tbl_transactions')
+            ->where('recharged_on', $yesterday)
+            ->where_not_equal('method', 'Customer - Balance')
+            ->where_not_equal('method', 'Recharge Balance - Administrator');
+        $prevMonthQuery = ORM::for_table('tbl_transactions')
+            ->where_not_equal('method', 'Customer - Balance')
+            ->where_not_equal('method', 'Recharge Balance - Administrator')
+            ->where_gte('recharged_on', $prevMonthStart)
+            ->where_lte('recharged_on', $prevMonthEnd);
+        if ($isAdmin) {
+            $yesterdayQuery->where('admin_id', $adminId);
+            $prevMonthQuery->where('admin_id', $adminId);
+        }
+        $incomeYesterday = (float) ($yesterdayQuery->sum('price') ?: 0);
+        $incomePrevMonth = (float) ($prevMonthQuery->sum('price') ?: 0);
+
+        $growthDaily = $incomeYesterday > 0 ? round((($iday - $incomeYesterday) / $incomeYesterday) * 100) : ($iday > 0 ? 100 : 0);
+        $growthMonthly = $incomePrevMonth > 0 ? round((($imonth - $incomePrevMonth) / $incomePrevMonth) * 100) : ($imonth > 0 ? 100 : 0);
+
+        $db = ORM::get_db();
+        $monthlyRevenue = array_fill(0, 12, 0.0);
+        $monthlyCommission = array_fill(0, 12, 0.0);
+        $revSql = "SELECT MONTH(recharged_on) AS m, SUM(price) AS total
+            FROM tbl_transactions
+            WHERE YEAR(recharged_on) = YEAR(CURRENT_DATE())
+              AND method <> 'Customer - Balance'
+              AND method <> 'Recharge Balance - Administrator'";
+        $revParams = [];
+        if ($isAdmin) {
+            $revSql .= " AND admin_id = ?";
+            $revParams[] = $adminId;
+        }
+        $revSql .= " GROUP BY MONTH(recharged_on)";
+        $revStmt = $db->prepare($revSql);
+        $revStmt->execute($revParams);
+        foreach ($revStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $idx = max(1, (int) ($row['m'] ?? 0)) - 1;
+            if ($idx >= 0 && $idx < 12) {
+                $monthlyRevenue[$idx] = round((float) ($row['total'] ?? 0), 2);
+            }
+        }
+
+        $comSql = "SELECT MONTH(recharged_on) AS m, SUM(price) AS total
+            FROM tbl_transactions
+            WHERE YEAR(recharged_on) = YEAR(CURRENT_DATE())
+              AND LOWER(method) LIKE '%commission%'";
+        $comParams = [];
+        if ($isAdmin) {
+            $comSql .= " AND admin_id = ?";
+            $comParams[] = $adminId;
+        }
+        $comSql .= " GROUP BY MONTH(recharged_on)";
+        $comStmt = $db->prepare($comSql);
+        $comStmt->execute($comParams);
+        foreach ($comStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $idx = max(1, (int) ($row['m'] ?? 0)) - 1;
+            if ($idx >= 0 && $idx < 12) {
+                $monthlyCommission[$idx] = round((float) ($row['total'] ?? 0), 2);
+            }
+        }
+
+        $ui->assign('iday', $iday);
+        $ui->assign('imonth', $imonth);
         $ui->assign('w_balance', $w_balance);
         $ui->assign('w_commission', $w_commission);
+        $ui->assign('income_yesterday', $incomeYesterday);
+        $ui->assign('income_prev_month', $incomePrevMonth);
+        $ui->assign('growth_daily_pct', $growthDaily);
+        $ui->assign('growth_monthly_pct', $growthMonthly);
+        $ui->assign('finance_month_labels', ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']);
+        $ui->assign('finance_month_revenue', $monthlyRevenue);
+        $ui->assign('finance_month_commission', $monthlyCommission);
+        $ui->assign('finance_now_label', date('H:i'));
         require_once $WIDGET_PATH . DIRECTORY_SEPARATOR . 'graph_monthly_sales.php';
         $ui->assign('monthly_sales_widget', (new graph_monthly_sales())->getWidget());
         $ui->display('admin/finance.tpl');

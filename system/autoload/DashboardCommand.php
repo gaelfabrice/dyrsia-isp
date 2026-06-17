@@ -47,6 +47,14 @@ class DashboardCommand
 
         $voucher = self::voucherStock($admin, $isScoped, $adminId);
         $traffic = self::trafficLast7Days($admin, $isScoped, $adminId);
+        $dataUsage = [
+            'download_mb' => round(array_sum($traffic['download']), 1),
+            'upload_mb' => round(array_sum($traffic['upload']), 1),
+            'labels' => $traffic['labels'],
+            'download' => $traffic['download'],
+            'upload' => $traffic['upload'],
+        ];
+        $dataUsage['combined_mb'] = round($dataUsage['download_mb'] + $dataUsage['upload_mb'], 1);
 
         $cronLastRun = 0;
         $cronFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
@@ -90,6 +98,7 @@ class DashboardCommand
             'traffic_labels' => $traffic['labels'],
             'traffic_download' => $traffic['download'],
             'traffic_upload' => $traffic['upload'],
+            'data_usage' => $dataUsage,
             'cron_last_run' => $cronLastRun,
             'cron_stale' => $cronStale,
         ];
@@ -198,6 +207,14 @@ class DashboardCommand
             'traffic_labels' => ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'],
             'traffic_download' => [120, 190, 300, 250, 420, 380, 290],
             'traffic_upload' => [80, 110, 210, 180, 310, 270, 190],
+            'data_usage' => [
+                'download_mb' => 1950,
+                'upload_mb' => 1350,
+                'combined_mb' => 3300,
+                'labels' => ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'],
+                'download' => [120, 190, 300, 250, 420, 380, 290],
+                'upload' => [80, 110, 210, 180, 310, 270, 190],
+            ],
             'cron_last_run' => time() - 300,
             'cron_stale' => false,
         ];
@@ -222,11 +239,9 @@ class DashboardCommand
 
     private static function serviceStats($admin, bool $isScoped, int $adminId): array
     {
-        $now = date('Y-m-d H:i:s');
-        $scope = function ($type) use ($isScoped, $adminId, $now) {
+        $scope = function ($type) use ($isScoped, $adminId) {
             $q = ORM::for_table('tbl_user_recharges')->table_alias('tur')
-                ->inner_join('tbl_plans', ['tur.plan_id', '=', 'p.id'], 'p')
-                ->where('p.type', $type);
+                ->where('tur.type', $type);
             if ($isScoped) {
                 $q->where('tur.admin_id', $adminId);
             }
@@ -234,14 +249,10 @@ class DashboardCommand
         };
 
         return [
-            'hotspot_active' => (int) $scope('Hotspot')->where('tur.status', 'on')
-                ->where_raw("CONCAT(tur.expiration,' ',tur.time) > ?", [$now])->count(),
-            'hotspot_expired' => (int) $scope('Hotspot')
-                ->where_raw("tur.status = 'off' OR CONCAT(tur.expiration,' ',tur.time) <= ?", [$now])->count(),
-            'pppoe_active' => (int) $scope('PPPOE')->where('tur.status', 'on')
-                ->where_raw("CONCAT(tur.expiration,' ',tur.time) > ?", [$now])->count(),
-            'pppoe_expired' => (int) $scope('PPPOE')
-                ->where_raw("tur.status = 'off' OR CONCAT(tur.expiration,' ',tur.time) <= ?", [$now])->count(),
+            'hotspot_active' => (int) $scope('Hotspot')->where('tur.status', 'on')->count(),
+            'hotspot_expired' => (int) $scope('Hotspot')->where('tur.status', 'off')->count(),
+            'pppoe_active' => (int) $scope('PPPOE')->where('tur.status', 'on')->count(),
+            'pppoe_expired' => (int) $scope('PPPOE')->where('tur.status', 'off')->count(),
         ];
     }
 

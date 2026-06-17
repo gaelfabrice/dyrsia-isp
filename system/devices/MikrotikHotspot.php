@@ -103,30 +103,12 @@ class MikrotikHotspot
     {
         $client = $this->routerClient($plan['routers']);
         $bw = ORM::for_table("tbl_bandwidth")->find_one($plan['id_bw']);
-        if ($bw['rate_down_unit'] == 'Kbps') {
-            $unitdown = 'K';
-        } else {
-            $unitdown = 'M';
+        $rate = Mikrotik::hotspotPlanRateLimit($bw);
+        $sharedUsers = (int) ($plan['shared_users'] ?? 1);
+        if ($sharedUsers < 1) {
+            $sharedUsers = 1;
         }
-        if ($bw['rate_up_unit'] == 'Kbps') {
-            $unitup = 'K';
-        } else {
-            $unitup = 'M';
-        }
-        $rate = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown;
-        if (!empty(trim($bw['burst']))) {
-            $rate .= ' ' . $bw['burst'];
-        }
-        if ($bw['rate_up'] == '0' || $bw['rate_down'] == '0') {
-            $rate = '';
-        }
-        $addRequest = new RouterOS\Request('/ip/hotspot/user/profile/add');
-        $client->sendSync(
-            $addRequest
-                ->setArgument('name', $plan['name_plan'])
-                ->setArgument('shared-users', $plan['shared_users'])
-                ->setArgument('rate-limit', $rate)
-        );
+        Mikrotik::setHotspotPlan($client, $plan['name_plan'], $sharedUsers, $rate);
     }
 
     function online_customer($customer, $router_name)

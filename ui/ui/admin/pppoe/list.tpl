@@ -8,6 +8,9 @@
                     <a class="btn btn-primary btn-xs" title="save" href="{Text::url('')}services/sync/pppoe"
                         onclick="return ask(this, '{Lang::T('This will sync/send PPPOE plan to Mikrotik')}?')"><span
                             class="glyphicon glyphicon-refresh" aria-hidden="true"></span> sync</a>
+                    <button type="button" class="btn btn-warning btn-xs" data-toggle="modal" data-target="#pppoeCaptiveModal">
+                        <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Captive expiré
+                    </button>
                 </div>{Lang::T('PPPOE Package')}
             </div>
             <form id="site-search" method="post" action="{Text::url('')}services/pppoe">
@@ -230,5 +233,35 @@ function nuxDeleteCheck() {
     }
 }
 </script>
+
+<div class="modal fade" id="pppoeCaptiveModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <form method="post" action="{Text::url('services/pppoe-deploy-captive')}">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                    <h4 class="modal-title">Déployer PPPoE + portail expiré</h4>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">Synchronise les profils PPPoE sur le MikroTik, configure le pare-feu « forfait expiré » et le walled-garden paiement.</p>
+                    <div class="form-group">
+                        <label>Routeur MikroTik</label>
+                        <select name="router" class="form-control" required>
+                            <option value="">— Choisir —</option>
+                            {foreach $mikrotik_routers as $r}
+                                <option value="{$r['name']}">{$r['name']} ({$r['ip_address']})</option>
+                            {/foreach}
+                        </select>
+                    </div>
+                    <p><small>Portail client : <code>{$pppoe_portal_base|escape}NOM_ROUTEUR</code></small></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Annuler</button>
+                    <button type="submit" class="btn btn-warning">Déployer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 {include file="sections/footer.tpl"}

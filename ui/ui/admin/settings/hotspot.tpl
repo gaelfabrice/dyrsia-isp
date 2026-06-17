@@ -136,6 +136,7 @@
 
 <form method="post" action="{Text::url('settings/hotspot')}" id="hs-wizard-form" class="form-horizontal">
     <input type="hidden" name="send_mikrotik" id="hs-send-mikrotik-field" value="">
+    <input type="hidden" name="sync_hotspot_plans" id="hs-sync-plans-field" value="">
     <div class="hs-wizard-wrap">
         <div class="hs-wizard-main">
             <div class="box box-primary">
@@ -339,6 +340,9 @@
                                 <button type="submit" name="save" value="save" class="btn btn-success">
                                     <i class="fa fa-save"></i> Save Changes
                                 </button>
+                                <button type="submit" value="1" id="hs-sync-plans-btn" class="btn btn-default">
+                                    <i class="fa fa-refresh"></i> Sync forfaits
+                                </button>
                                 <a href="{Text::url('settings/hotspot&download_login=1')}" class="btn btn-info">
                                     <i class="fa fa-download"></i> Download Login.html
                                 </a>
@@ -393,19 +397,80 @@ document.addEventListener('DOMContentLoaded', function () {
     var wizardForm = document.getElementById('hs-wizard-form');
     var sendBtn = document.getElementById('hs-send-mikrotik-btn');
     var sendField = document.getElementById('hs-send-mikrotik-field');
+    var syncPlansBtn = document.getElementById('hs-sync-plans-btn');
+    var syncPlansField = document.getElementById('hs-sync-plans-field');
+
+    function hsRequireRouterSelected(event) {
+        var routerSelect = document.getElementById('hotspot_login_router');
+        if (routerSelect && !routerSelect.value) {
+            event.preventDefault();
+            if (window.hsWizardGoToStep) {
+                window.hsWizardGoToStep(1);
+            }
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Routeur requis',
+                    text: 'Sélectionnez un routeur à l\'étape 1 (ex. MK) avant cette action.',
+                    confirmButtonText: 'OK'
+                });
+            }
+            return false;
+        }
+        return true;
+    }
+
+    if (wizardForm && syncPlansBtn) {
+        syncPlansBtn.addEventListener('click', function () {
+            if (syncPlansField) {
+                syncPlansField.value = '1';
+            }
+            if (sendField) {
+                sendField.value = '';
+            }
+        });
+    }
+
     if (wizardForm && sendBtn) {
         sendBtn.addEventListener('click', function () {
             if (sendField) {
                 sendField.value = '1';
             }
+            if (syncPlansField) {
+                syncPlansField.value = '';
+            }
         });
         wizardForm.addEventListener('submit', function (event) {
             var submitter = event.submitter;
             var isSendMikrotik = (sendField && sendField.value === '1') || (submitter && submitter.id === 'hs-send-mikrotik-btn');
+            var isSyncPlans = (syncPlansField && syncPlansField.value === '1') || (submitter && submitter.id === 'hs-sync-plans-btn');
             if (!isSendMikrotik) {
                 if (sendField) {
                     sendField.value = '';
                 }
+            }
+            if (!isSyncPlans && syncPlansField) {
+                syncPlansField.value = '';
+            }
+            if (isSyncPlans) {
+                if (!confirm('Synchroniser uniquement les forfaits Hotspot sur le routeur (sans renvoyer login.html) ?')) {
+                    event.preventDefault();
+                    if (syncPlansField) {
+                        syncPlansField.value = '';
+                    }
+                    return;
+                }
+                if (!hsRequireRouterSelected(event)) {
+                    if (syncPlansField) {
+                        syncPlansField.value = '';
+                    }
+                    return;
+                }
+                syncPlansBtn.disabled = true;
+                syncPlansBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Sync forfaits…';
+                return;
+            }
+            if (!isSendMikrotik) {
                 return;
             }
             if (!confirm('Envoyer la configuration (pool + paramètres) vers le routeur sélectionné ?')) {
@@ -415,19 +480,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 return;
             }
-            var routerSelect = document.getElementById('hotspot_login_router');
-            if (routerSelect && !routerSelect.value) {
-                event.preventDefault();
-                if (window.hsWizardGoToStep) {
-                    window.hsWizardGoToStep(1);
-                }
-                if (typeof Swal !== 'undefined') {
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Routeur requis',
-                        text: 'Sélectionnez un routeur à l\'étape 1 (ex. MK) avant d\'envoyer vers MikroTik.',
-                        confirmButtonText: 'OK'
-                    });
+            if (!hsRequireRouterSelected(event)) {
+                if (sendField) {
+                    sendField.value = '';
                 }
                 return;
             }

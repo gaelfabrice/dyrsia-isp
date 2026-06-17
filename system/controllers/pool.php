@@ -30,6 +30,25 @@ try {
 } catch (Exception $e) {
 }
 
+function pool_normalize_local_ip($local_ip, $range_ip)
+{
+    $local_ip = trim((string) $local_ip);
+    $range_ip = trim((string) $range_ip);
+    if (!class_exists('Mikrotik')) {
+        return [$local_ip, ''];
+    }
+    $resolved = Mikrotik::resolvePoolGatewayAddress([
+        'local_ip' => $local_ip,
+        'range_ip' => $range_ip,
+    ]);
+    $warn = '';
+    if ($local_ip !== '' && $resolved !== '' && $local_ip !== $resolved) {
+        $warn = Lang::T('Local IP corrected to PPPoE gateway') . ' (' . $resolved . ')';
+    }
+
+    return [$resolved, $warn];
+}
+
 function pool_scoped_query($table, $admin)
 {
     $query = ORM::for_table($table);
@@ -136,6 +155,7 @@ switch ($action) {
             $msg .= Lang::T('Pool Name Already Exist') . '<br>';
         }
         if ($msg == '') {
+            [$local_ip, $localIpWarn] = pool_normalize_local_ip($local_ip, $ip_address);
             $b = ORM::for_table('tbl_pool')->create();
             $b->admin_id = $admin['id'];
             $b->local_ip = $local_ip;
@@ -150,7 +170,7 @@ switch ($action) {
                     r2(getUrl('pool/list'), 'w', Lang::T('Pool saved locally, but MikroTik sync failed') . ': ' . $e->getMessage());
                 }
             }
-            r2(getUrl('pool/list'), 's', Lang::T('Data Created Successfully'));
+            r2(getUrl('pool/list'), 's', Lang::T('Data Created Successfully') . ($localIpWarn ? '. ' . $localIpWarn : ''));
         } else {
             r2(getUrl('pool/add'), 'e', $msg);
         }
@@ -176,6 +196,7 @@ switch ($action) {
         }
 
         if ($msg == '') {
+            [$local_ip, $localIpWarn] = pool_normalize_local_ip($local_ip, $ip_address);
             $d->local_ip = $local_ip;
             $d->range_ip = $ip_address;
             $d->routers = $routers;
@@ -189,7 +210,7 @@ switch ($action) {
                 }
             }
 
-            r2(getUrl('pool/list'), 's', Lang::T('Data Updated Successfully'));
+            r2(getUrl('pool/list'), 's', Lang::T('Data Updated Successfully') . ($localIpWarn ? '. ' . $localIpWarn : ''));
         } else {
             r2(getUrl('pool/edit/') . $id, 'e', $msg);
         }

@@ -103,6 +103,14 @@ body.theme-light .du-input, body.theme-light .du-select { background: #f8fafc; }
     width: 100%;
 }
 .du-btn:hover { opacity: 0.95; }
+.du-btn-sync {
+    background: rgba(37, 99, 235, 0.12);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    text-decoration: none;
+}
+body.theme-light .du-btn-sync { color: #2563eb; background: rgba(37, 99, 235, 0.08); }
+.du-btn-sync:hover { background: rgba(37, 99, 235, 0.2); opacity: 1; }
 
 .du-kpi-grid {
     display: grid;
@@ -187,7 +195,53 @@ body.theme-light .du-input, body.theme-light .du-select { background: #f8fafc; }
     color: var(--du-heading);
 }
 .du-card-body { padding: 18px; }
-.du-chart-wrap { position: relative; min-height: 280px; }
+.du-chart-wrap {
+    position: relative;
+    min-height: 340px;
+    padding: 4px 0 8px;
+}
+.du-chart-canvas {
+    position: relative;
+    height: 300px;
+    width: 100%;
+}
+.du-chart-head-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.du-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.du-legend-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--du-line);
+    background: rgba(2, 6, 23, 0.25);
+}
+body.theme-light .du-legend-pill { background: #f8fafc; }
+.du-legend-pill i {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+}
+.du-legend-pill.dl i { background: linear-gradient(135deg, #60a5fa, #2563eb); box-shadow: 0 0 10px rgba(59,130,246,.45); }
+.du-legend-pill.ul i { background: linear-gradient(135deg, #fb7185, #e11d48); box-shadow: 0 0 10px rgba(244,63,94,.35); }
+.du-chart-period {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--du-muted);
+}
 .du-chart-empty {
     position: absolute;
     inset: 0;
@@ -322,6 +376,17 @@ body.theme-light .du-table th { background: #f8fafc; }
 .du-empty strong { display: block; color: var(--du-heading); font-size: 16px; margin-bottom: 6px; }
 
 .du-loading { opacity: 0.55; pointer-events: none; }
+.du-filter-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--du-muted);
+    min-height: 18px;
+}
+.du-filter-live.is-busy { color: #60a5fa; }
+.du-filter-live.is-busy i { animation: duSpin 0.8s linear infinite; }
 {/literal}
 </style>
 
@@ -336,17 +401,24 @@ body.theme-light .du-table th { background: #f8fafc; }
 
     <div class="du-filters">
         <div class="du-filter-grid">
-            {if $_admin['user_type'] eq 'SuperAdmin'}
             <div class="du-field">
-                <label><i class="fa fa-user-secret"></i> {Lang::T('Admin')}</label>
-                <select id="admin-id" class="du-select">
-                    <option value="">{Lang::T('All Admins')}</option>
-                    {foreach $admins as $a}
-                    <option value="{$a.id}">{$a.fullname|default:$a.username}</option>
-                    {/foreach}
+                <label><i class="fa fa-filter"></i> Usage</label>
+                <select id="usage-filter" class="du-select">
+                    <option value="">{if $_admin['user_type'] eq 'SuperAdmin'}Tous les usages{else}Tous mes clients{/if}</option>
+                    {if $_admin['user_type'] eq 'SuperAdmin'}
+                    <optgroup label="Administrateurs">
+                        {foreach $admins as $a}
+                        <option value="admin:{$a.id}">{$a.fullname|default:$a.username}</option>
+                        {/foreach}
+                    </optgroup>
+                    {/if}
+                    <optgroup label="Clients">
+                        {foreach $customers as $c}
+                        <option value="customer:{$c.id}">{$c.fullname|default:$c.username} · {$c.service_type|default:'—'}</option>
+                        {/foreach}
+                    </optgroup>
                 </select>
             </div>
-            {/if}
             <div class="du-field">
                 <label><i class="fa fa-server"></i> {Lang::T('Router')}</label>
                 <select id="router" class="du-select">
@@ -378,6 +450,13 @@ body.theme-light .du-table th { background: #f8fafc; }
             <div class="du-field">
                 <label>&nbsp;</label>
                 <button type="button" class="du-btn" id="duSearchBtn"><i class="fa fa-refresh"></i> Actualiser</button>
+                <div class="du-filter-live" id="duFilterLive"><i class="fa fa-circle"></i> Filtres en temps réel</div>
+            </div>
+            <div class="du-field">
+                <label>&nbsp;</label>
+                <a href="{Text::url('reports/data-usage-sync')}" class="du-btn du-btn-sync" onclick="return confirm('Synchroniser la consommation depuis les routeurs MikroTik ?');">
+                    <i class="fa fa-cloud-download"></i> Sync MikroTik
+                </a>
             </div>
         </div>
     </div>
@@ -393,14 +472,25 @@ body.theme-light .du-table th { background: #f8fafc; }
 
     <div class="du-grid-main">
         <div class="du-card">
-            <div class="du-card-head"><h3><i class="fa fa-line-chart"></i> Download / Upload</h3></div>
+            <div class="du-card-head">
+                <h3><i class="fa fa-line-chart"></i> Download / Upload</h3>
+                <div class="du-chart-head-meta">
+                    <span class="du-chart-period" id="chartPeriodLabel"></span>
+                    <div class="du-chart-legend">
+                        <span class="du-legend-pill dl"><i></i> Download</span>
+                        <span class="du-legend-pill ul"><i></i> Upload</span>
+                    </div>
+                </div>
+            </div>
             <div class="du-card-body du-chart-wrap">
                 <div class="du-chart-empty" id="chartEmpty">
                     <div class="pulse"></div>
                     <strong>Aucune donnée sur cette période</strong>
                     <span>Les graphiques s'afficheront dès la première synchronisation MikroTik.</span>
                 </div>
-                <canvas id="usage-chart" height="110" style="display:none"></canvas>
+                <div class="du-chart-canvas" id="chartCanvasWrap" style="display:none">
+                    <canvas id="usage-chart"></canvas>
+                </div>
             </div>
         </div>
         <div class="du-card">
@@ -486,11 +576,198 @@ var WZ_DU = {
     var page = document.getElementById('duPage');
     var chartCanvas = document.getElementById('usage-chart');
     var chartEmpty = document.getElementById('chartEmpty');
+    var chartCanvasWrap = document.getElementById('chartCanvasWrap');
+    var chartPeriodLabel = document.getElementById('chartPeriodLabel');
+    var filterLive = document.getElementById('duFilterLive');
+    var loadTimer = null;
+
+    function setFilterBusy(busy) {
+        if (!filterLive) return;
+        filterLive.classList.toggle('is-busy', !!busy);
+        filterLive.innerHTML = busy
+            ? '<i class="fa fa-refresh"></i> Mise à jour…'
+            : '<i class="fa fa-check-circle"></i> Données à jour';
+    }
+
+    function scheduleLoadUsage(delay) {
+        clearTimeout(loadTimer);
+        loadTimer = setTimeout(loadUsage, delay || 0);
+    }
+
+    function formatShortDate(iso) {
+        if (!iso) return '';
+        var p = iso.split('-');
+        if (p.length !== 3) return iso;
+        var months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+        return parseInt(p[2], 10) + ' ' + months[parseInt(p[1], 10) - 1];
+    }
+
+    function formatMb(value) {
+        var n = Number(value) || 0;
+        if (n >= 1024) return (n / 1024).toFixed(2) + ' GB';
+        return n.toFixed(2) + ' MB';
+    }
+
+    function chartGradient(ctx, area, colorTop, colorBottom) {
+        var g = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+        g.addColorStop(0, colorTop);
+        g.addColorStop(1, colorBottom);
+        return g;
+    }
+
+    function chartHasTraffic(chart) {
+        if (!chart || !chart.labels || !chart.labels.length) return false;
+        for (var i = 0; i < chart.labels.length; i++) {
+            if ((chart.download_mb[i] || 0) > 0 || (chart.upload_mb[i] || 0) > 0) return true;
+        }
+        return false;
+    }
+
+    function renderChart(chart) {
+        var hasData = chartHasTraffic(chart);
+        chartEmpty.style.display = hasData ? 'none' : 'flex';
+        chartCanvasWrap.style.display = hasData ? 'block' : 'none';
+        if (usageChart) { usageChart.destroy(); usageChart = null; }
+        if (!hasData) {
+            chartPeriodLabel.textContent = '';
+            return;
+        }
+
+        var first = chart.labels[0];
+        var last = chart.labels[chart.labels.length - 1];
+        chartPeriodLabel.textContent = formatShortDate(first) + ' → ' + formatShortDate(last);
+
+        var labels = chart.labels.map(formatShortDate);
+        var spanDays = chart.labels.length;
+        var activeDays = 0;
+        for (var i = 0; i < spanDays; i++) {
+            if ((chart.download_mb[i] || 0) > 0 || (chart.upload_mb[i] || 0) > 0) activeDays++;
+        }
+        var useBars = spanDays <= 21 || (activeDays <= 10 && spanDays <= 45);
+
+        var gridColor = WZ_DU.isLight ? 'rgba(15,23,42,0.06)' : 'rgba(148,163,184,0.1)';
+        var textColor = WZ_DU.isLight ? '#64748b' : '#94a3b8';
+        var tooltipBg = WZ_DU.isLight ? 'rgba(15,23,42,0.92)' : 'rgba(2,6,23,0.94)';
+
+        var ctx = chartCanvas.getContext('2d');
+        var dlDataset = {
+            label: 'Download',
+            data: chart.download_mb,
+            borderColor: '#3b82f6',
+            backgroundColor: useBars ? 'rgba(59,130,246,0.88)' : function(context) {
+                var chartArea = context.chart.chartArea;
+                if (!chartArea) return 'rgba(59,130,246,0.2)';
+                return chartGradient(ctx, chartArea, 'rgba(59,130,246,0.42)', 'rgba(59,130,246,0.02)');
+            },
+            fill: !useBars,
+            tension: 0.42,
+            borderWidth: useBars ? 0 : 3,
+            pointRadius: function(context) {
+                return useBars ? 0 : ((context.raw || 0) > 0 ? 6 : 0);
+            },
+            pointHoverRadius: 8,
+            pointBackgroundColor: '#ffffff',
+            pointBorderColor: '#3b82f6',
+            pointBorderWidth: 2,
+            borderRadius: useBars ? { topLeft: 8, topRight: 8 } : 0,
+            maxBarThickness: useBars ? 28 : undefined,
+            barPercentage: useBars ? 0.72 : undefined,
+            categoryPercentage: useBars ? 0.82 : undefined
+        };
+        var ulDataset = {
+            label: 'Upload',
+            data: chart.upload_mb,
+            borderColor: '#f43f5e',
+            backgroundColor: useBars ? 'rgba(244,63,94,0.82)' : function(context) {
+                var chartArea = context.chart.chartArea;
+                if (!chartArea) return 'rgba(244,63,94,0.15)';
+                return chartGradient(ctx, chartArea, 'rgba(244,63,94,0.32)', 'rgba(244,63,94,0.02)');
+            },
+            fill: !useBars,
+            tension: 0.42,
+            borderWidth: useBars ? 0 : 3,
+            pointRadius: function(context) {
+                return useBars ? 0 : ((context.raw || 0) > 0 ? 6 : 0);
+            },
+            pointHoverRadius: 8,
+            pointBackgroundColor: '#ffffff',
+            pointBorderColor: '#f43f5e',
+            pointBorderWidth: 2,
+            borderRadius: useBars ? { topLeft: 8, topRight: 8 } : 0,
+            maxBarThickness: useBars ? 28 : undefined,
+            barPercentage: useBars ? 0.72 : undefined,
+            categoryPercentage: useBars ? 0.82 : undefined
+        };
+
+        usageChart = new Chart(ctx, {
+            type: useBars ? 'bar' : 'line',
+            data: { labels: labels, datasets: [dlDataset, ulDataset] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 900, easing: 'easeOutQuart' },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: tooltipBg,
+                        titleColor: '#f8fafc',
+                        bodyColor: '#e2e8f0',
+                        borderColor: 'rgba(148,163,184,0.25)',
+                        borderWidth: 1,
+                        padding: 12,
+                        cornerRadius: 12,
+                        displayColors: true,
+                        boxPadding: 6,
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return '';
+                                var idx = items[0].dataIndex;
+                                return chart.labels[idx] || items[0].label;
+                            },
+                            label: function(item) {
+                                return ' ' + item.dataset.label + ' : ' + formatMb(item.raw);
+                            },
+                            footer: function(items) {
+                                if (!items.length) return '';
+                                var total = 0;
+                                items.forEach(function(it) { total += Number(it.raw) || 0; });
+                                return 'Total : ' + formatMb(total);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false, drawBorder: false },
+                        ticks: {
+                            color: textColor,
+                            maxTicksLimit: useBars ? 12 : 10,
+                            maxRotation: 0,
+                            autoSkip: true,
+                            font: { size: 11, weight: '600' }
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: gridColor, drawBorder: false },
+                        ticks: {
+                            color: textColor,
+                            font: { size: 11 },
+                            callback: function(v) { return formatMb(v); }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     function apiUrl(extra) {
         var url = WZ_DU.apiUrl + extra;
-        var adminEl = document.getElementById('admin-id');
-        if (adminEl && adminEl.value) url += '&admin_id=' + encodeURIComponent(adminEl.value);
+        var usageEl = document.getElementById('usage-filter');
+        if (usageEl && usageEl.value) {
+            url += '&usage_filter=' + encodeURIComponent(usageEl.value);
+        }
         return url;
     }
 
@@ -521,56 +798,6 @@ var WZ_DU = {
                 '<span class="du-badge ' + r.status + '"><span class="du-badge-dot"></span> ' + (labels[r.status] || r.status) + '</span></div>';
         });
         el.innerHTML = html;
-    }
-
-    function renderChart(chart) {
-        var hasData = chart && chart.labels && chart.labels.length;
-        chartEmpty.style.display = hasData ? 'none' : 'flex';
-        chartCanvas.style.display = hasData ? 'block' : 'none';
-        if (usageChart) { usageChart.destroy(); usageChart = null; }
-        if (!hasData) return;
-        var gridColor = WZ_DU.isLight ? 'rgba(15,23,42,0.08)' : 'rgba(148,163,184,0.12)';
-        var textColor = WZ_DU.isLight ? '#64748b' : '#94a3b8';
-        usageChart = new Chart(chartCanvas.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: chart.labels,
-                datasets: [
-                    {
-                        label: 'Download (MB)',
-                        data: chart.download_mb,
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59,130,246,0.18)',
-                        fill: true,
-                        tension: 0.35,
-                        pointRadius: 2,
-                        borderWidth: 2
-                    },
-                    {
-                        label: 'Upload (MB)',
-                        data: chart.upload_mb,
-                        borderColor: '#ef4444',
-                        backgroundColor: 'rgba(239,68,68,0.12)',
-                        fill: true,
-                        tension: 0.35,
-                        pointRadius: 2,
-                        borderWidth: 2
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { labels: { color: textColor, font: { family: 'Inter', weight: '600' } } }
-                },
-                scales: {
-                    x: { grid: { color: gridColor }, ticks: { color: textColor, maxTicksLimit: 8 } },
-                    y: { grid: { color: gridColor }, ticks: { color: textColor }, beginAtZero: true }
-                }
-            }
-        });
     }
 
     function renderTable(rows) {
@@ -621,9 +848,17 @@ var WZ_DU = {
         var sd = document.getElementById('start-date').value;
         var ed = document.getElementById('end-date').value;
         page.classList.add('du-loading');
+        setFilterBusy(true);
         fetch(apiUrl('&q=' + encodeURIComponent(q) + '&router=' + encodeURIComponent(router) + '&service_type=' + encodeURIComponent(serviceType) + '&start_date=' + encodeURIComponent(sd) + '&end_date=' + encodeURIComponent(ed)), { credentials: 'same-origin' })
             .then(function(r) { return r.json(); })
             .then(function(res) {
+                if (res.status === 'error') {
+                    setFilterBusy(false);
+                    if (filterLive) {
+                        filterLive.innerHTML = '<i class="fa fa-exclamation-circle"></i> ' + (res.message || 'Erreur');
+                    }
+                    return;
+                }
                 if (res.status !== 'success') return;
                 var s = res.summary || {};
                 document.getElementById('kpi-download').textContent = s.download || '0 Bytes';
@@ -639,13 +874,23 @@ var WZ_DU = {
                 rankList(document.getElementById('top-services'), res.top_services, 'name', null, 'traffic_formatted', 'Aucun service');
                 renderClients(res.clients_breakdown);
                 renderTable(res.data);
+                setFilterBusy(false);
             })
-            .catch(function() {})
+            .catch(function() {
+                if (filterLive) {
+                    filterLive.innerHTML = '<i class="fa fa-exclamation-circle"></i> Erreur réseau';
+                }
+            })
             .finally(function() { page.classList.remove('du-loading'); });
     }
 
-    document.getElementById('duSearchBtn').addEventListener('click', loadUsage);
-    document.getElementById('q').addEventListener('keydown', function(e) { if (e.key === 'Enter') loadUsage(); });
+    document.getElementById('duSearchBtn').addEventListener('click', function() { scheduleLoadUsage(0); });
+    document.getElementById('q').addEventListener('keydown', function(e) { if (e.key === 'Enter') scheduleLoadUsage(0); });
+    document.getElementById('q').addEventListener('input', function() { scheduleLoadUsage(450); });
+    ['usage-filter', 'router', 'service-type'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('change', function() { scheduleLoadUsage(0); });
+    });
 
     document.addEventListener('DOMContentLoaded', function() {
         var today = new Date();
@@ -662,10 +907,10 @@ var WZ_DU = {
             onChange: function(dates) {
                 if (dates.length >= 1) document.getElementById('start-date').value = flatpickr.formatDate(dates[0], 'Y-m-d');
                 if (dates.length >= 2) document.getElementById('end-date').value = flatpickr.formatDate(dates[1], 'Y-m-d');
-                if (dates.length >= 2) loadUsage();
+                if (dates.length >= 2) scheduleLoadUsage(0);
             }
         });
-        loadUsage();
+        scheduleLoadUsage(0);
     });
 })();
 {/literal}

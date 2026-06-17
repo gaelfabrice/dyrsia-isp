@@ -1214,6 +1214,106 @@ switch ($action) {
             return $updated;
         };
 
+        $resolveHotspotRouterRecord = function ($routerName) {
+            $routerName = trim((string) $routerName);
+            if ($routerName === '') {
+                return null;
+            }
+
+            $mikrotik = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+            if (!$mikrotik) {
+                $mikrotik = ORM::for_table('tbl_routers')->where('description', $routerName)->find_one();
+            }
+            if (!$mikrotik) {
+                $routerIp = explode(':', $routerName)[0];
+                if ($routerIp !== '') {
+                    $mikrotik = ORM::for_table('tbl_routers')->where_like('ip_address', $routerIp . '%')->find_one();
+                }
+            }
+
+            return $mikrotik ?: null;
+        };
+
+        $resolveHotspotRouterName = function () use (&$config) {
+            $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+            if ($routerName === '') {
+                $savedRouter = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_login_router')->find_one();
+                $routerName = trim((string) ($savedRouter['value'] ?? ''));
+                if ($routerName !== '') {
+                    $config['hotspot_login_router'] = $routerName;
+                }
+            }
+
+            return $routerName;
+        };
+
+        $pushHotspotPlansToMikrotik = function ($routerName) use ($syncHotspotPlansForRouter, $resolveHotspotRouterRecord, $admin) {
+            global $_app_stage;
+
+            $routerName = trim((string) $routerName);
+            if ($routerName === '') {
+                return [
+                    'ok' => false,
+                    'message' => 'Aucun routeur sélectionné. Choisissez votre routeur à l\'étape 1 (ex. MK) ou ajoutez un routeur dans Réseau → Routeurs.',
+                ];
+            }
+
+            if ($_app_stage == 'Demo') {
+                return ['ok' => false, 'message' => 'You cannot perform this action in Demo mode'];
+            }
+
+            $syncHotspotPlansForRouter($routerName);
+
+            $mikrotik = $resolveHotspotRouterRecord($routerName);
+            if (!$mikrotik) {
+                return [
+                    'ok' => false,
+                    'message' => Lang::T('Router not found') . ' (' . $routerName . ')',
+                ];
+            }
+
+            try {
+                $client = Mikrotik::getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password'], 60);
+                if (!$client) {
+                    return [
+                        'ok' => false,
+                        'message' => 'Connexion MikroTik impossible : compte démo ou synchronisation routeur désactivée pour cet utilisateur.',
+                    ];
+                }
+
+                $result = Mikrotik::syncHotspotPlans($client, $routerName, $admin);
+                if (empty($result['ok'])) {
+                    return [
+                        'ok' => false,
+                        'message' => 'Synchronisation des forfaits Hotspot échouée : '
+                            . implode(' | ', $result['errors'] ?? ['erreur inconnue']),
+                    ];
+                }
+
+                return [
+                    'ok' => true,
+                    'message' => 'Forfaits synchronisés sur « '
+                        . $routerName
+                        . ' » : '
+                        . (int) ($result['upserted'] ?? 0)
+                        . ' actif(s), '
+                        . (int) ($result['removed'] ?? 0)
+                        . ' ancien(s) supprimé(s).',
+                    'result' => $result,
+                ];
+            } catch (Throwable $e) {
+                return [
+                    'ok' => false,
+                    'message' => 'Échec sync forfaits (' . $routerName . ') : ' . $e->getMessage(),
+                ];
+            } catch (Exception $e) {
+                return [
+                    'ok' => false,
+                    'message' => 'Échec sync forfaits (' . $routerName . ') : ' . $e->getMessage(),
+                ];
+            }
+        };
+
         $hotspotKeys = [
             'hotspot_page_title',
             'hotspot_page_tagline',
@@ -1705,29 +1805,33 @@ HTML;
             r2(getUrl('settings/hotspot'), 's', Lang::T('Settings Saved Successfully'));
         }
 
+        if (_post('sync_hotspot_plans') == '1') {
+            @set_time_limit(60);
+            @ini_set('max_execution_time', '60');
+            @ini_set('default_socket_timeout', '30');
+            $saveHotspotSettings();
+            $routerName = $resolveHotspotRouterName();
+            $planPush = $pushHotspotPlansToMikrotik($routerName);
+            r2(
+                getUrl('settings/hotspot'),
+                !empty($planPush['ok']) ? 's' : 'e',
+                $planPush['message'] ?? 'Synchronisation des forfaits Hotspot échouée.'
+            );
+        }
+
         if (_post('send_mikrotik') == '1') {
             @set_time_limit(120);
             @ini_set('max_execution_time', '120');
             @ini_set('default_socket_timeout', '30');
             @ignore_user_abort(true);
             $saveHotspotSettings();
-            $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
-            if ($routerName === '') {
-                $savedRouter = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_login_router')->find_one();
-                $routerName = trim((string) ($savedRouter['value'] ?? ''));
-                if ($routerName !== '') {
-                    $config['hotspot_login_router'] = $routerName;
-                }
-            }
+            $routerName = $resolveHotspotRouterName();
             if ($routerName === '') {
                 r2(
                     getUrl('settings/hotspot'),
                     'e',
                     'Aucun routeur sélectionné. À l\'étape 1 de l\'assistant, choisissez votre routeur (ex. MK) ou ajoutez un routeur dans Réseau → Routeurs.'
                 );
-            }
-            if ($routerName !== '') {
-                $syncHotspotPlansForRouter($routerName);
             }
             $renderedLoginHtml = $buildHotspotLoginHtml();
             if ($renderedLoginHtml === null) {
@@ -1738,19 +1842,7 @@ HTML;
                 @mkdir($loginDir, 0755, true);
             }
             file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml);
-            $mikrotik = null;
-            if ($routerName !== '') {
-                $mikrotik = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
-                if (!$mikrotik) {
-                    $mikrotik = ORM::for_table('tbl_routers')->where('description', $routerName)->find_one();
-                }
-                if (!$mikrotik) {
-                    $routerIp = explode(':', $routerName)[0];
-                    if ($routerIp !== '') {
-                        $mikrotik = ORM::for_table('tbl_routers')->where_like('ip_address', $routerIp . '%')->find_one();
-                    }
-                }
-            }
+            $mikrotik = $resolveHotspotRouterRecord($routerName);
             if (!$mikrotik) {
                 r2(getUrl('settings/hotspot'), 'e', 'Échec de l\'envoi vers MikroTik : ' . Lang::T('Router not found') . ' (' . ($routerName !== '' ? $routerName : 'aucun routeur sélectionné') . ')');
             }
@@ -1783,6 +1875,19 @@ HTML;
                     $poolName = $config['hotspot_pool_name'] ?: 'hs-pool';
                     $poolRange = $config['hotspot_pool_range'] ?: '10.5.50.2-10.5.50.254';
                     Mikrotik::setPool($client, $poolName, $poolRange);
+                }
+                $planPush = $pushHotspotPlansToMikrotik($routerName);
+                if (empty($planPush['ok'])) {
+                    r2(getUrl('settings/hotspot'), 'e', $planPush['message'] ?? 'Synchronisation des forfaits Hotspot échouée.');
+                }
+                $planSyncResult = $planPush['result'] ?? [];
+                $planSyncNote = '';
+                if (!empty($planSyncResult['upserted']) || !empty($planSyncResult['removed'])) {
+                    $planSyncNote = ' Forfaits : '
+                        . (int) ($planSyncResult['upserted'] ?? 0)
+                        . ' synchronisé(s), '
+                        . (int) ($planSyncResult['removed'] ?? 0)
+                        . ' ancien(s) supprimé(s).';
                 }
                 $fetchTs = time();
                 $apiUrlForFetch = Mikrotik::normalizeHotspotBackendApiUrl(trim((string) ($config['hotspot_api_url'] ?? '')));
@@ -1955,6 +2060,7 @@ HTML;
                     'Envoi réussi vers MikroTik (' . $routerName . ') : pool, '
                     . $sentPath
                     . ' (' . $deployMethod . ', ' . $routerLoginSize . ' octets), walled-garden OK.'
+                    . $planSyncNote
                     . ' ID: ' . $uploadId . '.'
                     . $dnsNote
                     . $captiveNote

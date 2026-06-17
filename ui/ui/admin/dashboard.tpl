@@ -65,12 +65,12 @@
     {/if}
 
     <div class="wz-kpi-grid">
-        <div class="wz-kpi-card">
+        <a href="{Text::url('settings/users')}" class="wz-kpi-card wz-kpi-link">
             <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Administrators')}</span><div class="wz-kpi-icon"><i class="fa fa-user-secret"></i></div></div>
             <div class="wz-kpi-value">{$total_admin|default:0}</div>
             <div class="wz-kpi-sub">{Lang::T('Total administrators')}</div>
-        </div>
-        <div class="wz-kpi-card">
+        </a>
+        <a href="{Text::url('plan/list')}" class="wz-kpi-card wz-kpi-link">
             <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Active Customers')}</span><div class="wz-kpi-icon"><i class="fa fa-user-check"></i></div></div>
             <div class="wz-kpi-value">{$active_customers|default:0}</div>
             <div class="wz-kpi-sub">
@@ -80,20 +80,20 @@
                 <span class="wz-trend-down"><i class="fa fa-arrow-down"></i> {$customer_growth|default:0} vs last month</span>
                 {/if}
             </div>
-        </div>
-        <div class="wz-kpi-card">
+        </a>
+        <a href="{Text::url('finance')}" class="wz-kpi-card wz-kpi-link">
             <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Sales Today')}</span><div class="wz-kpi-icon"><i class="fa fa-shopping-cart"></i></div></div>
             <div class="wz-kpi-value">{$currency|default:'XAF'} {$sales_today|default:0|number_format:0}</div>
             <div class="wz-kpi-sub">{Lang::T('Daily revenue')}</div>
-        </div>
-        <div class="wz-kpi-card">
+        </a>
+        <a href="{Text::url('routers')}" class="wz-kpi-card wz-kpi-link">
             <div class="wz-kpi-head"><span class="wz-kpi-label">{Lang::T('Network Status')}</span><div class="wz-kpi-icon"><i class="fa fa-server"></i></div></div>
             <div class="wz-kpi-value">{$offline_routers|default:0}</div>
             <div class="wz-kpi-sub">
                 {Lang::T('Routers offline')} ·
                 {if ($offline_routers|default:0) == 0}{Lang::T('All operational')}{else}{Lang::T('Check connection')}{/if}
             </div>
-        </div>
+        </a>
     </div>
 
     <div class="wz-cc-grid-2">
@@ -155,14 +155,27 @@
     </div>
 
     <div class="wz-cc-grid-2">
-        <div class="wz-cc-card">
-            <div class="wz-cc-card-title"><i class="fa fa-link"></i> Hotspot MAC Update</div>
-            <div class="wz-mac-form">
-                <input type="text" id="macAddress" class="wz-cc-input" placeholder="MAC Address (AA:BB:CC:DD:EE:FF)">
-                <input type="text" id="macUsername" class="wz-cc-input" placeholder="{Lang::T('Usernames')}">
-                <button type="button" id="updateMacBtn" class="wz-cc-btn"><i class="fa fa-save"></i> Update MAC</button>
+        <div class="wz-cc-card wz-du-card">
+            <div class="wz-cc-card-title">
+                <span><i class="fa fa-area-chart"></i> {Lang::T('Data Usage')}</span>
+                <a href="{Text::url('reports/data-usage')}" class="wz-du-more">{Lang::T('View report')} <i class="fa fa-arrow-right"></i></a>
             </div>
-            <div id="macResult" class="wz-mac-result"></div>
+            <div class="wz-du-kpis">
+                <div class="wz-du-kpi">
+                    <span class="wz-du-kpi-label"><i class="fa fa-download"></i> {Lang::T('Download')}</span>
+                    <strong>{$data_usage.download_mb|default:0} MB</strong>
+                </div>
+                <div class="wz-du-kpi">
+                    <span class="wz-du-kpi-label"><i class="fa fa-upload"></i> {Lang::T('Upload')}</span>
+                    <strong>{$data_usage.upload_mb|default:0} MB</strong>
+                </div>
+                <div class="wz-du-kpi">
+                    <span class="wz-du-kpi-label"><i class="fa fa-exchange"></i> {Lang::T('Total')}</span>
+                    <strong>{$data_usage.combined_mb|default:0} MB</strong>
+                </div>
+            </div>
+            <div class="wz-du-chart"><canvas id="dataUsageChart"></canvas></div>
+            <div class="wz-kpi-sub" style="margin-top:8px;text-align:center">7 derniers jours · Hotspot &amp; PPPoE</div>
         </div>
 
         <div class="wz-cc-card">
@@ -250,11 +263,15 @@
 <script>
 var WZ_CC = {
     csrf: '{$csrf_token|escape:'javascript'}',
-    updateMacUrl: '{Text::url('dashboard/update-mac')|escape:'javascript'}',
     traffic: {
         labels: {$traffic_labels|@json_encode nofilter},
         download: {$traffic_download|@json_encode nofilter},
         upload: {$traffic_upload|@json_encode nofilter}
+    },
+    dataUsage: {
+        labels: {$data_usage.labels|@json_encode nofilter},
+        download: {$data_usage.download|@json_encode nofilter},
+        upload: {$data_usage.upload|@json_encode nofilter}
     },
     services: {
         hotspot_active: {$hotspot_active|default:0},
@@ -335,39 +352,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 11 } } } } }
             });
         }
-    }
-
-    var macBtn = document.getElementById('updateMacBtn');
-    if (macBtn) {
-        macBtn.addEventListener('click', function() {
-            var mac = (document.getElementById('macAddress').value || '').trim();
-            var username = (document.getElementById('macUsername').value || '').trim();
-            var resultDiv = document.getElementById('macResult');
-            if (!mac || !username) {
-                resultDiv.innerHTML = '<span class="wz-mac-error"><i class="fa fa-times-circle"></i> Please fill both MAC Address and Username</span>';
-                return;
-            }
-            macBtn.disabled = true;
-            fetch(WZ_CC.updateMacUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'csrf_token=' + encodeURIComponent(WZ_CC.csrf) + '&mac=' + encodeURIComponent(mac) + '&username=' + encodeURIComponent(username)
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.success) {
-                    resultDiv.innerHTML = '<span class="wz-mac-ok"><i class="fa fa-check-circle"></i> ' + (data.message || 'Updated') + '</span>';
-                    document.getElementById('macAddress').value = '';
-                    document.getElementById('macUsername').value = '';
-                } else {
-                    resultDiv.innerHTML = '<span class="wz-mac-error"><i class="fa fa-times-circle"></i> ' + (data.message || 'Update failed') + '</span>';
+        var duc = document.getElementById('dataUsageChart');
+        if (duc && WZ_CC.dataUsage) {
+            new Chart(duc.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: WZ_CC.dataUsage.labels,
+                    datasets: [
+                        { label: 'Download (MB)', data: WZ_CC.dataUsage.download, backgroundColor: 'rgba(59,130,246,0.85)', borderRadius: 6, maxBarThickness: 22 },
+                        { label: 'Upload (MB)', data: WZ_CC.dataUsage.upload, backgroundColor: 'rgba(139,92,246,0.75)', borderRadius: 6, maxBarThickness: 22 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: textColor, font: { size: 11 } } } },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: textColor, font: { size: 10 } } },
+                        y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor } }
+                    }
                 }
-            })
-            .catch(function() {
-                resultDiv.innerHTML = '<span class="wz-mac-error"><i class="fa fa-times-circle"></i> Network error</span>';
-            })
-            .finally(function() { macBtn.disabled = false; });
-        });
+            });
+        }
     }
 });
 {/literal}
