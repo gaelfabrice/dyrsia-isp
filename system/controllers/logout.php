@@ -21,4 +21,4 @@ if (!empty($_SESSION['aid'])) {
 Admin::removeCookie();
 User::removeCookie();
 session_destroy();
-_alert(Lang::T('Logout Successful'), 'warning', "login");
+_alert(Lang::T('Logout Successful'), 'info', "login");

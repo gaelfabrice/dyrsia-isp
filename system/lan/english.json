@@ -1700,5 +1700,19 @@
     "System": "System",
     "PPPoE system EXPIRE plan cannot be deleted": "The PPPoE EXPIRE system plan cannot be deleted",
     "The EXPIRE plan name is reserved for the system plan": "The EXPIRE plan name is reserved for the system plan",
-    "The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan.": "The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan."
+    "The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan.": "The EXPIRE system plan is created automatically for each router and cannot be deleted. Expired clients are switched to this plan.",
+    "Redirecting automatically in": "Redirecting automatically in",
+    "seconds": "seconds",
+    "Continue now": "Continue now",
+    "Success": "Success",
+    "Information": "Information",
+    "Error": "Error",
+    "Warning": "Warning",
+    "Total Expired": "Total Expired",
+    "Total Coming": "Total Coming",
+    "Soon": "Soon",
+    "Coming": "Coming",
+    "Today": "Today",
+    "Showing": "Showing",
+    "of": "of"
 }

@@ -1,12 +1,5 @@
 <aside class="main-sidebar">
     <section class="sidebar">
-        <div class="wz-brand">
-            <div class="wz-brand-icon"><i class="fa fa-line-chart"></i></div>
-            <div class="wz-brand-text">
-                <strong>{if $isp_brand_name}{$isp_brand_name|escape}{else}{$_c['CompanyName']|escape}{/if}</strong>
-                <span>{Lang::T('Command_Center_ISP')}</span>
-            </div>
-        </div>
         <ul class="sidebar-menu" data-widget="tree">
 
             <li class="header wz-nav-section">{Lang::T('Command_Center')}</li>

@@ -13,7 +13,7 @@ if ($action === 'expiry') {
     $ui->assign('_title', Lang::T('Customer Expiry Status'));
     $ui->assign('_system_menu', 'monitoring');
     require_once $GLOBALS['WIDGET_PATH'] . DIRECTORY_SEPARATOR . 'customer_expired.php';
-    $ui->assign('customer_expiry_widget', (new customer_expired())->getWidget());
+    (new customer_expired())->prepareMonitoringPage();
     $ui->display('admin/monitoring_expiry.tpl');
     return;
 }
