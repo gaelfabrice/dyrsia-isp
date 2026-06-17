@@ -10,7 +10,9 @@
         var appUrl = '{$app_url}';
     </script>
 
-    <link rel="shortcut icon" href="{$app_url}/ui/ui/images/logo.png" type="image/x-icon" />
+    <link rel="icon" type="image/png" sizes="32x32" href="{$app_url}/ui/ui/images/favicon.png" />
+    <link rel="shortcut icon" href="{$app_url}/ui/ui/images/favicon.ico" type="image/x-icon" />
+    <link rel="apple-touch-icon" href="{$app_url}/ui/ui/images/apple-touch-icon.png" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/styles/bootstrap.min.css">
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/ionicons/css/ionicons.min.css">
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/font-awesome/css/font-awesome.min.css">

@@ -199,7 +199,8 @@ function deleteFolder($path)
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>wifizones Updater</title>
-    <link rel="shortcut icon" href="ui/ui/images/logo.png" type="image/x-icon" />
+    <link rel="icon" type="image/png" sizes="32x32" href="ui/ui/images/favicon.png" />
+    <link rel="shortcut icon" href="ui/ui/images/favicon.ico" type="image/x-icon" />
 
     <link rel="stylesheet" href="ui/ui/styles/bootstrap.min.css">
 
