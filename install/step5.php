@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>PHPNuxBill Installer</title>
+    <title>Wifizone Installer</title>
     <link rel="shortcut icon" type="image/x-icon" href="img/favicon.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -83,7 +83,7 @@ try {
         <img src="img/logo.png" class="img-responsive" alt="Logo" />
         <hr>
         <div class="span12">
-            <h4> PHPNuxBill Installer </h4>
+            <h4>Wifizone Installer</h4>
             
             <?php if (!$configExists): ?>
             <div class="alert-danger">
@@ -121,7 +121,7 @@ try {
             <?php endif; ?>
         </div>
     </div>
-    <div class="footer">Copyright &copy; 2021 PHPNuxBill. All Rights Reserved<br /><br /></div>
+    <div class="footer">Copyright &copy; 2026 Groupe Dyrsia. All Rights Reserved<br /><br /></div>
 </body>
 
 </html>

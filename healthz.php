@@ -20,10 +20,11 @@ try {
     $checks['error'] = 'init_failed';
 }
 
-$ok = $checks['app'] && $checks['database'] && $checks['writable_uploads'];
+$ok = $checks['app'] && $checks['writable_uploads'];
+$healthy = $ok && $checks['database'];
 http_response_code($ok ? 200 : 503);
 echo json_encode([
-    'status' => $ok ? 'ok' : 'degraded',
+    'status' => $healthy ? 'ok' : ($ok ? 'degraded' : 'error'),
     'time' => date('c'),
     'checks' => $checks,
 ]);
