@@ -42,13 +42,9 @@ Ce document décrit le cycle automatique et manuel de la plateforme une fois la 
 # Cron manuel
 php system/cron_wifizone.php
 
-# Test rappels
-php scripts/test_reminder_send.php --dry-run
-php scripts/test_reminder_send.php --check-eligible
+# Test rappels (dry-run via cron_wifizone ou logs notifications)
 
-# Diagnostic MikroTik (CLI uniquement)
-php scripts/mtik_diag.php
-php scripts/check_login.php
+# Diagnostic MikroTik : Paramètres routeur / sync API dans l'admin
 ```
 
 ## Schéma

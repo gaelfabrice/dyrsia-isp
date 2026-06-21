@@ -50,4 +50,20 @@ rm -f \
 tar -czf "$DIST_DIR/$PACKAGE_NAME" -C "$STAGING" .
 rm -rf "$STAGING"
 
+LATEST="$DIST_DIR/wifizone-server-latest.tar.gz"
+cp -f "$DIST_DIR/$PACKAGE_NAME" "$LATEST"
+
+GIT_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_JSON="$DIST_DIR/BUILD.json"
+cat > "$BUILD_JSON" <<EOF
+{
+  "package": "$PACKAGE_NAME",
+  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "git_sha": "$GIT_SHA",
+  "latest": "wifizone-server-latest.tar.gz"
+}
+EOF
+
 echo "$DIST_DIR/$PACKAGE_NAME"
+echo "$LATEST"
+echo "$BUILD_JSON"
