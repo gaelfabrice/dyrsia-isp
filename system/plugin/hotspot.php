@@ -1112,22 +1112,15 @@ function hotspot_verify()
         ];
         if ($status === 'paid') {
             $password = HotspotCustomer::defaultPassword();
-            $username = (string) ($check->voucher_code ?? '');
-            if ($username === '' && !empty($check->phone_number)) {
-                $byPhone = ORM::for_table('tbl_customers')
-                    ->where('phonenumber', Lang::phoneFormat($check->phone_number))
-                    ->find_one();
-                if ($byPhone) {
-                    $username = (string) $byPhone->username;
+            $username = HotspotCustomer::loginUsernameFromPayment($check);
+            if ($username === '') {
+                $username = (string) ($check->voucher_code ?? '');
+            }
+            if ($username !== '' && $username !== '**********') {
+                $customer = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
+                if ($customer && (string) $customer->password !== '') {
+                    $password = (string) $customer->password;
                 }
-            }
-            $customer = $username !== ''
-                ? ORM::for_table('tbl_customers')->where('username', $username)->find_one()
-                : null;
-            if ($customer && (string) $customer->password !== '') {
-                $password = (string) $customer->password;
-            }
-            if ($username !== '') {
                 $payload['username'] = $username;
                 $payload['voucher_code'] = $username;
             }

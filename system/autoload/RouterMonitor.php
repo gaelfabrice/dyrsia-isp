@@ -200,7 +200,7 @@ class RouterMonitor
         sendTelegram($message);
     }
 
-    protected static function clearAlertsForRouter($routerId)
+    public static function clearAlertsForRouter($routerId)
     {
         ORM::for_table('tbl_router_alerts')
             ->where('router_id', $routerId)
@@ -261,42 +261,192 @@ class RouterMonitor
     {
         self::ensureSchema();
 
-        $query = ORM::for_table('tbl_router_alerts')
-            ->where('dismissed', 0)
-            ->order_by_desc('last_check');
-
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $query->where_raw('(admin_id = ? OR admin_id IS NULL)', [$admin['id']]);
+        $routers = self::scopedEnabledRouters($admin);
+        if (count($routers) === 0) {
+            return [];
         }
 
-        $rows = $query->find_many();
-        $alerts = [];
+        $online = [];
+        $offline = [];
+        foreach ($routers as $router) {
+            if (strtolower((string) ($router->status ?? '')) === 'online') {
+                $online[] = $router;
+            } else {
+                $offline[] = $router;
+            }
+        }
 
-        foreach ($rows as $row) {
+        if (count($online) === 0) {
+            $lastCheck = date('Y-m-d H:i:s');
+            foreach ($offline as $router) {
+                if (!empty($router->last_seen) && $router->last_seen > $lastCheck) {
+                    $lastCheck = $router->last_seen;
+                }
+            }
+
+            return [[
+                'id' => 0,
+                'router_id' => 0,
+                'router_name' => '',
+                'last_check' => $lastCheck,
+                'message' => '⚠️ Aucun Routeur est actuellement ONLINE.',
+            ]];
+        }
+
+        $alerts = [];
+        foreach ($offline as $router) {
+            $alertRow = ORM::for_table('tbl_router_alerts')
+                ->where('router_id', $router->id)
+                ->where('dismissed', 0)
+                ->find_one();
+            if ($alertRow) {
+                $alerts[] = [
+                    'id' => (int) $alertRow->id,
+                    'router_id' => (int) $router->id,
+                    'router_name' => (string) $router->name,
+                    'last_check' => $alertRow->last_check ?: ($router->last_seen ?: date('Y-m-d H:i:s')),
+                    'message' => '⚠️ Le routeur ' . $router->name . ' est actuellement OFFLINE.',
+                ];
+                continue;
+            }
+
             $alerts[] = [
-                'id' => (int) $row->id,
-                'router_id' => (int) $row->router_id,
-                'router_name' => $row->router_name,
-                'last_check' => $row->last_check,
-                'message' => '⚠️ Le routeur ' . $row->router_name . ' est actuellement OFFLINE.',
+                'id' => (int) $router->id,
+                'router_id' => (int) $router->id,
+                'router_name' => (string) $router->name,
+                'last_check' => $router->last_seen ?: date('Y-m-d H:i:s'),
+                'message' => '⚠️ Le routeur ' . $router->name . ' est actuellement OFFLINE.',
             ];
         }
 
         return $alerts;
     }
 
+    public static function scopedEnabledRouters($admin)
+    {
+        $query = ORM::for_table('tbl_routers')->where('enabled', 1);
+        if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $query->where('admin_id', $admin['id']);
+        }
+
+        return $query->find_many();
+    }
+
+    public static function countOnlineRouters($admin)
+    {
+        $online = 0;
+        foreach (self::scopedEnabledRouters($admin) as $router) {
+            if (strtolower((string) ($router->status ?? '')) === 'online') {
+                $online++;
+            }
+        }
+
+        return $online;
+    }
+
+    public static function markRouterOffline($routerId)
+    {
+        $router = ORM::for_table('tbl_routers')->find_one($routerId);
+        if (!$router) {
+            return;
+        }
+        $router->status = 'Offline';
+        $router->save();
+    }
+
+    public static function routerUnreachableMessage($routerName, $admin)
+    {
+        if (self::countOnlineRouters($admin) === 0) {
+            return '⚠️ Aucun Routeur est actuellement ONLINE.';
+        }
+
+        return '⚠️ Le routeur ' . trim((string) $routerName) . ' est actuellement OFFLINE.';
+    }
+
+    public static function normalizeHotspotFetchError($message, $admin, $routerRecord = null)
+    {
+        $message = trim((string) $message);
+        if ($message === '') {
+            return Lang::T('Router not found');
+        }
+        if (preg_match('/^' . preg_quote(Lang::T('Router not found'), '/') . '\s*\(/iu', $message)) {
+            return Lang::T('Router not found');
+        }
+        if ($routerRecord && (
+            stripos($message, 'connect') !== false
+            || stripos($message, 'connexion') !== false
+            || stripos($message, 'timeout') !== false
+            || stripos($message, 'unable') !== false
+        )) {
+            return self::routerUnreachableMessage($routerRecord['name'] ?? '', $admin);
+        }
+
+        return $message;
+    }
+
     public static function dismissAlert($alertId, $admin)
     {
         self::ensureSchema();
+        $alertId = (int) $alertId;
+
+        if ($alertId === 0) {
+            $routerIds = array_map(static function ($router) {
+                return (int) $router->id;
+            }, self::scopedEnabledRouters($admin));
+            if (empty($routerIds)) {
+                return true;
+            }
+            foreach (ORM::for_table('tbl_router_alerts')
+                ->where_in('router_id', $routerIds)
+                ->where('dismissed', 0)
+                ->find_many() as $pendingAlert) {
+                $pendingAlert->dismissed = 1;
+                $pendingAlert->save();
+            }
+
+            return true;
+        }
+
         $alert = ORM::for_table('tbl_router_alerts')->find_one($alertId);
-        if (!$alert) {
+        if ($alert) {
+            if ($admin['user_type'] != 'SuperAdmin' && $alert->admin_id && (int) $alert->admin_id !== (int) $admin['id']) {
+                return false;
+            }
+            $alert->dismissed = 1;
+            $alert->save();
+
+            return true;
+        }
+
+        $router = ORM::for_table('tbl_routers')->find_one($alertId);
+        if (!$router) {
             return false;
         }
-        if ($admin['user_type'] != 'SuperAdmin' && $alert->admin_id && (int) $alert->admin_id !== (int) $admin['id']) {
+        if ($admin['user_type'] != 'SuperAdmin' && (int) ($router->admin_id ?? 0) !== (int) $admin['id']) {
             return false;
         }
-        $alert->dismissed = 1;
-        $alert->save();
+
+        $existing = ORM::for_table('tbl_router_alerts')
+            ->where('router_id', $router->id)
+            ->where('dismissed', 0)
+            ->find_one();
+        if ($existing) {
+            $existing->dismissed = 1;
+            $existing->save();
+
+            return true;
+        }
+
+        $row = ORM::for_table('tbl_router_alerts')->create();
+        $row->router_id = $router->id;
+        $row->admin_id = $router->admin_id ?? null;
+        $row->router_name = $router->name;
+        $row->last_check = $router->last_seen ?: date('Y-m-d H:i:s');
+        $row->dismissed = 1;
+        $row->whatsapp_sent = 0;
+        $row->created_at = date('Y-m-d H:i:s');
+        $row->save();
+
         return true;
     }
 

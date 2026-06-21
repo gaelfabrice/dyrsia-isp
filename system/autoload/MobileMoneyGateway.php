@@ -606,6 +606,10 @@ JS;
     public static function buildPrepareMikrotikLoginJs()
     {
         return <<<'JS'
+function resetHotspotPasswordChap() {
+    const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
+    if (passEl) delete passEl.dataset.chapDone;
+}
 function prepareMikrotikLogin(form) {
     if (!form) return false;
     const passwordInput = form.querySelector('input[name="password"]');
@@ -620,7 +624,126 @@ function prepareMikrotikLogin(form) {
     }
     return true;
 }
+function submitHotspotLogin() {
+    const f = document.getElementById('loginForm');
+    if (!f) return;
+    prepareMikrotikLogin(f);
+    f.submit();
+}
 JS;
+    }
+
+    public static function hotspotMd5JsContents()
+    {
+        $md5File = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'md5.js';
+        if (!is_file($md5File)) {
+            return '';
+        }
+        $md5 = file_get_contents($md5File);
+
+        return is_string($md5) ? trim($md5) : '';
+    }
+
+    public static function injectHotspotMd5Js($html)
+    {
+        $md5 = self::hotspotMd5JsContents();
+        if ($md5 === '') {
+            return $html;
+        }
+        if (strpos($html, '/* HOTSPOT_MD5_INJECT */') !== false) {
+            return str_replace('/* HOTSPOT_MD5_INJECT */', $md5, $html);
+        }
+        if (preg_match('/\/\/ Chap pour MikroTik[\s\S]*?(?=<\/script>)/', $html)) {
+            return preg_replace('/\/\/ Chap pour MikroTik[\s\S]*?(?=<\/script>)/', $md5, $html, 1);
+        }
+        if (strpos($html, 'function hexMD5') === false && strpos($html, 'window.HOTSPOT_INLINE_MD5') !== false) {
+            return preg_replace('/(<\/script>)/', $md5 . "\n$1", $html, 1);
+        }
+
+        return $html;
+    }
+
+    public static function patchModernHotspotChapLogin($html)
+    {
+        if (strpos($html, 'window.HOTSPOT_INLINE_MD5') === false) {
+            return $html;
+        }
+
+        $html = self::injectHotspotMd5Js($html);
+
+        if (strpos($html, 'function prepareMikrotikLogin') === false) {
+            $html = preg_replace(
+                '/(?=function connecter\s*\()/',
+                self::buildPrepareMikrotikLoginJs() . "\n",
+                $html,
+                1
+            );
+        }
+
+        if (strpos($html, 'function submitHotspotLogin') === false && strpos($html, 'function connecter') !== false) {
+            $html = preg_replace(
+                '/(?=function connecter\s*\()/',
+                "function submitHotspotLogin(){const f=document.getElementById('loginForm');if(!f)return;prepareMikrotikLogin(f);f.submit();}\n",
+                $html,
+                1
+            );
+        }
+
+        $html = preg_replace(
+            '/function connecter\(user,pass,nom\)\{[\s\S]*?setTimeout\(\(\)=>\{[\s\S]*?\},600\);\s*\}/',
+            "function connecter(user,pass,nom){Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1200});setTimeout(()=>{const userEl=document.getElementById('user');const passEl=document.getElementById('pass');if(userEl)userEl.value=user||'';if(passEl){passEl.value=pass||user||'';delete passEl.dataset.chapDone;}submitHotspotLogin();},600);}",
+            $html,
+            1
+        );
+
+        $html = preg_replace(
+            '/const voucherBtn=document\.createElement\(\'button\'\);[\s\S]*?insertAdjacentElement\(\'afterbegin\', voucherBtn\);\s*/',
+            '',
+            $html
+        ) ?? $html;
+        $html = preg_replace(
+            '/const recoverBtn=document\.createElement\(\'button\'\);[\s\S]*?insertAdjacentElement\(\'afterbegin\', voucherBtn\);\s*/',
+            '',
+            $html
+        ) ?? $html;
+
+        if (strpos($html, 'id="voucherBtn"') !== false && strpos($html, "getElementById('voucherBtn')") === false) {
+            $html = preg_replace(
+                '/(document\.getElementById\(\'loginBtn\'\)\.addEventListener\([\s\S]*?\}\);\s*)/',
+                "$1document.getElementById('voucherBtn').addEventListener('click',function(e){e.preventDefault();utiliserVoucher();});\n" .
+                "document.getElementById('recoverBtn').addEventListener('click',function(e){e.preventDefault();recupererForfait();});\n",
+                $html,
+                1
+            );
+        }
+
+        if (strpos($html, 'id="voucherBtn"') === false && strpos($html, 'utiliserVoucher') !== false) {
+            $html = preg_replace(
+                '/(<div class="divider">[\s\S]*?<\/div>\s*)\n<form action="\$\(link-login-only\)"/',
+                "$1\n<button type=\"button\" id=\"voucherBtn\" class=\"btn btn-secondary\" style=\"margin-bottom:10px\">🎫 J'ai un code</button>\n" .
+                "<button type=\"button\" id=\"recoverBtn\" class=\"btn btn-secondary\" style=\"margin-bottom:10px\">🔑 Récupérer mon forfait</button>\n\n<form action=\"\$(link-login-only)\"",
+                $html,
+                1
+            );
+            $html = preg_replace(
+                '/(document\.getElementById\(\'loginBtn\'\)\.addEventListener\([\s\S]*?\}\);\s*)/',
+                "$1document.getElementById('voucherBtn').addEventListener('click',function(e){e.preventDefault();utiliserVoucher();});\n" .
+                "document.getElementById('recoverBtn').addEventListener('click',function(e){e.preventDefault();recupererForfait();});\n",
+                $html,
+                1
+            );
+        }
+
+        if (strpos($html, "loginFormEl.addEventListener('submit'") === false && strpos($html, 'id="loginForm"') !== false) {
+            $html = preg_replace(
+                '/(document\.getElementById\(\'year\'\)\.innerText=new Date\(\)\.getFullYear\(\);\s*loadPlans\(\);)/',
+                "$1\nconst loginFormEl=document.getElementById('loginForm');\nif(loginFormEl){loginFormEl.addEventListener('submit',function(e){if(!prepareMikrotikLogin(loginFormEl))e.preventDefault();});}",
+                $html,
+                1
+            );
+        }
+
+        return $html;
     }
 
     public static function stripHotspotLightTheme($html)
@@ -705,6 +828,8 @@ JS;
         }
 
         $html = self::patchHotspotApiBases($html);
+
+        $html = self::patchModernHotspotChapLogin($html);
 
         return self::stripHotspotLightTheme($html);
     }

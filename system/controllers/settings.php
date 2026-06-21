@@ -1258,21 +1258,40 @@ switch ($action) {
             }
             $mikrotik = $resolveHotspotRouterRecord($routerName);
             if (!$mikrotik) {
-                echo json_encode(['ok' => false, 'message' => Lang::T('Router not found') . ' (' . $routerName . ')']);
+                echo json_encode(['ok' => false, 'message' => Lang::T('Router not found')]);
                 exit;
             }
             try {
                 $client = Mikrotik::getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password'], 15);
                 if (!$client) {
-                    echo json_encode(['ok' => false, 'message' => 'Connexion MikroTik impossible.']);
+                    RouterMonitor::markRouterOffline($mikrotik['id']);
+                    echo json_encode([
+                        'ok' => false,
+                        'message' => RouterMonitor::routerUnreachableMessage($mikrotik['name'], $admin),
+                    ]);
                     exit;
                 }
                 $preferredHotspot = trim((string) ($_GET['hotspot_name'] ?? ''));
+                $routerModel = ORM::for_table('tbl_routers')->find_one($mikrotik['id']);
+                if ($routerModel) {
+                    $routerModel->status = 'Online';
+                    $routerModel->last_seen = date('Y-m-d H:i:s');
+                    $routerModel->save();
+                    RouterMonitor::clearAlertsForRouter($routerModel->id);
+                }
                 echo json_encode(Mikrotik::fetchHotspotSetupSnapshot($client, $preferredHotspot));
             } catch (Throwable $e) {
-                echo json_encode(['ok' => false, 'message' => $e->getMessage()]);
+                RouterMonitor::markRouterOffline($mikrotik['id']);
+                echo json_encode([
+                    'ok' => false,
+                    'message' => RouterMonitor::normalizeHotspotFetchError($e->getMessage(), $admin, $mikrotik->as_array()),
+                ]);
             } catch (Exception $e) {
-                echo json_encode(['ok' => false, 'message' => $e->getMessage()]);
+                RouterMonitor::markRouterOffline($mikrotik['id']);
+                echo json_encode([
+                    'ok' => false,
+                    'message' => RouterMonitor::normalizeHotspotFetchError($e->getMessage(), $admin, $mikrotik->as_array()),
+                ]);
             }
             exit;
         }
@@ -1317,7 +1336,7 @@ switch ($action) {
             if (!$mikrotik) {
                 return [
                     'ok' => false,
-                    'message' => Lang::T('Router not found') . ' (' . $routerName . ')',
+                    'message' => Lang::T('Router not found'),
                 ];
             }
 
@@ -1396,6 +1415,7 @@ switch ($action) {
             'hotspot_cookie_lifetime',
             'hotspot_idle_timeout',
             'hotspot_keepalive_timeout',
+            'hotspot_address_per_mac',
             'hotspot_smtp_server',
         ];
 
@@ -1481,6 +1501,7 @@ switch ($action) {
                         'whatsapp' => $config['hotspot_help_whatsapp'] ?? '',
                         'whatsapp_label' => $config['hotspot_help_whatsapp_label'] ?? '',
                     ]);
+                    $html = MobileMoneyGateway::patchModernHotspotChapLogin($html);
                     $html = MobileMoneyGateway::repairHotspotLoginHtml($html);
                     // Self-host SweetAlert so the captive portal never depends on an external CDN:
                     // cdn.jsdelivr.net is not in the walled-garden, so it is unreachable before
@@ -1794,7 +1815,16 @@ HTML;
             }
             $_POST['hotspot_masquerade'] = !empty($_POST['hotspot_masquerade']) ? '1' : '0';
             if (empty($_POST['hotspot_login_methods'])) {
-                $_POST['hotspot_login_methods'] = ['chap'];
+                $_POST['hotspot_login_methods'] = ['http-chap', 'mac-cookie'];
+            }
+            if (trim((string) ($_POST['hotspot_cookie_lifetime'] ?? '')) === '') {
+                $_POST['hotspot_cookie_lifetime'] = '1d 00:00:00';
+            }
+            if (trim((string) ($_POST['hotspot_idle_timeout'] ?? '')) === '') {
+                $_POST['hotspot_idle_timeout'] = '00:10:00';
+            }
+            if (trim((string) ($_POST['hotspot_address_per_mac'] ?? '')) === '') {
+                $_POST['hotspot_address_per_mac'] = '1';
             }
 
             foreach ($hotspotKeys as $key) {

@@ -5245,6 +5245,10 @@ class Mikrotik
                 'hotspot_smtp_server' => '0.0.0.0',
                 'hotspot_dns_server' => '8.8.8.8',
                 'hotspot_dns_name' => '',
+                'hotspot_login_methods' => 'http-chap,mac-cookie',
+                'hotspot_cookie_lifetime' => '1d 00:00:00',
+                'hotspot_idle_timeout' => '00:10:00',
+                'hotspot_address_per_mac' => '1',
             ],
             'errors' => [],
         ];
@@ -5300,7 +5304,7 @@ class Mikrotik
         try {
             $responses = $client->sendSync(
                 (new RouterOS\Request('/ip/hotspot/profile/print'))
-                    ->setArgument('.proplist', 'name,dns-name,smtp-server,dns-server,hotspot-address')
+                    ->setArgument('.proplist', 'name,dns-name,smtp-server,dns-server,hotspot-address,login-by,idle-timeout,http-cookie-lifetime')
             );
             foreach ($responses as $row) {
                 $name = trim((string) $row->getProperty('name'));
@@ -5312,6 +5316,9 @@ class Mikrotik
                     'dns_name' => trim((string) $row->getProperty('dns-name')),
                     'smtp_server' => trim((string) $row->getProperty('smtp-server')),
                     'dns_server' => trim((string) $row->getProperty('dns-server')),
+                    'login_by' => trim((string) $row->getProperty('login-by')),
+                    'idle_timeout' => trim((string) $row->getProperty('idle-timeout')),
+                    'http_cookie_lifetime' => trim((string) $row->getProperty('http-cookie-lifetime')),
                 ];
             }
         } catch (Throwable $e) {
@@ -5323,7 +5330,7 @@ class Mikrotik
         try {
             $responses = $client->sendSync(
                 (new RouterOS\Request('/ip/hotspot/print'))
-                    ->setArgument('.proplist', 'name,interface,profile,address-pool,dns-name')
+                    ->setArgument('.proplist', 'name,interface,profile,address-pool,dns-name,address-per-mac')
             );
             foreach ($responses as $row) {
                 $snapshot['hotspots'][] = [
@@ -5332,6 +5339,7 @@ class Mikrotik
                     'profile' => trim((string) $row->getProperty('profile')),
                     'address_pool' => trim((string) $row->getProperty('address-pool')),
                     'dns_name' => trim((string) $row->getProperty('dns-name')),
+                    'address_per_mac' => trim((string) $row->getProperty('address-per-mac')),
                 ];
             }
         } catch (Throwable $e) {
@@ -5460,7 +5468,20 @@ class Mikrotik
             if ($prof['dns_name'] !== '' && $snapshot['suggested']['hotspot_dns_name'] === '') {
                 $snapshot['suggested']['hotspot_dns_name'] = $prof['dns_name'];
             }
+            if ($prof['login_by'] !== '') {
+                $snapshot['suggested']['hotspot_login_methods'] = self::normalizeHotspotLoginBy($prof['login_by']);
+            }
+            if ($prof['idle_timeout'] !== '') {
+                $snapshot['suggested']['hotspot_idle_timeout'] = $prof['idle_timeout'];
+            }
+            if ($prof['http_cookie_lifetime'] !== '') {
+                $snapshot['suggested']['hotspot_cookie_lifetime'] = $prof['http_cookie_lifetime'];
+            }
             break;
+        }
+
+        if ($activeHotspot !== null && ($activeHotspot['address_per_mac'] ?? '') !== '') {
+            $snapshot['suggested']['hotspot_address_per_mac'] = $activeHotspot['address_per_mac'];
         }
 
         if (!empty($snapshot['errors'])) {
@@ -5499,7 +5520,19 @@ class Mikrotik
         $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
         $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
         $masquerade = !empty($config['hotspot_masquerade']) && (string) $config['hotspot_masquerade'] !== '0';
-        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'chap'));
+        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-chap,mac-cookie'));
+        $cookieLifetime = trim((string) ($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00'));
+        $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
+        $addressPerMac = trim((string) ($config['hotspot_address_per_mac'] ?? '1'));
+        if ($cookieLifetime === '') {
+            $cookieLifetime = '1d 00:00:00';
+        }
+        if ($idleTimeout === '') {
+            $idleTimeout = '00:10:00';
+        }
+        if ($addressPerMac === '' || !ctype_digit($addressPerMac)) {
+            $addressPerMac = '1';
+        }
 
         if ($interface === '') {
             return ['ok' => false, 'errors' => ['Interface hotspot manquante (étape 2 de l\'assistant).']];
@@ -5539,7 +5572,16 @@ class Mikrotik
         }
 
         try {
-            self::ensureHotspotProfileConfigured($client, $profileName, $dnsName, $smtpServer, $dnsServer, $loginMethods);
+            self::ensureHotspotProfileConfigured(
+                $client,
+                $profileName,
+                $dnsName,
+                $smtpServer,
+                $dnsServer,
+                $loginMethods,
+                $cookieLifetime,
+                $idleTimeout
+            );
             $actions[] = 'profil « ' . $profileName . ' »';
         } catch (Throwable $e) {
             $errors[] = 'profil: ' . $e->getMessage();
@@ -5559,7 +5601,7 @@ class Mikrotik
         }
 
         try {
-            self::ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName);
+            self::ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName, $addressPerMac);
             $actions[] = 'serveur « ' . $hotspotName . ' »';
         } catch (Throwable $e) {
             $errors[] = 'serveur hotspot: ' . $e->getMessage();
@@ -5657,17 +5699,36 @@ class Mikrotik
 
     private static function normalizeHotspotLoginBy($loginMethods)
     {
-        $allowed = ['chap', 'http-chap', 'cookie', 'https', 'http-pap', 'mac', 'trial'];
+        $allowed = ['http-chap', 'http-pap', 'mac-cookie', 'cookie', 'chap', 'https', 'mac', 'trial'];
         $methods = array_values(array_unique(array_filter(array_map('trim', explode(',', strtolower((string) $loginMethods))))));
-        $methods = array_values(array_intersect($methods, $allowed));
-        if (empty($methods)) {
-            $methods = ['chap', 'http-chap', 'cookie'];
+        $normalized = [];
+        foreach ($methods as $method) {
+            if ($method === 'chap') {
+                $method = 'http-chap';
+            } elseif ($method === 'cookie') {
+                $method = 'mac-cookie';
+            }
+            if (in_array($method, $allowed, true) && !in_array($method, $normalized, true)) {
+                $normalized[] = $method;
+            }
+        }
+        if (empty($normalized)) {
+            $normalized = ['http-chap', 'mac-cookie'];
         }
 
-        return implode(',', $methods);
+        return implode(',', $normalized);
     }
 
-    private static function ensureHotspotProfileConfigured($client, $profileName, $dnsName, $smtpServer, $dnsServer, $loginMethods)
+    private static function ensureHotspotProfileConfigured(
+        $client,
+        $profileName,
+        $dnsName,
+        $smtpServer,
+        $dnsServer,
+        $loginMethods,
+        $cookieLifetime = '1d 00:00:00',
+        $idleTimeout = '00:10:00'
+    )
     {
         $profileName = trim((string) $profileName);
         if ($profileName === '') {
@@ -5690,6 +5751,12 @@ class Mikrotik
             ->setArgument('smtp-server', $smtpServer !== '' ? $smtpServer : '0.0.0.0')
             ->setArgument('dns-server', $dnsServer !== '' ? $dnsServer : '8.8.8.8')
             ->setArgument('use-radius', 'no');
+        if ($cookieLifetime !== '') {
+            $setRequest->setArgument('http-cookie-lifetime', $cookieLifetime);
+        }
+        if ($idleTimeout !== '') {
+            $setRequest->setArgument('idle-timeout', $idleTimeout);
+        }
         if ($dnsName !== '') {
             $setRequest->setArgument('dns-name', $dnsName);
         }
@@ -5718,11 +5785,16 @@ class Mikrotik
         $client->sendSync($setRequest);
     }
 
-    private static function ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName)
+    private static function ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName, $addressPerMac = '1')
     {
         $serverId = self::routerEntityId($client, '/ip/hotspot', 'name', $hotspotName);
         if ($serverId === null) {
             $serverId = self::routerEntityId($client, '/ip/hotspot', 'interface', $interface);
+        }
+
+        $addressPerMac = trim((string) $addressPerMac);
+        if ($addressPerMac === '' || !ctype_digit($addressPerMac)) {
+            $addressPerMac = '1';
         }
 
         $args = [
@@ -5730,6 +5802,7 @@ class Mikrotik
             'interface' => $interface,
             'profile' => $profileName,
             'address-pool' => $poolName,
+            'address-per-mac' => $addressPerMac,
             'disabled' => 'no',
         ];
 

@@ -52,6 +52,9 @@ body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;padding:2
 
 <div class="divider"><div class="divider-line"></div><span>Accès compte</span><div class="divider-line"></div></div>
 
+<button type="button" id="voucherBtn" class="btn btn-secondary" style="margin-bottom:10px">🎫 J'ai un code</button>
+<button type="button" id="recoverBtn" class="btn btn-secondary" style="margin-bottom:10px">🔑 Récupérer mon forfait</button>
+
 <form action="$(link-login-only)" method="post" id="loginForm">
 <input type="hidden" name="dst" value="$(link-orig)">
 <input type="text" name="username" id="user" class="input" placeholder="Identifiant">
@@ -138,16 +141,34 @@ async function poll(ref,max){
   return{status:'timeout',message:'Délai dépassé. Vérifiez votre téléphone.'};
 }
 
-function connecter(user,pass,nom){
-  Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1200});
-  setTimeout(()=>{
-    const f=document.getElementById('loginForm');
-    document.getElementById('user').value=user||'';
-    document.getElementById('pass').value=pass||user||'';
-    if(f&&typeof prepareMikrotikLogin==='function')prepareMikrotikLogin(f);
-    if(f)f.submit();
-  },600);
+function resetHotspotPasswordChap() {
+  const passEl = document.getElementById('pass');
+  if (passEl) delete passEl.dataset.chapDone;
 }
+
+function prepareMikrotikLogin(form) {
+  if (!form) return false;
+  const passwordInput = form.querySelector('input[name="password"]');
+  const chapId = '$(chap-id)';
+  const chapChallenge = '$(chap-challenge)';
+  const hasChap = chapId && chapChallenge && chapId.indexOf('$(') !== 0 && chapChallenge.indexOf('$(') !== 0;
+  if (hasChap && passwordInput && !passwordInput.dataset.chapDone) {
+    if (typeof hexMD5 === 'function') {
+      passwordInput.value = hexMD5(chapId + passwordInput.value + chapChallenge);
+      passwordInput.dataset.chapDone = '1';
+    }
+  }
+  return true;
+}
+
+function submitHotspotLogin() {
+  const f = document.getElementById('loginForm');
+  if (!f) return;
+  prepareMikrotikLogin(f);
+  f.submit();
+}
+
+function connecter(user,pass,nom){Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1200});setTimeout(()=>{const userEl=document.getElementById('user');const passEl=document.getElementById('pass');if(userEl)userEl.value=user||'';if(passEl){passEl.value=pass||user||'';delete passEl.dataset.chapDone;}submitHotspotLogin();},600);}
 
 async function payer(nom,prix,currency,validite,planid,routername){
   const {value:phone}=await Swal.fire({title:`💰 ${nom} — ${prix} ${currency||'Fcfa'}`,text:'Numéro Mobile Money (9 chiffres)',input:'tel',inputPlaceholder:'677123456',inputAttributes:{maxlength:9,inputmode:'numeric',pattern:'[0-9]*',autocomplete:'off'},showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:()=>{const el=Swal.getInput();if(el)el.addEventListener('input',()=>{el.value=el.value.replace(/\D/g,'').slice(0,9);});},inputValidator:v=>{const c=(v||'').replace(/\D/g,'');return c.length!==9?'9 chiffres requis (ex: 677123456)':null;}});
@@ -202,25 +223,20 @@ document.getElementById('loginBtn').addEventListener('click',async()=>{
     else{err.innerText=d.message||'Identifiants incorrects';err.style.display='block';}
   }catch(e){
     const f=document.getElementById('loginForm');
-    if(f&&f.action.indexOf('$(link-login-only)')<0){if(typeof prepareMikrotikLogin==='function')prepareMikrotikLogin(f);f.submit();}
+    if(f&&f.action.indexOf('$(link-login-only)')<0){submitHotspotLogin();}
     else{err.innerText='Erreur de connexion';err.style.display='block';}
   }
 });
 
-const voucherBtn=document.createElement('button');
-voucherBtn.className='btn btn-secondary';
-voucherBtn.style.marginBottom='10px';
-voucherBtn.textContent='🎫 J\'ai un code';
-voucherBtn.addEventListener('click',utiliserVoucher);
+document.getElementById('voucherBtn').addEventListener('click',function(e){e.preventDefault();utiliserVoucher();});
+document.getElementById('recoverBtn').addEventListener('click',function(e){e.preventDefault();recupererForfait();});
 
-const recoverBtn=document.createElement('button');
-recoverBtn.className='btn btn-secondary';
-recoverBtn.style.marginBottom='10px';
-recoverBtn.textContent='🔑 Récupérer mon forfait';
-recoverBtn.addEventListener('click',recupererForfait);
-
-document.querySelector('#loginForm').insertAdjacentElement('afterbegin',recoverBtn);
-document.querySelector('#loginForm').insertAdjacentElement('afterbegin',voucherBtn);
+const loginFormEl=document.getElementById('loginForm');
+if(loginFormEl){
+  loginFormEl.addEventListener('submit',function(e){
+    if(!prepareMikrotikLogin(loginFormEl)) e.preventDefault();
+  });
+}
 
 const errorParam='$(error)';
 if(errorParam&&errorParam.indexOf('$(')<0&&errorParam.trim()){const e=document.getElementById('errorMsg');e.innerText=errorParam;e.style.display='block';}
@@ -228,12 +244,223 @@ if(errorParam&&errorParam.indexOf('$(')<0&&errorParam.trim()){const e=document.g
 document.getElementById('year').innerText=new Date().getFullYear();
 loadPlans();
 
-// Chap pour MikroTik
-function hexMD5(str){function r(r,t){return r<<t|r>>>32-t}function t(r,t){var e,o,i,n,a;return i=2147483648&r,n=2147483648&t,e=(1073741823&r)+(1073741823&t),((o=(1073741824&r)^(1073741824&t))>>1)+(e>>31)+(4294967296*(e>>>31)+((i^n)>>>0))}function e(r,t,e,o,i,n,a){return t=t?t:0,e=e?e:0,o=o?o:0,r=t(r,e,o,i,n,a);return r}function o(r,o,i,n,a,c,s){return e(function(r,e,o,i,n,a,c){return t((function(r,t){return r<<t|r>>>32-t})(t(t(e,r),t(i,n)),a),c)},r,o,i,n,a,c,s)}function i(r,o,i,n,a,c,s){return e(function(r,e,o,i,n,a,c){return t(t(e,o),t(~e,i))},r,o,i,n,a,c,s)}function n(r,o,i,n,a,c,s){return e(function(r,e,o,i,n,a,c){return t(t(e,o),t(e,~i))},r,o,i,n,a,c,s)}function a(r,o,i,n,a,c,s){return e(function(r,e,o,i,n,a,c){return t(o,e^~i)},r,o,i,n,a,c,s)}function c(r){for(var t,e=r.length,o=e+8,i=((o-o%64)/64+1)*16,n=Array(i-1),a=0,c=0;a<e;)c=(a-(a%4))/4,t=(r.charCodeAt(a)&255)<<c%4*8,c%4==3&&(n[(a-(a%4))/4]=t),a++;return c%4!=0&&(n[(a-(a%4))/4]=t),i>a+1&&(n[a>>>2]|=128<<a%4*8),n[i-2]=e<<3,n[i-1]=e>>>29,n}var s,u,f,d,l,h,p,v,g,m,b,y,w,x,k,S,A,C,D,E,F;for(s=1732584193,u=4023233417,f=2562383102,d=271733878,l=c(str),h=0;h<l.length;h+=16)p=s,v=u,g=f,m=d,u=o(u,f,d,l[h+0],7,680876936),d=o(d,s,f,l[h+1],12,389564586),s=o(s,u,f,l[h+2],17,606105819),f=o(f,d,u,l[h+3],22,1044525330),u=o(u,f,d,l[h+4],7,176418897),d=o(d,s,f,l[h+5],12,1200080426),s=o(s,u,f,l[h+6],17,1473231341),f=o(f,d,u,l[h+7],22,45705983),u=o(u,f,d,l[h+8],7,1770035416),d=o(d,s,f,l[h+9],12,1958414417),s=o(s,u,f,l[h+10],17,42063),f=o(f,d,u,l[h+11],22,1990404162),u=o(u,f,d,l[h+12],7,1804603682),d=o(d,s,f,l[h+13],12,40341101),s=o(s,u,f,l[h+14],17,1502002290),f=o(f,d,u,l[h+15],22,1236535329),u=n(u,f,d,l[h+1],5,165796510),d=n(d,s,f,l[h+6],9,1069501632),s=n(s,u,f,l[h+11],14,643717713),f=n(f,d,u,l[h+0],20,373897302),u=n(u,f,d,l[h+5],5,701558691),d=n(d,s,f,l[h+10],9,38016083),s=n(s,u,f,l[h+15],14,660478335),f=n(f,d,u,l[h+4],20,405537848),u=n(u,f,d,l[h+9],5,568446438),d=n(d,s,f,l[h+14],9,1019803690),s=n(s,u,f,l[h+3],14,187363961),f=n(f,d,u,l[h+8],20,1163531501),u=n(u,f,d,l[h+13],5,1444681467),d=n(d,s,f,l[h+2],9,51403784),s=n(s,u,f,l[h+7],14,1735328473),f=n(f,d,u,l[h+12],20,1926607734),u=i(u,f,d,l[h+5],4,378558),d=i(d,s,f,l[h+8],11,2022574463),s=i(s,u,f,l[h+11],16,1839030562),f=i(f,d,u,l[h+14],23,35309556),u=i(u,f,d,l[h+1],4,1530992060),d=i(d,s,f,l[h+4],11,1272893353),s=i(s,u,f,l[h+7],16,155497632),f=i(f,d,u,l[h+10],23,1094730640),u=i(u,f,d,l[h+13],4,681279174),d=i(d,s,f,l[h+0],11,358537222),s=i(s,u,f,l[h+3],16,722521979),f=i(f,d,u,l[h+6],23,76029189),u=i(u,f,d,l[h+9],4,640364487),d=i(d,s,f,l[h+12],11,421815835),s=i(s,u,f,l[h+15],16,530742520),f=i(f,d,u,l[h+2],23,995338651),u=a(u,f,d,l[h+0],6,198630844),d=a(d,s,f,l[h+7],10,1126891415),s=a(s,u,f,l[h+14],15,1416354905),f=a(f,d,u,l[h+5],21,57434055),u=a(u,f,d,l[h+12],6,1700485571),d=a(d,s,f,l[h+3],10,1894986606),s=a(s,u,f,l[h+10],15,1051523),f=a(f,d,u,l[h+1],21,2054922799),u=a(u,f,d,l[h+8],6,1873313359),d=a(d,s,f,l[h+15],10,30611744),s=a(s,u,f,l[h+6],15,1560198380),f=a(f,d,u,l[h+13],21,1309151649),u=a(u,f,d,l[h+4],6,145523070),d=a(d,s,f,l[h+11],10,1120210379),s=a(s,u,f,l[h+2],15,718787259),f=a(f,d,u,l[h+9],21,343485551),s=t(s,p),u=t(u,v),f=t(f,g),d=t(d,m);return (s+ (u<<8) + (f<<16) + (d<<24)).toString(16)}
-function fetchHotspotEndpoint(r,o){return api(r,o)}
-/* Login en clair (le hotspot doit avoir login-by=http-pap). On ne hash plus
-   le mot de passe : la fonction MD5 inline était corrompue par la minification
-   et f.submit() ne déclenche pas l'event 'submit' de toute façon. */
+/*
+ * A JavaScript implementation of the RSA Data Security, Inc. MD5 Message
+ * Digest Algorithm, as defined in RFC 1321.
+ * Version 1.1 Copyright (C) Paul Johnston 1999 - 2002.
+ * Code also contributed by Greg Holt
+ * See http://pajhome.org.uk/site/legal.html for details.
+ */
+
+/*
+ * Add integers, wrapping at 2^32. This uses 16-bit operations internally
+ * to work around bugs in some JS interpreters.
+ */
+function safe_add(x, y)
+{
+  var lsw = (x & 0xFFFF) + (y & 0xFFFF)
+  var msw = (x >> 16) + (y >> 16) + (lsw >> 16)
+  return (msw << 16) | (lsw & 0xFFFF)
+}
+
+/*
+ * Bitwise rotate a 32-bit number to the left.
+ */
+function rol(num, cnt)
+{
+  return (num << cnt) | (num >>> (32 - cnt))
+}
+
+/*
+ * These functions implement the four basic operations the algorithm uses.
+ */
+function cmn(q, a, b, x, s, t)
+{
+  return safe_add(rol(safe_add(safe_add(a, q), safe_add(x, t)), s), b)
+}
+function ff(a, b, c, d, x, s, t)
+{
+  return cmn((b & c) | ((~b) & d), a, b, x, s, t)
+}
+function gg(a, b, c, d, x, s, t)
+{
+  return cmn((b & d) | (c & (~d)), a, b, x, s, t)
+}
+function hh(a, b, c, d, x, s, t)
+{
+  return cmn(b ^ c ^ d, a, b, x, s, t)
+}
+function ii(a, b, c, d, x, s, t)
+{
+  return cmn(c ^ (b | (~d)), a, b, x, s, t)
+}
+
+/*
+ * Calculate the MD5 of an array of little-endian words, producing an array
+ * of little-endian words.
+ */
+function coreMD5(x)
+{
+  var a =  1732584193
+  var b = -271733879
+  var c = -1732584194
+  var d =  271733878
+
+  for(i = 0; i < x.length; i += 16)
+  {
+    var olda = a
+    var oldb = b
+    var oldc = c
+    var oldd = d
+
+    a = ff(a, b, c, d, x[i+ 0], 7 , -680876936)
+    d = ff(d, a, b, c, x[i+ 1], 12, -389564586)
+    c = ff(c, d, a, b, x[i+ 2], 17,  606105819)
+    b = ff(b, c, d, a, x[i+ 3], 22, -1044525330)
+    a = ff(a, b, c, d, x[i+ 4], 7 , -176418897)
+    d = ff(d, a, b, c, x[i+ 5], 12,  1200080426)
+    c = ff(c, d, a, b, x[i+ 6], 17, -1473231341)
+    b = ff(b, c, d, a, x[i+ 7], 22, -45705983)
+    a = ff(a, b, c, d, x[i+ 8], 7 ,  1770035416)
+    d = ff(d, a, b, c, x[i+ 9], 12, -1958414417)
+    c = ff(c, d, a, b, x[i+10], 17, -42063)
+    b = ff(b, c, d, a, x[i+11], 22, -1990404162)
+    a = ff(a, b, c, d, x[i+12], 7 ,  1804603682)
+    d = ff(d, a, b, c, x[i+13], 12, -40341101)
+    c = ff(c, d, a, b, x[i+14], 17, -1502002290)
+    b = ff(b, c, d, a, x[i+15], 22,  1236535329)
+
+    a = gg(a, b, c, d, x[i+ 1], 5 , -165796510)
+    d = gg(d, a, b, c, x[i+ 6], 9 , -1069501632)
+    c = gg(c, d, a, b, x[i+11], 14,  643717713)
+    b = gg(b, c, d, a, x[i+ 0], 20, -373897302)
+    a = gg(a, b, c, d, x[i+ 5], 5 , -701558691)
+    d = gg(d, a, b, c, x[i+10], 9 ,  38016083)
+    c = gg(c, d, a, b, x[i+15], 14, -660478335)
+    b = gg(b, c, d, a, x[i+ 4], 20, -405537848)
+    a = gg(a, b, c, d, x[i+ 9], 5 ,  568446438)
+    d = gg(d, a, b, c, x[i+14], 9 , -1019803690)
+    c = gg(c, d, a, b, x[i+ 3], 14, -187363961)
+    b = gg(b, c, d, a, x[i+ 8], 20,  1163531501)
+    a = gg(a, b, c, d, x[i+13], 5 , -1444681467)
+    d = gg(d, a, b, c, x[i+ 2], 9 , -51403784)
+    c = gg(c, d, a, b, x[i+ 7], 14,  1735328473)
+    b = gg(b, c, d, a, x[i+12], 20, -1926607734)
+
+    a = hh(a, b, c, d, x[i+ 5], 4 , -378558)
+    d = hh(d, a, b, c, x[i+ 8], 11, -2022574463)
+    c = hh(c, d, a, b, x[i+11], 16,  1839030562)
+    b = hh(b, c, d, a, x[i+14], 23, -35309556)
+    a = hh(a, b, c, d, x[i+ 1], 4 , -1530992060)
+    d = hh(d, a, b, c, x[i+ 4], 11,  1272893353)
+    c = hh(c, d, a, b, x[i+ 7], 16, -155497632)
+    b = hh(b, c, d, a, x[i+10], 23, -1094730640)
+    a = hh(a, b, c, d, x[i+13], 4 ,  681279174)
+    d = hh(d, a, b, c, x[i+ 0], 11, -358537222)
+    c = hh(c, d, a, b, x[i+ 3], 16, -722521979)
+    b = hh(b, c, d, a, x[i+ 6], 23,  76029189)
+    a = hh(a, b, c, d, x[i+ 9], 4 , -640364487)
+    d = hh(d, a, b, c, x[i+12], 11, -421815835)
+    c = hh(c, d, a, b, x[i+15], 16,  530742520)
+    b = hh(b, c, d, a, x[i+ 2], 23, -995338651)
+
+    a = ii(a, b, c, d, x[i+ 0], 6 , -198630844)
+    d = ii(d, a, b, c, x[i+ 7], 10,  1126891415)
+    c = ii(c, d, a, b, x[i+14], 15, -1416354905)
+    b = ii(b, c, d, a, x[i+ 5], 21, -57434055)
+    a = ii(a, b, c, d, x[i+12], 6 ,  1700485571)
+    d = ii(d, a, b, c, x[i+ 3], 10, -1894986606)
+    c = ii(c, d, a, b, x[i+10], 15, -1051523)
+    b = ii(b, c, d, a, x[i+ 1], 21, -2054922799)
+    a = ii(a, b, c, d, x[i+ 8], 6 ,  1873313359)
+    d = ii(d, a, b, c, x[i+15], 10, -30611744)
+    c = ii(c, d, a, b, x[i+ 6], 15, -1560198380)
+    b = ii(b, c, d, a, x[i+13], 21,  1309151649)
+    a = ii(a, b, c, d, x[i+ 4], 6 , -145523070)
+    d = ii(d, a, b, c, x[i+11], 10, -1120210379)
+    c = ii(c, d, a, b, x[i+ 2], 15,  718787259)
+    b = ii(b, c, d, a, x[i+ 9], 21, -343485551)
+
+    a = safe_add(a, olda)
+    b = safe_add(b, oldb)
+    c = safe_add(c, oldc)
+    d = safe_add(d, oldd)
+  }
+  return [a, b, c, d]
+}
+
+/*
+ * Convert an array of little-endian words to a hex string.
+ */
+function binl2hex(binarray)
+{
+  var hex_tab = "0123456789abcdef"
+  var str = ""
+  for(var i = 0; i < binarray.length * 4; i++)
+  {
+    str += hex_tab.charAt((binarray[i>>2] >> ((i%4)*8+4)) & 0xF) +
+           hex_tab.charAt((binarray[i>>2] >> ((i%4)*8)) & 0xF)
+  }
+  return str
+}
+
+/*
+ * Convert an array of little-endian words to a base64 encoded string.
+ */
+function binl2b64(binarray)
+{
+  var tab = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  var str = ""
+  for(var i = 0; i < binarray.length * 32; i += 6)
+  {
+    str += tab.charAt(((binarray[i>>5] << (i%32)) & 0x3F) |
+                      ((binarray[i>>5+1] >> (32-i%32)) & 0x3F))
+  }
+  return str
+}
+
+/*
+ * Convert an 8-bit character string to a sequence of 16-word blocks, stored
+ * as an array, and append appropriate padding for MD4/5 calculation.
+ * If any of the characters are >255, the high byte is silently ignored.
+ */
+function str2binl(str)
+{
+  var nblk = ((str.length + 8) >> 6) + 1 // number of 16-word blocks
+  var blks = new Array(nblk * 16)
+  for(var i = 0; i < nblk * 16; i++) blks[i] = 0
+  for(var i = 0; i < str.length; i++)
+    blks[i>>2] |= (str.charCodeAt(i) & 0xFF) << ((i%4) * 8)
+  blks[i>>2] |= 0x80 << ((i%4) * 8)
+  blks[nblk*16-2] = str.length * 8
+  return blks
+}
+
+/*
+ * Convert a wide-character string to a sequence of 16-word blocks, stored as
+ * an array, and append appropriate padding for MD4/5 calculation.
+ */
+function strw2binl(str)
+{
+  var nblk = ((str.length + 4) >> 5) + 1 // number of 16-word blocks
+  var blks = new Array(nblk * 16)
+  for(var i = 0; i < nblk * 16; i++) blks[i] = 0
+  for(var i = 0; i < str.length; i++)
+    blks[i>>1] |= str.charCodeAt(i) << ((i%2) * 16)
+  blks[i>>1] |= 0x80 << ((i%2) * 16)
+  blks[nblk*16-2] = str.length * 16
+  return blks
+}
+
+/*
+ * External interface
+ */
+function hexMD5 (str) { return binl2hex(coreMD5( str2binl(str))) }
+function hexMD5w(str) { return binl2hex(coreMD5(strw2binl(str))) }
+function b64MD5 (str) { return binl2b64(coreMD5( str2binl(str))) }
+function b64MD5w(str) { return binl2b64(coreMD5(strw2binl(str))) }
+/* Backward compatibility */
+function calcMD5(str) { return binl2hex(coreMD5( str2binl(str))) }
 </script>
 </body>
 </html>

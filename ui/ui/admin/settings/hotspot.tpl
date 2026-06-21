@@ -19,9 +19,11 @@
 {assign var=hs_pool_range value=$_c['hotspot_pool_range']|default:'10.0.0.1-10.0.0.254'}
 {assign var=hs_dns_server value=$_c['hotspot_dns_server']|default:'8.8.8.8'}
 {assign var=hs_smtp value=$_c['hotspot_smtp_server']|default:'0.0.0.0'}
-{assign var=hs_cookie value=$_c['hotspot_cookie_lifetime']|default:'1d'}
+{assign var=hs_cookie value=$_c['hotspot_cookie_lifetime']|default:'1d 00:00:00'}
 {assign var=hs_idle value=$_c['hotspot_idle_timeout']|default:'00:10:00'}
 {assign var=hs_keepalive value=$_c['hotspot_keepalive_timeout']|default:'00:00:30'}
+{assign var=hs_address_per_mac value=$_c['hotspot_address_per_mac']|default:'1'}
+{assign var=hs_login value=','|cat:($_c['hotspot_login_methods']|default:'http-chap,mac-cookie')|cat:','}
 
 <style>
 .hs-wizard-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
@@ -308,10 +310,47 @@
                             </div>
                         </div>
 
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">Login</label>
+                            <div class="col-md-8">
+                                <p class="help-block" style="margin-top:0;margin-bottom:8px;">Méthodes d'authentification (<code>login-by</code>) appliquées sur le profil MikroTik.</p>
+                                <label class="checkbox-inline" style="display:block;margin:0 0 6px;padding-left:0;">
+                                    <input type="checkbox" name="hotspot_login_methods[]" value="http-chap" class="hs-login-method"{if $hs_login|strstr:',http-chap,' || $hs_login|strstr:',chap,'} checked="checked"{/if}>
+                                    HTTP CHAP
+                                </label>
+                                <label class="checkbox-inline" style="display:block;margin:0 0 6px;padding-left:0;">
+                                    <input type="checkbox" name="hotspot_login_methods[]" value="http-pap" class="hs-login-method"{if $hs_login|strstr:',http-pap,'} checked="checked"{/if}>
+                                    HTTP PAP
+                                </label>
+                                <label class="checkbox-inline" style="display:block;margin:0 0 6px;padding-left:0;">
+                                    <input type="checkbox" name="hotspot_login_methods[]" value="mac-cookie" class="hs-login-method"{if $hs_login|strstr:',mac-cookie,' || $hs_login|strstr:',cookie,'} checked="checked"{/if}>
+                                    MAC COOKIE
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">HTTP Cookie Lifetime</label>
+                            <div class="col-md-8">
+                                <input name="hotspot_cookie_lifetime" id="hotspot_cookie_lifetime" class="form-control" value="{$hs_cookie|escape}" placeholder="1d 00:00:00">
+                                <p class="help-block">Durée de validité du cookie hotspot (ex. <code>1d 00:00:00</code>).</p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">Idle Timeout</label>
+                            <div class="col-md-8">
+                                <input name="hotspot_idle_timeout" id="hotspot_idle_timeout" class="form-control" value="{$hs_idle|escape}" placeholder="00:10:00">
+                                <p class="help-block">Déconnexion après inactivité (ex. <code>00:10:00</code>).</p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">Address Per Mac</label>
+                            <div class="col-md-8">
+                                <input type="number" min="1" max="255" name="hotspot_address_per_mac" id="hotspot_address_per_mac" class="form-control" value="{$hs_address_per_mac|escape}" placeholder="1">
+                                <p class="help-block">Nombre d'adresses IP simultanées par adresse MAC sur le serveur hotspot.</p>
+                            </div>
+                        </div>
+
                         <input type="hidden" name="hotspot_pool_mode" value="existing">
-                        <input type="hidden" name="hotspot_login_methods[]" value="chap">
-                        <input type="hidden" name="hotspot_cookie_lifetime" value="{$hs_cookie|escape}">
-                        <input type="hidden" name="hotspot_idle_timeout" value="{$hs_idle|escape}">
                         <input type="hidden" name="hotspot_keepalive_timeout" value="{$hs_keepalive|escape}">
                     </div>
 
@@ -362,7 +401,7 @@
     </div>
 </form>
 
-<script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.20e"></script>
+<script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.22a"></script>
 <script>
 window.HS_FETCH_URL = '{$hs_fetch_url|escape:'javascript'}';
 window.HS_INITIAL_ROUTER = '{$hs_router|escape:'javascript'}';

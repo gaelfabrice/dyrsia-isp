@@ -231,6 +231,26 @@ body.theme-light .ho-page table.dataTable thead th {
     font-size: 13px;
     color: var(--ho-text) !important;
     background: transparent !important;
+    white-space: normal;
+    word-break: break-word;
+}
+.ho-page table.dataTable tbody td.ho-td-id,
+.ho-page table.dataTable tbody td.ho-td-ref {
+    color: var(--ho-heading) !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    max-width: 160px;
+}
+body.theme-light .ho-page table.dataTable tbody td.ho-td-id,
+body.theme-light .ho-page table.dataTable tbody td.ho-td-ref {
+    color: #0f172a !important;
+}
+.ho-page table.dataTable tbody tr:nth-child(odd) td {
+    background: rgba(255, 255, 255, 0.02) !important;
+}
+body.theme-light .ho-page table.dataTable tbody tr:nth-child(odd) td {
+    background: #f8fafc !important;
 }
 .ho-page table.dataTable tbody tr:hover td {
     background: rgba(37, 99, 235, 0.08) !important;
@@ -452,8 +472,8 @@ body.theme-light .ho-page code { color: #2563eb; }
                     {foreach $payments as $payment}
                     <tr>
                         {if $can_delete_hotspot_history}<td><input type="checkbox" class="row-check" value="{$payment.id}"></td>{/if}
-                        <td>{$payment.transaction_id|escape}</td>
-                        <td>{$payment.transaction_ref|escape}</td>
+                        <td class="ho-td-id">{$payment.transaction_id|default:$payment.transaction_ref|escape}</td>
+                        <td class="ho-td-ref">{$payment.transaction_ref|escape}</td>
                         <td>{$payment.router_name|escape}</td>
                         <td>{$payment.plan_name|escape}</td>
                         <td><code>{$payment.voucher_code|escape}</code></td>

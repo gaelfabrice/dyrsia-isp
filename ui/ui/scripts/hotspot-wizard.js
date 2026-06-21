@@ -221,6 +221,21 @@
             if (prof.smtp_server) setVal('hotspot_smtp_server', prof.smtp_server);
             if (prof.dns_server) setVal('hotspot_dns_server', prof.dns_server);
             if (prof.dns_name && !val('hotspot_dns_name')) setVal('hotspot_dns_name', prof.dns_name);
+            if (prof.login_by) setLoginMethodsFromRouter(prof.login_by);
+            if (prof.http_cookie_lifetime) setVal('hotspot_cookie_lifetime', prof.http_cookie_lifetime);
+            if (prof.idle_timeout) setVal('hotspot_idle_timeout', prof.idle_timeout);
+        });
+    }
+
+    function setLoginMethodsFromRouter(loginBy) {
+        var methods = String(loginBy || '').toLowerCase().split(',').map(function (m) {
+            m = m.trim();
+            if (m === 'chap') return 'http-chap';
+            if (m === 'cookie') return 'mac-cookie';
+            return m;
+        });
+        document.querySelectorAll('input[name="hotspot_login_methods[]"]').forEach(function (cb) {
+            cb.checked = methods.indexOf(cb.value) !== -1;
         });
     }
 
@@ -233,7 +248,10 @@
             'hotspot_address_pool',
             'hotspot_smtp_server',
             'hotspot_dns_server',
-            'hotspot_dns_name'
+            'hotspot_dns_name',
+            'hotspot_cookie_lifetime',
+            'hotspot_idle_timeout',
+            'hotspot_address_per_mac'
         ];
         fields.forEach(function (field) {
             var el = $(field);
@@ -245,6 +263,9 @@
         });
         if (!preserveUserEdits || !$('hotspot_masquerade') || !$('hotspot_masquerade').dataset.userTouched) {
             setVal('hotspot_masquerade', suggested.hotspot_masquerade || '1');
+        }
+        if (suggested.hotspot_login_methods) {
+            setLoginMethodsFromRouter(suggested.hotspot_login_methods);
         }
         var hiddenRange = $('hotspot_pool_range');
         if (hiddenRange && suggested.hotspot_pool_range) {
@@ -369,6 +390,17 @@
         }
     }
 
+    function loginMethodsSummary() {
+        var selected = [];
+        document.querySelectorAll('input[name="hotspot_login_methods[]"]:checked').forEach(function (cb) {
+            if (cb.value === 'http-chap') selected.push('HTTP CHAP');
+            else if (cb.value === 'http-pap') selected.push('HTTP PAP');
+            else if (cb.value === 'mac-cookie') selected.push('MAC COOKIE');
+            else selected.push(cb.value);
+        });
+        return selected.length ? selected.join(', ') : '(aucune)';
+    }
+
     function buildSummary() {
         var rows = [
             ['Titre', val('hotspot_page_title')],
@@ -384,7 +416,11 @@
             ['SMTP', val('hotspot_smtp_server')],
             ['DNS Server', val('hotspot_dns_server')],
             ['DNS Name', val('hotspot_dns_name') || '(vide)'],
-            ['Profil', val('hotspot_profile')]
+            ['Profil', val('hotspot_profile')],
+            ['Login', loginMethodsSummary()],
+            ['HTTP Cookie Lifetime', val('hotspot_cookie_lifetime')],
+            ['Idle Timeout', val('hotspot_idle_timeout')],
+            ['Address Per Mac', val('hotspot_address_per_mac')]
         ];
         var box = $('hs-summary');
         if (!box) return;
