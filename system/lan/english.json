@@ -1729,5 +1729,11 @@
     "New_IP_Pool": "New IP Pool",
     "Select_an_existing_pool_on_the_router_____no_new_pool_will_be_created_on_MikroTik": "Select an existing pool on the router \u2014 no new pool will be created on MikroTik",
     "A_new_pool_will_be_created_on_the_MikroTik_router_when_saving_the_plan": "A new pool will be created on the MikroTik router when saving the plan",
-    "You_cannot_delete_database_in_Demo_mode": "You cannot delete database in Demo mode"
+    "You_cannot_delete_database_in_Demo_mode": "You cannot delete database in Demo mode",
+    "Manage_optical_line_terminals_and_port_capacity_for_FTTH_": "Manage optical line terminals and port capacity for FTTH.",
+    "Brand": "Brand",
+    "Model": "Model",
+    "Ports": "Ports",
+    "No_Data": "No Data",
+    "Advanced_Hotspot_System": "Advanced Hotspot System"
 }

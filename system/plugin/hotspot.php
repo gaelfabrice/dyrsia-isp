@@ -247,6 +247,7 @@ function hotspot_overview()
             if ($key !== 'payments_raw') $ui->assign($key, $value);
         }
         $ui->assign('payments', $payments);
+        $ui->assign('can_delete_hotspot_history', hotspot_can_delete_transaction_history($admin));
         $ui->display('hotspot_overview.tpl');
         exit;
     }
@@ -338,7 +339,13 @@ function hotspot_overview()
     }
     
     $ui->assign('payments', $payments_res);
+    $ui->assign('can_delete_hotspot_history', hotspot_can_delete_transaction_history($admin));
     $ui->display('hotspot_overview.tpl');
+}
+
+function hotspot_can_delete_transaction_history($admin)
+{
+    return false;
 }
 
 /**
@@ -1536,43 +1543,52 @@ function hotspot_block_mac()
 function hotspot_delete_transactions()
 {
     _admin();
+    $admin = Admin::_info();
+
+    if (!hotspot_can_delete_transaction_history($admin)) {
+        echo "FORBIDDEN";
+        exit;
+    }
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         echo "INVALID";
         exit;
     }
 
-    $ids = $_POST['ids'] ?? [];
-
-    if (empty($ids)) {
-        echo "NO DATA";
-        exit;
-    }
-
-    if (!is_array($ids)) {
-        $ids = explode(',', $ids);
-    }
-
     try {
+        if (!empty($_POST['all'])) {
+            ORM::for_table('tbl_hotspot_payments')->delete_many();
+        } else {
+            $ids = $_POST['ids'] ?? [];
 
-        foreach ($ids as $id) {
+            if (empty($ids)) {
+                echo "NO DATA";
+                exit;
+            }
 
-            $row = ORM::for_table('tbl_hotspot_payments')
-                ->where('id', $id)
-                ->find_one();
+            if (!is_array($ids)) {
+                $ids = explode(',', $ids);
+            }
 
-            if ($row) {
-                $row->delete();
+            foreach ($ids as $id) {
+                $row = ORM::for_table('tbl_hotspot_payments')
+                    ->where('id', $id)
+                    ->find_one();
+
+                if ($row) {
+                    $row->delete();
+                }
             }
         }
 
-        // 🔥 CACHE CLEAR
+        // Cache clear
         $CACHE_PATH = 'system/cache/';
-        $files = scandir($CACHE_PATH);
-
-        foreach ($files as $file) {
-            if (pathinfo($file, PATHINFO_EXTENSION) == 'json') {
-                unlink($CACHE_PATH . $file);
+        if (is_dir($CACHE_PATH)) {
+            $files = scandir($CACHE_PATH);
+            foreach ($files as $file) {
+                if (pathinfo($file, PATHINFO_EXTENSION) == 'json') {
+                    @unlink($CACHE_PATH . $file);
+                }
             }
         }
 
