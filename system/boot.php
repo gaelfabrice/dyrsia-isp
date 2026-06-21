@@ -160,8 +160,12 @@ try {
         Tenant::applyAdminBranding($admin);
         Impersonate::assignUi($ui);
         if (($admin['user_type'] ?? '') === 'SuperAdmin') {
+            SuperAdminNotifications::ensureSchema();
             $ui->assign('withdrawal_pending_count', Withdrawal::pendingCount());
             $ui->assign('withdrawal_notifications', Withdrawal::pendingNotifications(8));
+            $ui->assign('superadmin_notify_count', SuperAdminNotifications::totalPendingCount());
+            $ui->assign('superadmin_notify_feed', SuperAdminNotifications::feed(12));
+            $ui->assign('superadmin_registration_pending', SuperAdminNotifications::registrationPendingCount());
         }
     }
     if ($currentTenant && $admin) {

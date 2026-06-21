@@ -6,6 +6,11 @@
             <li {if $_system_menu eq 'dashboard'}class="active"{/if}>
                 <a href="{Text::url('dashboard')}"><i class="ion ion-monitor"></i> <span class="wz-nav-label">{Lang::T('Dashboard')}</span></a>
             </li>
+            {if in_array($_admin['user_type'], ['SuperAdmin','Admin'])}
+            <li {if $_routes[0] eq 'registration_requests'}class="active"{/if}>
+                <a href="{Text::url('registration_requests')}"><i class="ion ion-person-add"></i> <span class="wz-nav-label">{Lang::T('Registration_Requests')}</span>{if $superadmin_registration_pending|default:0 > 0} <span class="label label-danger">{$superadmin_registration_pending}</span>{/if}</a>
+            </li>
+            {/if}
 
             {if in_array($_admin['user_type'], ['SuperAdmin','Admin','Report'])}
             <li class="header wz-nav-section">{Lang::T('Reports')}</li>
@@ -28,15 +33,11 @@
                 <ul class="treeview-menu">
                     <li {if $_system_menu eq 'customers' && $_routes[1] neq 'add'}class="active"{/if}><a href="{Text::url('customers')}"><i class="fa fa-user"></i> {Lang::T('Customer')}</a></li>
                     <li {if $_routes[1] eq 'add'}class="active"{/if}><a href="{Text::url('customers/add')}"><i class="ion ion-person-add"></i> {Lang::T('Add_Customer')}</a></li>
-                    <li {if $_routes[1] eq 'olt_management'}class="active"{/if}><a href="{Text::url('plugin/olt_management')}"><i class="ion ion-network"></i> {Lang::T('OLT_Management')}</a></li>
                     {if in_array($_admin['user_type'], ['SuperAdmin','Admin','Agent'])}
                     <li {if $_routes[1] eq 'users'}class="active"{/if}><a href="{Text::url('settings/users')}"><i class="ion ion-person-stalker"></i> {Lang::T('Administrator_Users')}</a></li>
                     {/if}
                     {if $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
                     <li {if $_routes[0] eq 'impersonate'}class="active"{/if}><a href="{Text::url('impersonate')}"><i class="fa fa-user-secret"></i> {Lang::T('Login as user')}</a></li>
-                    {/if}
-                    {if in_array($_admin['user_type'], ['SuperAdmin','Admin'])}
-                    <li {if $_routes[0] eq 'registration_requests'}class="active"{/if}><a href="{Text::url('registration_requests')}"><i class="ion ion-person-add"></i> {Lang::T('Registration_Requests')}</a></li>
                     {/if}
                     {$_MENU_CUSTOMERS}
                 </ul>
@@ -89,13 +90,14 @@
 
             {if in_array($_admin['user_type'], ['SuperAdmin','Admin'])}
             <li class="header wz-nav-section">{Lang::T('Internet_Plan')}</li>
-            <li class="{if $_system_menu eq 'services' || $_routes[0] eq 'services' || $_routes[0] eq 'bandwidth'}active menu-open{/if} treeview">
+            <li class="{if $_system_menu eq 'services' || $_routes[0] eq 'services' || $_routes[0] eq 'bandwidth' || ($_routes[0] eq 'plugin' && $_routes[1] eq 'olt_management')}active menu-open{/if} treeview">
                 <a href="#"><i class="ion ion-cube"></i> <span class="wz-nav-label">{Lang::T('Internet_Plan')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
                 <ul class="treeview-menu">
                     <li {if $_routes[1] eq 'pppoe'}class="active"{/if}><a href="{Text::url('services/pppoe')}">{Lang::T('PPPOE')}</a></li>
                     <li {if $_routes[1] eq 'hotspot'}class="active"{/if}><a href="{Text::url('services/hotspot')}">{Lang::T('Hotspot_Plan')}</a></li>
                     <li {if $_routes[1] eq 'vpn'}class="active"{/if}><a href="{Text::url('services/vpn')}">{Lang::T('VPN')}</a></li>
                     <li {if $_routes[0] eq 'bandwidth'}class="active"{/if}><a href="{Text::url('bandwidth/list')}">{Lang::T('Bandwidth')}</a></li>
+                    <li {if $_routes[0] eq 'plugin' && $_routes[1] eq 'olt_management'}class="active"{/if}><a href="{Text::url('plugin/olt_management')}"><i class="ion ion-network"></i> {Lang::T('OLT_Management')}</a></li>
                     {if $_c['enable_balance'] == 'yes'}
                     <li {if $_routes[1] eq 'balance'}class="active"{/if}><a href="{Text::url('services/balance')}">{Lang::T('Customer_Balance')}</a></li>
                     {/if}

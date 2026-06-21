@@ -62,6 +62,7 @@ switch ($action) {
         break;
 
     case 'instances':
+        SuperAdminNotifications::markInstanceAlertsRead();
         $status = _req('status');
         $ui->assign('_title', Lang::T('Instances'));
         $ui->assign('instances', AdminSubscription::instances($status));

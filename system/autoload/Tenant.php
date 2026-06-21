@@ -556,6 +556,9 @@ class Tenant
         if (empty($options['skip_notifications'])) {
             self::sendProvisionWelcomeNotifications($notification);
         }
+        if (class_exists('SuperAdminNotifications')) {
+            SuperAdminNotifications::notifyInstanceCreated((int) $tenant->id(), $businessName, $slug);
+        }
 
         return [
             'tenant' => $tenant,

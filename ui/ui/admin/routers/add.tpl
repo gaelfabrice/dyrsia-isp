@@ -31,20 +31,11 @@
 
             <div class="router-section net">
                 <div class="router-section-title"><i class="fa fa-sitemap"></i> {Lang::T('Connexion Réseau')}</div>
-                <div class="alert alert-info" style="border-radius:12px;font-size:13px;line-height:1.5;">
-                    <strong><i class="fa fa-shield"></i> VPN WireGuard (RB2011 / DYRSIA)</strong><br>
-                    Sur votre routeur, l’API est limitée à <code>10.0.0.0/24</code> (<code>/ip service print</code>).<br>
-                    • Depuis <strong>wifizones.org</strong> (VPS) : IP = <code>10.0.0.3</code>, port <code>8728</code><br>
-                    • Nom du routeur = identité MikroTik : <code>RB2011</code><br>
-                    • Utilisateur API avec groupe <code>Dyrsia-access</code> (policy api)<br>
-                    • Ne pas utiliser <code>192.168.88.5</code> — l’API refuse les connexions hors VPN.<br>
-                    • En local (Mac) : connectez WireGuard au même tunnel, puis testez <code>10.0.0.3:8728</code>.
-                </div>
                 <div class="row">
                     <div class="col-md-6 router-field">
                         <label>{Lang::T('Adresse IP')} *</label>
-                        <input type="text" placeholder="10.0.0.3" class="form-control" id="ip_address" name="ip_address" required>
-                        <p class="help-block" style="margin-top:6px;">IP WireGuard du routeur (pas l’IP LAN hotspot).</p>
+                        <input type="text" class="form-control" id="ip_address" name="ip_address" placeholder="192.168.88.1" required>
+                        <p class="help-block" style="margin-top:6px;">{Lang::T('IP Address')} API MikroTik (LAN ou tunnel VPN).</p>
                     </div>
                     <div class="col-md-6 router-field">
                         <label>{Lang::T('Port API')}</label>

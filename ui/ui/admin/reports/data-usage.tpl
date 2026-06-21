@@ -413,7 +413,7 @@ body.theme-light .du-page .du-table th:first-child {
     <div class="du-hero">
         <div>
             <h1><i class="fa fa-area-chart" style="color:#60a5fa;margin-right:8px"></i> {Lang::T('Data Usage')}</h1>
-            <p>Consommation bande passante · Hotspot & PPPoE · Sync MikroTik</p>
+            <p>Consommation bande passante · Hotspot & PPPoE · De votre MikroTik</p>
         </div>
     </div>
 

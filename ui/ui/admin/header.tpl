@@ -630,31 +630,39 @@ body.theme-dark .sidebar-menu li a {
                             <span class="isp-brand-label" title="{Lang::T('Your ISP')}"><i class="fa fa-building-o"></i> {$isp_brand_name|escape}</span>
                         </li>
                         {/if}
-                        {if $_admin['user_type'] eq 'SuperAdmin' && $withdrawal_pending_count|default:0 > 0}
+                        {if $_admin['user_type'] eq 'SuperAdmin'}
                         <li class="dropdown" id="wdNotifyDropdown">
-                            <a href="#" class="dropdown-toggle" data-toggle="dropdown" title="Alertes retraits">
+                            <a href="#" class="dropdown-toggle" data-toggle="dropdown" title="Notifications">
                                 <i class="fa fa-bell"></i>
-                                <span class="label label-danger" style="position:absolute;top:8px;right:4px;font-size:10px;padding:2px 5px">{$withdrawal_pending_count}</span>
+                                {if $superadmin_notify_count|default:0 > 0}
+                                <span class="label label-danger" style="position:absolute;top:8px;right:4px;font-size:10px;padding:2px 5px">{$superadmin_notify_count}</span>
+                                {/if}
                             </a>
-                            <ul class="dropdown-menu" style="min-width:320px;max-height:360px;overflow-y:auto">
-                                <li class="dropdown-header">Demandes de retrait en attente</li>
-                                {foreach $withdrawal_notifications|default:[] as $wn}
+                            <ul class="dropdown-menu" style="min-width:340px;max-height:420px;overflow-y:auto">
+                                <li class="dropdown-header">Notifications en attente ({$superadmin_notify_count|default:0})</li>
+                                {if $superadmin_notify_feed|default:[]|@count > 0}
+                                {foreach $superadmin_notify_feed as $note}
                                 <li>
-                                    <a href="{Text::url('finance/reversement')}&notification={$wn->id}">
-                                        <i class="fa fa-circle text-danger" style="font-size:8px"></i>
-                                        {$wn->message|escape}
+                                    <a href="{$note.url|escape}">
+                                        {if $note.type eq 'withdrawal'}
+                                        <i class="fa fa-money text-danger"></i>
+                                        {elseif $note.type eq 'registration'}
+                                        <i class="fa fa-user-plus text-warning"></i>
+                                        {else}
+                                        <i class="fa fa-cloud text-info"></i>
+                                        {/if}
+                                        {$note.message|escape}
                                     </a>
                                 </li>
                                 {/foreach}
+                                {else}
+                                <li class="text-muted" style="padding:10px 16px">{Lang::T('No Data')}</li>
+                                {/if}
                                 <li class="divider"></li>
-                                <li><a href="{Text::url('finance/reversement')}"><strong>Voir tout — Reversement</strong></a></li>
+                                <li><a href="{Text::url('finance/reversement')}"><strong>Retraits — Reversement</strong>{if $withdrawal_pending_count|default:0 > 0} <span class="label label-danger">{$withdrawal_pending_count}</span>{/if}</a></li>
+                                <li><a href="{Text::url('registration_requests')}"><strong>{Lang::T('Registration_Requests')}</strong>{if $superadmin_registration_pending|default:0 > 0} <span class="label label-danger">{$superadmin_registration_pending}</span>{/if}</a></li>
+                                <li><a href="{Text::url('superadmin/instances')}"><strong>{Lang::T('Instances')}</strong></a></li>
                             </ul>
-                        </li>
-                        {elseif $_admin['user_type'] eq 'SuperAdmin'}
-                        <li>
-                            <a href="{Text::url('finance/reversement')}" title="Reversement">
-                                <i class="fa fa-bell-o"></i>
-                            </a>
                         </li>
                         {/if}
                         <li class="header-search-toggle">

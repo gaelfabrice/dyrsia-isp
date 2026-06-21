@@ -89,37 +89,11 @@ switch ($do) {
                 $request->save();
                 r2(getUrl('portal'), 's', Lang::T('Email verified. You can login now.'));
             }
-            $username = strtolower(preg_replace('/[^a-zA-Z0-9_]/', '', $request->instance_name));
-            if ($username == '') {
-                $username = strtolower(strtok($request->email, '@'));
-            }
-            $baseUsername = $username;
-            $i = 1;
-            while (ORM::for_table('tbl_customers')->where('username', $username)->find_one()) {
-                $username = $baseUsername . $i;
-                $i++;
-            }
-            $customer = ORM::for_table('tbl_customers')->create();
-            $customer->username = $username;
-            $customer->password = $request->password;
-            $customer->fullname = trim($request->first_name . ' ' . $request->last_name);
-            $customer->email = $request->email;
-            $customer->phonenumber = $request->phone;
-            $customer->address = $request->address;
-            $customer->city = $request->city;
-            $customer->state = $request->country;
-            $customer->account_type = 'Personal';
-            $customer->service_type = 'Hotspot';
-            $customer->status = 'Active';
-            $customer->created_at = date('Y-m-d H:i:s');
-            $customer->save();
             $request->email_verified = 1;
-            $request->status = 'approved_trial';
-            $request->trial_expires_at = date('Y-m-d H:i:s', strtotime('+7 days'));
-            $request->customer_id = $customer->id();
+            $request->status = 'pending_approval';
             $request->updated_at = date('Y-m-d H:i:s');
             $request->save();
-            r2(getUrl('portal'), 's', Lang::T('Email verified. You can login now.'));
+            r2(getUrl('customer_requests/verify/' . $id), 's', Lang::T('Email verified. Your registration request is pending approval.'));
         }
         $ui->assign('request', $request);
         $ui->assign('_title', Lang::T('Verify Your Email'));
