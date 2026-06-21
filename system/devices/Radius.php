@@ -156,7 +156,7 @@ class Radius
         } else {
             $unitup = 'M';
         }
-        $rate = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown;
+        $rate = $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup;
         $rates = explode('/', $rate);
 
         // cek jika punya burst
@@ -166,7 +166,7 @@ class Radius
             $ratos = $rates[0] . '/' . $rates[1];
         }
 
-        $this->upsertPackage($plan['id'], 'Ascend-Data-Rate', $this->stringToInteger($rates[1]), ':=');
+        $this->upsertPackage($plan['id'], 'Ascend-Data-Rate', $this->stringToInteger($rates[0]), ':=');
         $this->upsertPackage($plan['id'], 'Ascend-Xmit-Rate', $this->stringToInteger($rates[1]), ':=');
         $this->upsertPackage($plan['id'], 'Mikrotik-Rate-Limit', $ratos, ':=');
     }
@@ -519,14 +519,14 @@ class Radius
             preg_match($pattern, $bw['burst'], $matches);
             if (count($matches) == 9) {
 
-                $burst = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown . ' ' . $matches[1] . '/' . $matches[2] . ' ' . $matches[3] . '/' . $matches[4] . ' ' . $matches[5] . ' ' . $matches[6] . ' ' . $matches[7] . '/' . $matches[8];
+                $burst = $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup . ' ' . $matches[1] . '/' . $matches[2] . ' ' . $matches[3] . '/' . $matches[4] . ' ' . $matches[5] . ' ' . $matches[6] . ' ' . $matches[7] . '/' . $matches[8];
                 $this->upsertCustomer($customer['username'], 'Mikrotik-Rate-Limit', $burst);
             } else {
                 _log("Unexpected burst format for customer " . $customer['username']);
             }
         } else {
             //$this->upsertCustomer($customer['username'], 'Ascend-Data-Rate', $this->stringToInteger($bw['rate_up'] . $unitup) . "/" . $this->stringToInteger($bw['rate_down'] . $unitdown));
-            $this->upsertCustomer($customer['username'], 'Mikrotik-Rate-Limit', $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown);
+            $this->upsertCustomer($customer['username'], 'Mikrotik-Rate-Limit', $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup);
         }
 
         return true;

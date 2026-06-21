@@ -164,21 +164,8 @@ class MikrotikHotspot
             $this->add_plan($new_plan);
         } else {
             $bw = ORM::for_table("tbl_bandwidth")->find_one($new_plan['id_bw']);
-            if ($bw['rate_down_unit'] == 'Kbps') {
-                $unitdown = 'K';
-            } else {
-                $unitdown = 'M';
-            }
-            if ($bw['rate_up_unit'] == 'Kbps') {
-                $unitup = 'K';
-            } else {
-                $unitup = 'M';
-            }
-            $rate = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown;
-            if (!empty(trim($bw['burst']))) {
-                $rate .= ' ' . $bw['burst'];
-            }
-            if ($bw['rate_up'] == '0' || $bw['rate_down'] == '0') {
+            $rate = Mikrotik::hotspotPlanRateLimit($bw ? $bw->as_array() : null);
+            if ($bw && (($bw['rate_up'] ?? '0') == '0' || ($bw['rate_down'] ?? '0') == '0')) {
                 $rate = '';
             }
             $setRequest = new RouterOS\Request('/ip/hotspot/user/profile/set');

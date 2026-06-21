@@ -367,7 +367,7 @@ function process_radiust_rest($tur, $code)
     } else {
         $unitup = 'M';
     }
-    $rate = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown;
+    $rate = $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup;
     $rates = explode('/', $rate);
 
     if (!empty(trim($bw['burst']))) {

@@ -812,7 +812,7 @@ class Mikrotik
                 return '';
             }
 
-            return $up . '/' . $down;
+            return $down . '/' . $up;
         }
 
         $unitdown = ($bw['rate_down_unit'] ?? '') === 'Kbps' ? 'K' : 'M';
@@ -821,7 +821,8 @@ class Mikrotik
             return '';
         }
 
-        $rate = $bw['rate_up'] . $unitup . '/' . $bw['rate_down'] . $unitdown;
+        // MikroTik rate-limit: rx/tx (download/upload from the subscriber perspective).
+        $rate = $bw['rate_down'] . $unitdown . '/' . $bw['rate_up'] . $unitup;
         if (!empty(trim((string) ($bw['burst'] ?? '')))) {
             $rate .= ' ' . trim((string) $bw['burst']);
         }

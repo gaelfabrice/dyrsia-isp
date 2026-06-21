@@ -718,8 +718,8 @@ case 'hotspot-bulk-delete':
                 $unitup = 'M';
                 $radup = '000000';
             }
-            $rate = $b['rate_up'] . $unitup . "/" . $b['rate_down'] . $unitdown;
-            $radiusRate = $b['rate_up'] . $radup . '/' . $b['rate_down'] . $raddown . '/' . $b['burst'];
+            $rate = $b['rate_down'] . $unitdown . "/" . $b['rate_up'] . $unitup;
+            $radiusRate = $b['rate_down'] . $raddown . '/' . $b['rate_up'] . $radup . '/' . $b['burst'];
 
             $rate = trim($rate . " " . $b['burst']);
 
@@ -1074,8 +1074,8 @@ break;
                 $unitup = 'M';
                 $radup = '000000';
             }
-            $rate = $b['rate_up'] . $unitup . "/" . $b['rate_down'] . $unitdown;
-            $radiusRate = $b['rate_up'] . $radup . '/' . $b['rate_down'] . $raddown . '/' . $b['burst'];
+            $rate = $b['rate_down'] . $unitdown . "/" . $b['rate_up'] . $unitup;
+            $radiusRate = $b['rate_down'] . $raddown . '/' . $b['rate_up'] . $radup . '/' . $b['burst'];
             $rate = trim($rate . " " . $b['burst']);
             $d = ORM::for_table('tbl_plans')->create();
             $d->admin_id = $admin['id'];
@@ -1199,8 +1199,8 @@ break;
                 $unitup = 'M';
                 $radup = '000000';
             }
-            $rate = $b['rate_up'] . $unitup . "/" . $b['rate_down'] . $unitdown;
-            $radiusRate = $b['rate_up'] . $radup . '/' . $b['rate_down'] . $raddown . '/' . $b['burst'];
+            $rate = $b['rate_down'] . $unitdown . "/" . $b['rate_up'] . $unitup;
+            $radiusRate = $b['rate_down'] . $raddown . '/' . $b['rate_up'] . $radup . '/' . $b['burst'];
             $rate = trim($rate . " " . $b['burst']);
 
             if ($isSystemExpire) {
@@ -1631,8 +1631,8 @@ break;
                 $unitup = 'M';
                 $radup = '000000';
             }
-            $rate = $b['rate_up'] . $unitup . "/" . $b['rate_down'] . $unitdown;
-            $radiusRate = $b['rate_up'] . $radup . '/' . $b['rate_down'] . $raddown . '/' . $b['burst'];
+            $rate = $b['rate_down'] . $unitdown . "/" . $b['rate_up'] . $unitup;
+            $radiusRate = $b['rate_down'] . $raddown . '/' . $b['rate_up'] . $radup . '/' . $b['burst'];
             $rate = trim($rate . " " . $b['burst']);
             $d = ORM::for_table('tbl_plans')->create();
             $d->admin_id = $admin['id'];
@@ -1739,8 +1739,8 @@ break;
                 $unitup = 'M';
                 $radup = '000000';
             }
-            $rate = $b['rate_up'] . $unitup . "/" . $b['rate_down'] . $unitdown;
-            $radiusRate = $b['rate_up'] . $radup . '/' . $b['rate_down'] . $raddown . '/' . $b['burst'];
+            $rate = $b['rate_down'] . $unitdown . "/" . $b['rate_up'] . $unitup;
+            $radiusRate = $b['rate_down'] . $raddown . '/' . $b['rate_up'] . $radup . '/' . $b['burst'];
             $rate = trim($rate . " " . $b['burst']);
 
             $d->name_plan = $name;
