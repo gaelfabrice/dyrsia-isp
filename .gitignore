@@ -73,9 +73,7 @@ system/devices/**
 !system/devices/MikrotikHotspot.php
 /.vs
 docker-compose.yml
-dist/*
-!dist/wifizone-server-latest.tar.gz
-!dist/BUILD.json
+dist/
 docs/**
 !docs/*.html
 !docs/*.md
