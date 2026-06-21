@@ -35,6 +35,7 @@ $db_port = wz_env('DB_PORT', '');
 $db_user = wz_env('DB_USERNAME', wz_env('DB_USER', 'root'));
 $db_pass = wz_env('DB_PASSWORD', wz_env('DB_PASS', ''));
 $db_name = wz_env('DB_DATABASE', wz_env('DB_NAME', 'wifizones'));
+$db_password = $db_pass;
 
 if ($_app_stage != 'Live') {
     error_reporting(E_ERROR);

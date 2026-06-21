@@ -82,6 +82,55 @@ if (!file_exists($UPLOAD_PATH . File::pathFixer('/notifications.default.json')))
 }
 
 require_once $root_path . 'config.php';
+
+if (!defined('APP_URL') || !isset($db_host, $db_user, $db_name, $db_pass, $_app_stage)) {
+    $sampleConfig = $root_path . 'config.sample.php';
+    if (file_exists($sampleConfig)) {
+        require_once $sampleConfig;
+    }
+}
+
+$db_password = $db_password ?? null;
+$db_pass = $db_pass ?? ($db_password ?? '');
+$db_host = $db_host ?? (getenv('DB_HOST') ?: 'localhost');
+$db_user = $db_user ?? (getenv('DB_USERNAME') ?: (getenv('DB_USER') ?: 'root'));
+$db_name = $db_name ?? (getenv('DB_DATABASE') ?: (getenv('DB_NAME') ?: 'wifizones'));
+if ($db_pass === null || $db_pass === '') {
+    $envPass = getenv('DB_PASSWORD');
+    if ($envPass === false || $envPass === '') {
+        $envPass = getenv('DB_PASS');
+    }
+    $db_pass = ($db_password ?? null) ?: ($envPass !== false ? $envPass : '');
+}
+$_app_stage = $_app_stage ?? (getenv('APP_STAGE') ?: 'Live');
+
+if (!defined('APP_URL')) {
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+        || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    $protocol = $isHttps ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
+    $baseDir = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/\\');
+    define('APP_URL', $protocol . $host . $baseDir);
+}
+
+if ($_app_stage != 'Live' && $_app_stage != 'Demo' && $_app_stage != 'demo') {
+    error_reporting(E_ERROR);
+    ini_set('display_errors', 1);
+    ini_set('display_startup_errors', 1);
+} elseif ($_app_stage == 'Live') {
+    error_reporting(E_ERROR);
+    ini_set('display_errors', 0);
+    ini_set('display_startup_errors', 0);
+}
+
+if ($db_password != null && ($db_pass == null || $db_pass === '')) {
+    $db_pass = $db_password;
+}
+if ($db_pass != null && $db_pass !== '') {
+    $db_password = $db_pass;
+}
+
 require_once $root_path . File::pathFixer('system/orm.php');
 
 // Suppress PHP 8.x deprecation warnings for PEAR2 library
@@ -91,15 +140,6 @@ require_once $root_path . File::pathFixer('system/autoload/PEAR2/Autoload.php');
 error_reporting($_pear2_prev_err_level);
 
 include $root_path . File::pathFixer('system/autoload/Hookers.php');
-
-if ($db_password != null && ($db_pass == null || empty($db_pass))) {
-    // compability for old version
-    $db_pass = $db_password;
-}
-if ($db_pass != null) {
-    // compability for old version
-    $db_password = $db_pass;
-}
 ORM::configure("mysql:host=$db_host;dbname=$db_name");
 ORM::configure('username', $db_user);
 ORM::configure('password', $db_pass);
