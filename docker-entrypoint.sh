@@ -20,4 +20,7 @@ fi
 chown -R www-data:www-data "${APP_ROOT}/system/uploads" "${APP_ROOT}/system/cache" "${APP_ROOT}/ui/compiled" "${APP_ROOT}/ui/cache" 2>/dev/null || true
 chmod -R 775 "${APP_ROOT}/system/uploads" "${APP_ROOT}/system/cache" "${APP_ROOT}/ui/compiled" "${APP_ROOT}/ui/cache" 2>/dev/null || true
 
+find "${APP_ROOT}" -path '*/vendor/*' -prune -o \( -name '._*' -o -name '.DS_Store' \) -print -delete 2>/dev/null || true
+find "${APP_ROOT}" -type d -name '__MACOSX' -exec rm -rf {} + 2>/dev/null || true
+
 exec "$@"

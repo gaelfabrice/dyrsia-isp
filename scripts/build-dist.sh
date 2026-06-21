@@ -47,6 +47,9 @@ rm -f \
   "$STAGING/CHECKPOINT.md" \
   "$STAGING/.DS_Store"
 
+find "$STAGING" \( -name '._*' -o -name '.DS_Store' \) -delete 2>/dev/null || true
+find "$STAGING" -type d -name '__MACOSX' -exec rm -rf {} + 2>/dev/null || true
+
 tar -czf "$DIST_DIR/$PACKAGE_NAME" -C "$STAGING" .
 rm -rf "$STAGING"
 

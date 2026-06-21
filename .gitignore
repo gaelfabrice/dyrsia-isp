@@ -5,6 +5,9 @@ config.php
 render-env-vars.txt
 secrets/
 .DS_Store
+._*
+**/.DS_Store
+**/._*
 .vscode/
 ui/ui/compiled
 ui/compiled/*.php

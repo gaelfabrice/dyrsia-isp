@@ -11,6 +11,11 @@ class WifiZoneOps
 
         echo "=== WifiZone main cron " . date('c') . " ===\n";
 
+        $purged = WifiZoneCore::purgeMacOsMetadata();
+        if ($purged > 0) {
+            echo "Removed {$purged} macOS metadata file(s).\n";
+        }
+
         file_put_contents($UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt', date('c'));
 
         WifiZonePayment::processPendingQueue(30);

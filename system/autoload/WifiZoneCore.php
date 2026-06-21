@@ -7,6 +7,7 @@ class WifiZoneCore
 {
     public static function boot()
     {
+        self::purgeMacOsMetadataIfDue();
         self::installSchema();
         self::ensureUsersLoginTokenColumn();
         self::ensureConfig();
@@ -386,5 +387,91 @@ class WifiZoneCore
             $checks['cron_marker'] = (time() - filemtime($cronFile)) < 900;
         }
         return $checks;
+    }
+
+    /**
+     * macOS AppleDouble / Finder metadata (._*, .DS_Store, __MACOSX).
+     */
+    public static function isMacOsMetadataName($name)
+    {
+        $name = (string) $name;
+        if ($name === '' || $name === '.' || $name === '..') {
+            return false;
+        }
+
+        return $name === '.DS_Store'
+            || $name === '__MACOSX'
+            || str_starts_with($name, '._');
+    }
+
+    /**
+     * @param list<string>|null $paths
+     * @return int Number of files/directories removed
+     */
+    public static function purgeMacOsMetadata(?array $paths = null)
+    {
+        global $root_path, $UPLOAD_PATH, $CACHE_PATH;
+
+        if ($paths === null) {
+            $paths = array_values(array_filter([
+                $UPLOAD_PATH ?? null,
+                $CACHE_PATH ?? null,
+                isset($root_path) ? $root_path . 'ui' . DIRECTORY_SEPARATOR . 'compiled' : null,
+                isset($root_path) ? $root_path . 'ui' . DIRECTORY_SEPARATOR . 'cache' : null,
+                isset($root_path) ? $root_path . 'pages' : null,
+            ], static function ($path) {
+                return is_string($path) && $path !== '' && is_dir($path);
+            }));
+        }
+
+        $removed = 0;
+        foreach ($paths as $path) {
+            if (!is_dir($path)) {
+                continue;
+            }
+            try {
+                $iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+                    RecursiveIteratorIterator::CHILD_FIRST
+                );
+                foreach ($iterator as $item) {
+                    $base = $item->getBasename();
+                    if (!self::isMacOsMetadataName($base)) {
+                        continue;
+                    }
+                    if ($item->isDir()) {
+                        if (@rmdir($item->getPathname())) {
+                            $removed++;
+                        }
+                    } elseif (@unlink($item->getPathname())) {
+                        $removed++;
+                    }
+                }
+            } catch (Throwable $e) {
+                error_log('wifizone purgeMacOsMetadata: ' . $e->getMessage());
+            }
+        }
+
+        return $removed;
+    }
+
+    public static function purgeMacOsMetadataIfDue($intervalSeconds = 3600)
+    {
+        global $CACHE_PATH;
+
+        $cacheDir = $CACHE_PATH ?? null;
+        if (!is_string($cacheDir) || $cacheDir === '' || !is_dir($cacheDir)) {
+            self::purgeMacOsMetadata();
+
+            return;
+        }
+
+        $marker = $cacheDir . DIRECTORY_SEPARATOR . 'macos_metadata_cleanup.txt';
+        if (is_file($marker) && (time() - filemtime($marker)) < (int) $intervalSeconds) {
+            return;
+        }
+
+        self::purgeMacOsMetadata();
+        @touch($marker);
     }
 }
