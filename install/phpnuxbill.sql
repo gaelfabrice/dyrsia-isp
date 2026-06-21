@@ -125,6 +125,7 @@ CREATE TABLE `tbl_plans` (
 DROP TABLE IF EXISTS `tbl_pool`;
 CREATE TABLE `tbl_pool` (
   `id` int NOT NULL,
+  `admin_id` int DEFAULT NULL,
   `pool_name` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `local_ip` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `range_ip` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -254,6 +255,7 @@ CREATE TABLE `tbl_customers_inbox` (
 DROP TABLE IF EXISTS `tbl_port_pool`;
 CREATE TABLE IF NOT EXISTS `tbl_port_pool` (
   `id` int(10) NOT NULL AUTO_INCREMENT,
+  `admin_id` int DEFAULT NULL,
   `public_ip` varchar(40) NOT NULL,
   `port_name` varchar(40) NOT NULL,
   `range_port` varchar(40) NOT NULL,

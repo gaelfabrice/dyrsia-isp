@@ -157,10 +157,12 @@ if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
 
 try {
     $db = ORM::getDb();
-    $columns = $db->query("SHOW COLUMNS FROM tbl_plans LIKE 'admin_id'")->fetchAll(PDO::FETCH_ASSOC);
-    if (empty($columns)) {
-        ORM::raw_execute("ALTER TABLE tbl_plans ADD COLUMN admin_id INT NULL DEFAULT NULL AFTER id");
-        ORM::raw_execute("UPDATE tbl_plans SET admin_id = " . intval($admin['id']) . " WHERE admin_id IS NULL");
+    foreach (['tbl_plans', 'tbl_pool', 'tbl_port_pool'] as $table) {
+        $columns = $db->query("SHOW COLUMNS FROM $table LIKE 'admin_id'")->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($columns)) {
+            ORM::raw_execute("ALTER TABLE $table ADD COLUMN admin_id INT NULL DEFAULT NULL AFTER id");
+            ORM::raw_execute("UPDATE $table SET admin_id = " . intval($admin['id']) . " WHERE admin_id IS NULL");
+        }
     }
 } catch (Exception $e) {
 }

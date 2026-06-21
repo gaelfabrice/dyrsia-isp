@@ -317,6 +317,8 @@ class WifiZoneCore
         self::ensureColumn('tbl_routers', 'currency_code', 'VARCHAR(8) DEFAULT NULL');
         self::ensureColumn('tbl_routers', 'zone_name', 'VARCHAR(64) DEFAULT NULL');
         self::ensureColumn('admin_wallet_logs', 'transfer_type', "VARCHAR(32) DEFAULT NULL");
+        self::ensureColumn('tbl_pool', 'admin_id', 'INT NULL DEFAULT NULL');
+        self::ensureColumn('tbl_port_pool', 'admin_id', 'INT NULL DEFAULT NULL');
     }
 
     private static function ensureColumn($table, $column, $definition)
