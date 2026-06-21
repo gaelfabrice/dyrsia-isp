@@ -115,21 +115,31 @@ class Mikrotik
      */
     private static function resolveHostIpv4Fast($host)
     {
-        $host = trim((string) $host);
+        static $cache = [];
+        $host = strtolower(trim((string) $host));
         if ($host === '') {
             return null;
         }
+        if (array_key_exists($host, $cache)) {
+            return $cache[$host];
+        }
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $cache[$host] = $host;
+
             return $host;
         }
         $records = @dns_get_record($host, DNS_A);
         if (is_array($records)) {
             foreach ($records as $rec) {
                 if (!empty($rec['ip']) && filter_var($rec['ip'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $cache[$host] = $rec['ip'];
+
                     return $rec['ip'];
                 }
             }
         }
+        $cache[$host] = null;
+
         return null;
     }
 
@@ -196,6 +206,290 @@ class Mikrotik
         return $start !== false && $end !== false && $ipLong >= $start && $ipLong <= $end;
     }
 
+    /**
+     * Liste les pools IP d'un routeur (MikroTik + base locale), pour les formulaires PPPoE.
+     *
+     * @return array<int, array{name:string,ranges:string,local_ip:string,source:string}>
+     */
+    public static function fetchRouterIpPools($routerName, $admin = null)
+    {
+        global $_app_stage;
+
+        $routerName = trim((string) $routerName);
+        if ($routerName === '') {
+            return [];
+        }
+
+        $merged = [];
+        $dbQuery = ORM::for_table('tbl_pool')->where('routers', $routerName);
+        if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $dbQuery->where('admin_id', (int) ($admin['id'] ?? 0));
+        }
+        foreach ($dbQuery->find_many() as $row) {
+            $name = trim((string) ($row['pool_name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $merged[$name] = [
+                'name' => $name,
+                'ranges' => trim((string) ($row['range_ip'] ?? '')),
+                'local_ip' => trim((string) ($row['local_ip'] ?? '')),
+                'source' => 'db',
+            ];
+        }
+
+        if ($routerName === 'radius' || strtolower((string) $_app_stage) === 'demo') {
+            return array_values($merged);
+        }
+        if (class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin)) {
+            return array_values($merged);
+        }
+
+        $router = self::resolveRouterRecord($routerName, $admin);
+        if (!$router) {
+            throw new Exception(Lang::T('Router not found') . ' (' . $routerName . ')');
+        }
+        if (is_object($router) && method_exists($router, 'as_array')) {
+            $router = $router->as_array();
+        }
+
+        $client = self::getClient(
+            $router['ip_address'],
+            $router['username'],
+            self::routerPassword($router['password']),
+            15
+        );
+        if (!$client) {
+            throw new Exception(Lang::T('Cannot connect to MikroTik'));
+        }
+        $responses = $client->sendSync(
+            (new RouterOS\Request('/ip/pool/print'))
+                ->setArgument('.proplist', 'name,ranges')
+        );
+        foreach ($responses as $row) {
+            if ($row->getType() === 'trap') {
+                continue;
+            }
+            $name = trim((string) $row->getProperty('name'));
+            if ($name === '') {
+                continue;
+            }
+            $ranges = trim((string) $row->getProperty('ranges'));
+            if (isset($merged[$name])) {
+                if ($merged[$name]['ranges'] === '' && $ranges !== '') {
+                    $merged[$name]['ranges'] = $ranges;
+                }
+                $merged[$name]['source'] = 'both';
+                continue;
+            }
+            $merged[$name] = [
+                'name' => $name,
+                'ranges' => $ranges,
+                'local_ip' => '',
+                'source' => 'mikrotik',
+            ];
+        }
+
+        ksort($merged, SORT_NATURAL | SORT_FLAG_CASE);
+
+        return array_values($merged);
+    }
+
+    /**
+     * Garantit qu'un pool existe en base et sur le MikroTik avant création d'un forfait PPPoE.
+     *
+     * @param string $mode existing = pool déjà sur le routeur (sans création) | new = créer le pool | auto = legacy
+     */
+    public static function ensureRouterIpPool($routerName, $poolName, $rangeIp = '', $localIp = '', $admin = null, $mode = 'auto')
+    {
+        global $_app_stage;
+
+        $routerName = trim((string) $routerName);
+        $poolName = trim((string) $poolName);
+        $rangeIp = trim((string) $rangeIp);
+        $localIp = trim((string) $localIp);
+        $mode = in_array($mode, ['existing', 'new', 'auto'], true) ? $mode : 'auto';
+
+        if ($routerName === '' || $poolName === '') {
+            throw new InvalidArgumentException(Lang::T('All field is required'));
+        }
+        if (Validator::Length($poolName, 30, 2) == false) {
+            throw new InvalidArgumentException('Name should be between 3 to 30 characters');
+        }
+
+        $scopedPool = ORM::for_table('tbl_pool')->where('pool_name', $poolName);
+        if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $scopedPool->where('admin_id', (int) ($admin['id'] ?? 0));
+        }
+        $existingAny = $scopedPool->find_one();
+
+        $scopedPoolForRouter = ORM::for_table('tbl_pool')
+            ->where('pool_name', $poolName)
+            ->where('routers', $routerName);
+        if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $scopedPoolForRouter->where('admin_id', (int) ($admin['id'] ?? 0));
+        }
+        $existingForRouter = $scopedPoolForRouter->find_one();
+
+        // En mode « nouveau », le nom ne doit pas déjà exister pour un autre routeur.
+        // En mode « existant », on réutilise un pool déjà sur le MikroTik sans cette erreur.
+        if ($mode !== 'existing' && $existingAny && trim((string) ($existingAny['routers'] ?? '')) !== $routerName) {
+            throw new Exception(Lang::T('Pool Name Already Exist'));
+        }
+
+        $existing = $existingForRouter ?: $existingAny;
+
+        $remotePools = [];
+        if ($routerName !== 'radius' && strtolower((string) $_app_stage) !== 'demo'
+            && !(class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin))) {
+            foreach (self::fetchRouterIpPools($routerName, $admin) as $poolRow) {
+                $remotePools[$poolRow['name']] = $poolRow;
+            }
+        }
+
+        $onMikrotik = isset($remotePools[$poolName]);
+
+        if ($mode === 'existing') {
+            if ($routerName !== 'radius' && !$onMikrotik && !$existingForRouter) {
+                throw new InvalidArgumentException(
+                    Lang::T('Select Pool') . ' — ' . Lang::T('Pool not found on the selected router')
+                );
+            }
+            if ($rangeIp === '' && isset($remotePools[$poolName])) {
+                $rangeIp = trim((string) ($remotePools[$poolName]['ranges'] ?? ''));
+            }
+            if ($rangeIp === '' && $existingForRouter) {
+                $rangeIp = trim((string) ($existingForRouter['range_ip'] ?? ''));
+            }
+            if ($localIp === '' && $existingForRouter) {
+                $localIp = trim((string) ($existingForRouter['local_ip'] ?? ''));
+            }
+            if ($localIp === '' && $rangeIp !== '') {
+                $localIp = self::resolvePoolGatewayAddress(['local_ip' => '', 'range_ip' => $rangeIp]);
+            }
+            if ($existingForRouter) {
+                return $poolName;
+            }
+            if ($rangeIp === '' && $routerName === 'radius') {
+                throw new InvalidArgumentException(Lang::T('All field is required'));
+            }
+            $record = ORM::for_table('tbl_pool')->create();
+            if (is_array($admin)) {
+                $record->admin_id = (int) ($admin['id'] ?? 0);
+            }
+            $record->pool_name = $poolName;
+            $record->range_ip = $rangeIp;
+            $record->local_ip = $localIp;
+            $record->routers = $routerName;
+            $record->save();
+            return $poolName;
+        }
+
+        if ($mode === 'new') {
+            if ($onMikrotik) {
+                throw new Exception(Lang::T('Pool Name Already Exist') . ' — ' . Lang::T('Select Pool'));
+            }
+            if ($existingAny) {
+                throw new Exception(Lang::T('Pool Name Already Exist'));
+            }
+            if ($rangeIp === '') {
+                throw new InvalidArgumentException(
+                    Lang::T('Range IP') . ' — ' . Lang::T('Required for a new pool on MikroTik')
+                );
+            }
+            if ($localIp !== '' && $rangeIp !== '') {
+                $resolved = self::resolvePoolGatewayAddress(['local_ip' => $localIp, 'range_ip' => $rangeIp]);
+                if ($localIp !== $resolved && filter_var($resolved, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $localIp = $resolved;
+                }
+            } else {
+                $localIp = self::resolvePoolGatewayAddress(['local_ip' => '', 'range_ip' => $rangeIp]);
+            }
+            $record = ORM::for_table('tbl_pool')->create();
+            if (is_array($admin)) {
+                $record->admin_id = (int) ($admin['id'] ?? 0);
+            }
+            $record->pool_name = $poolName;
+            $record->range_ip = $rangeIp;
+            $record->local_ip = $localIp;
+            $record->routers = $routerName;
+            $record->save();
+            $needsMikrotikCreate = $routerName !== 'radius'
+                && strtolower((string) $_app_stage) !== 'demo'
+                && !(class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin));
+            if ($needsMikrotikCreate) {
+                require_once $GLOBALS['DEVICE_PATH'] . DIRECTORY_SEPARATOR . 'MikrotikPppoe.php';
+                (new MikrotikPppoe())->add_pool($record->as_array());
+            }
+            return $poolName;
+        }
+
+        // mode auto (legacy)
+        if ($rangeIp === '' && isset($remotePools[$poolName])) {
+            $rangeIp = trim((string) ($remotePools[$poolName]['ranges'] ?? ''));
+        }
+        if ($rangeIp === '' && $existing) {
+            $rangeIp = trim((string) ($existing['range_ip'] ?? ''));
+        }
+        if ($localIp === '' && $existing) {
+            $localIp = trim((string) ($existing['local_ip'] ?? ''));
+        }
+
+        $onMikrotik = isset($remotePools[$poolName]);
+        $needsMikrotikCreate = !$onMikrotik && $routerName !== 'radius'
+            && $_app_stage != 'demo'
+            && !(class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin));
+
+        if ($needsMikrotikCreate && $rangeIp === '') {
+            throw new InvalidArgumentException(
+                Lang::T('Range IP') . ' — ' . Lang::T('Required for a new pool on MikroTik')
+            );
+        }
+
+        if ($localIp !== '' && $rangeIp !== '') {
+            $resolved = self::resolvePoolGatewayAddress(['local_ip' => $localIp, 'range_ip' => $rangeIp]);
+            if ($localIp !== $resolved && filter_var($resolved, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $localIp = $resolved;
+            }
+        } elseif ($rangeIp !== '') {
+            $localIp = self::resolvePoolGatewayAddress(['local_ip' => '', 'range_ip' => $rangeIp]);
+        }
+
+        if ($existing) {
+            if ($needsMikrotikCreate && $rangeIp !== '') {
+                require_once $GLOBALS['DEVICE_PATH'] . DIRECTORY_SEPARATOR . 'MikrotikPppoe.php';
+                (new MikrotikPppoe())->add_pool([
+                    'pool_name' => $poolName,
+                    'range_ip' => $rangeIp,
+                    'local_ip' => $localIp,
+                    'routers' => $routerName,
+                ]);
+            }
+            return $poolName;
+        }
+
+        if ($rangeIp === '' && $routerName === 'radius') {
+            throw new InvalidArgumentException(Lang::T('All field is required'));
+        }
+
+        $record = ORM::for_table('tbl_pool')->create();
+        if (is_array($admin)) {
+            $record->admin_id = (int) ($admin['id'] ?? 0);
+        }
+        $record->pool_name = $poolName;
+        $record->range_ip = $rangeIp;
+        $record->local_ip = $localIp;
+        $record->routers = $routerName;
+        $record->save();
+
+        if ($needsMikrotikCreate) {
+            require_once $GLOBALS['DEVICE_PATH'] . DIRECTORY_SEPARATOR . 'MikrotikPppoe.php';
+            (new MikrotikPppoe())->add_pool($record->as_array());
+        }
+
+        return $poolName;
+    }
+
     private static function formatMikrotikConnectionHelp($host, $port)
     {
         $hints = [
@@ -205,7 +499,10 @@ class Mikrotik
         ];
 
         if (preg_match('/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/', (string) $host)) {
-            $hints[] = 'IP privée (' . $host . ') : le serveur DYRSIA doit être sur le même réseau/VPN que le MikroTik. Depuis wifizones.org, utilisez l’IP publique du routeur ou un tunnel VPN.';
+            $hints[] = 'IP privée (' . $host . ') : le serveur DYRSIA doit être sur le même réseau/VPN que le MikroTik. Depuis wifizones.org, utilisez l’IP WireGuard du routeur (ex. 10.0.0.3), pas l’IP LAN (192.168.88.x).';
+            if (preg_match('/^10\.0\.0\./', (string) $host)) {
+                $hints[] = 'Si l’API MikroTik est restreinte à 10.0.0.0/24 (/ip service set api address=10.0.0.0/24), seul un peer WireGuard peut se connecter — vérifiez le tunnel Dyrsia-VPN et le pare-feu input port 8728.';
+            }
         }
 
         return Lang::T('Cannot connect to MikroTik')
@@ -223,6 +520,49 @@ class Mikrotik
         }
 
         return $password;
+    }
+
+    /**
+     * Find tbl_routers row by name, description or IP prefix (scoped to admin when provided).
+     *
+     * @param array|null $admin
+     * @return ORM|null
+     */
+    public static function resolveRouterRecord($routerName, $admin = null)
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName === '') {
+            return null;
+        }
+
+        $scoped = static function () use ($admin) {
+            $query = ORM::for_table('tbl_routers');
+            if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
+                $query->where('admin_id', (int) ($admin['id'] ?? 0));
+            }
+
+            return $query;
+        };
+
+        $mikrotik = $scoped()->where('name', $routerName)->find_one();
+        if ($mikrotik) {
+            return $mikrotik;
+        }
+
+        $mikrotik = $scoped()->where('description', $routerName)->find_one();
+        if ($mikrotik) {
+            return $mikrotik;
+        }
+
+        $routerIp = explode(':', $routerName)[0];
+        if ($routerIp !== '' && filter_var($routerIp, FILTER_VALIDATE_IP)) {
+            $mikrotik = $scoped()->where_like('ip_address', $routerIp . '%')->find_one();
+            if ($mikrotik) {
+                return $mikrotik;
+            }
+        }
+
+        return null;
     }
 
     public static function getClient($ip, $user, $pass, $timeout = 5)
@@ -463,6 +803,18 @@ class Mikrotik
             return '';
         }
 
+        $unitdownRaw = strtolower(trim((string) ($bw['rate_down_unit'] ?? '')));
+        $unitupRaw = strtolower(trim((string) ($bw['rate_up_unit'] ?? '')));
+        if ($unitdownRaw === 'bps' || $unitupRaw === 'bps') {
+            $up = (int) ($bw['rate_up'] ?? 0);
+            $down = (int) ($bw['rate_down'] ?? 0);
+            if ($up <= 0 || $down <= 0) {
+                return '';
+            }
+
+            return $up . '/' . $down;
+        }
+
         $unitdown = ($bw['rate_down_unit'] ?? '') === 'Kbps' ? 'K' : 'M';
         $unitup = ($bw['rate_up_unit'] ?? '') === 'Kbps' ? 'K' : 'M';
         if (($bw['rate_up'] ?? '0') == '0' || ($bw['rate_down'] ?? '0') == '0') {
@@ -475,6 +827,775 @@ class Mikrotik
         }
 
         return $rate;
+    }
+
+    /**
+     * Profil EXPIRE : pas de rate-limit (suspension via firewall pppoe-expired).
+     */
+    public static function pppoeExpireSystemRateLimit()
+    {
+        return '';
+    }
+
+    /**
+     * Script MikroTik on-up profil EXPIRE : ajoute l'IP client à pppoe-expired.
+     * $remote-address peut être vide au moment on-up sur certains firmwares → fallback $address.
+     */
+    public static function pppoeExpiredProfileOnUpScript()
+    {
+        return ':local ip "$remote-address"; '
+            . ':if ([:len $ip]=0) do={ :set ip "$address" }; '
+            . ':if ([:len $ip]>0) do={ '
+            . ':if ([len [/ip firewall address-list find list=pppoe-expired address=$ip]]=0) do={ '
+            . '/ip firewall address-list add list=pppoe-expired address=$ip comment=$user '
+            . '} }';
+    }
+
+    /**
+     * Script MikroTik on-down profil EXPIRE : retire l'IP de pppoe-expired.
+     */
+    public static function pppoeExpiredProfileOnDownScript()
+    {
+        return ':local ip "$remote-address"; '
+            . ':if ([:len $ip]=0) do={ :set ip "$address" }; '
+            . ':if ([:len $ip]>0) do={ '
+            . '/ip firewall address-list remove [find list=pppoe-expired address=$ip] '
+            . '}';
+    }
+
+    /**
+     * Toute session PPPoE profil EXPIRE (active ou secret) → liste pppoe-expired + coupure flux.
+     *
+     * @return array{ok: bool, enforced: int, errors: array<int, string>}
+     */
+    public static function sweepActiveExpirePppoeSessions($client)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'enforced' => 0, 'errors' => []];
+        }
+
+        $enforced = 0;
+        $errors = [];
+        $seenIps = [];
+        $flushIps = [];
+
+        $enforceIp = static function ($ip, $login) use ($client, &$enforced, &$seenIps, &$flushIps) {
+            $ip = trim((string) $ip);
+            if ($ip === '' || !filter_var($ip, FILTER_VALIDATE_IP) || isset($seenIps[$ip])) {
+                return;
+            }
+            $seenIps[$ip] = true;
+            $flushIps[] = $ip;
+            self::ensureAddressListEntry($client, 'pppoe-expired', $ip, $login);
+            self::rememberPppoeExpiredClientMeta($login, $ip);
+            $enforced++;
+        };
+
+        try {
+            $activePrint = new RouterOS\Request('/ppp/active/print');
+            $activePrint->setArgument('.proplist', 'name,address,profile');
+            foreach ($client->sendSync($activePrint) as $row) {
+                $profile = strtoupper(trim((string) $row->getProperty('profile')));
+                if ($profile !== 'EXPIRE') {
+                    continue;
+                }
+                $enforceIp($row->getProperty('address'), $row->getProperty('name'));
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'sweep active EXPIRE: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'sweep active EXPIRE: ' . $e->getMessage();
+        }
+
+        if ($flushIps !== []) {
+            self::flushConnectionTrackingForIps($client, $flushIps);
+        }
+
+        return ['ok' => empty($errors), 'enforced' => $enforced, 'errors' => $errors];
+    }
+
+    /**
+     * Retire le rate-limit d'un profil PPP (ex. EXPIRE après ancienne sync 1/1).
+     */
+    public static function unsetPppoeProfileRateLimit($client, $profileName)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return;
+        }
+        $profileName = trim((string) $profileName);
+        if ($profileName === '') {
+            return;
+        }
+        try {
+            $printRequest = new RouterOS\Request('/ppp/profile/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(RouterOS\Query::where('name', $profileName));
+            $profileId = $client->sendSync($printRequest)->getProperty('.id');
+            if (empty($profileId)) {
+                return;
+            }
+            $unsetRequest = new RouterOS\Request('/ppp/profile/unset');
+            $unsetRequest->setArgument('numbers', $profileId);
+            $unsetRequest->setArgument('value-name', 'rate-limit');
+            $client->sendSync($unsetRequest);
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+    }
+
+    /** @var bool */
+    private static $pppoeExpiredIsolationEnsured = false;
+
+    public static function resetPppoeSyncRuntimeState()
+    {
+        self::$pppoeExpiredIsolationEnsured = false;
+    }
+
+    /**
+     * Réutilise une connexion API MikroTik pour tous les sync_customer PPPoE (évite 1 TCP/API par client).
+     */
+    public static function withPppoeSharedClient($client, callable $callback)
+    {
+        $driver = self::pppoeDevice();
+        MikrotikPppoe::useSharedClient($client);
+        try {
+            return $callback($driver);
+        } finally {
+            MikrotikPppoe::clearSharedClient();
+        }
+    }
+
+    /**
+     * Coupe les sessions actives pour une IP (script routeur, 1 passe au lieu de N×API).
+     */
+    public static function removeConnectionTrackingForIp($client, $ip)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return 0;
+        }
+        $ip = trim((string) $ip);
+        if ($ip === '' || !filter_var($ip, FILTER_VALIDATE_IP)) {
+            return 0;
+        }
+
+        $safeIp = str_replace('"', '', $ip);
+        self::runRouterOneShotScript(
+            $client,
+            'dyrsia_rmconn',
+            '/ip firewall connection remove [find src-address="' . $safeIp . '"]' . "\n"
+            . '/ip firewall connection remove [find dst-address="' . $safeIp . '"]'
+        );
+
+        return 1;
+    }
+
+    /**
+     * @param array<int, string> $ips
+     */
+    public static function flushConnectionTrackingForIps($client, array $ips)
+    {
+        $ips = array_values(array_unique(array_filter(array_map('trim', $ips))));
+        if ($ips === []) {
+            return;
+        }
+        $lines = [];
+        foreach ($ips as $ip) {
+            if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+                continue;
+            }
+            $safeIp = str_replace('"', '', $ip);
+            $lines[] = '/ip firewall connection remove [find src-address="' . $safeIp . '"]';
+            $lines[] = '/ip firewall connection remove [find dst-address="' . $safeIp . '"]';
+        }
+        if ($lines === []) {
+            return;
+        }
+        self::runRouterOneShotScript($client, 'dyrsia_flush_conn', implode("\n", $lines));
+    }
+
+    public static function isPppoeExpiredCaptiveConfigured($client)
+    {
+        try {
+            $printRequest = new RouterOS\Request('/ip/firewall/nat/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(RouterOS\Query::where('comment', 'DYRSIA-PPPOE-EXPIRED redirect http captive'));
+
+            return (bool) $client->sendSync($printRequest)->getProperty('.id');
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Isolation stricte clients PPPoE expirés : marquage mangle + exclusion fasttrack + drop forward.
+     *
+     * @return array{ok: bool, errors: array<int, string>}
+     */
+    public static function ensurePppoeExpiredFasttrackBypass($client)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => []];
+        }
+
+        $commentTag = 'DYRSIA-PPPOE-EXPIRED';
+        $connMark = 'dyrsia-pppoe-expired';
+        $errors = [];
+
+        try {
+            $printRequest = new RouterOS\Request('/ip/firewall/mangle/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(RouterOS\Query::where('comment', $commentTag . ' mangle mark'));
+            $mangleExists = (bool) $client->sendSync($printRequest)->getProperty('.id');
+            if (!$mangleExists) {
+                $addRequest = new RouterOS\Request('/ip/firewall/mangle/add');
+                $addRequest->setArgument('chain', 'prerouting');
+                $addRequest->setArgument('action', 'mark-connection');
+                $addRequest->setArgument('new-connection-mark', $connMark);
+                $addRequest->setArgument('passthrough', 'yes');
+                $addRequest->setArgument('src-address-list', 'pppoe-expired');
+                $addRequest->setArgument('comment', $commentTag . ' mangle mark');
+                $client->sendSync($addRequest);
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'mangle mark: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'mangle mark: ' . $e->getMessage();
+        }
+
+        $dropMarkedExists = false;
+        try {
+            $printRequest = new RouterOS\Request('/ip/firewall/filter/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(RouterOS\Query::where('comment', $commentTag . ' drop marked conn'));
+            $dropMarkedExists = (bool) $client->sendSync($printRequest)->getProperty('.id');
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        if (!$dropMarkedExists) {
+            try {
+                $printRequest = new RouterOS\Request('/ip/firewall/filter/print');
+                $printRequest->setArgument('.proplist', '.id,action,chain,connection-mark');
+                foreach ($client->sendSync($printRequest) as $row) {
+                    if ((string) $row->getProperty('chain') !== 'forward') {
+                        continue;
+                    }
+                    if ((string) $row->getProperty('action') !== 'fasttrack-connection') {
+                        continue;
+                    }
+                    $ruleId = $row->getProperty('.id');
+                    $currentMark = trim((string) $row->getProperty('connection-mark'));
+                    if ($currentMark === 'no-mark' || $currentMark === ('!' . $connMark)) {
+                        continue;
+                    }
+                    if (empty($ruleId)) {
+                        continue;
+                    }
+                    $setRequest = new RouterOS\Request('/ip/firewall/filter/set');
+                    $setRequest->setArgument('numbers', $ruleId);
+                    $setRequest->setArgument('connection-mark', 'no-mark');
+                    $setRequest->setArgument('hw-offload', 'no');
+                    $client->sendSync($setRequest);
+                }
+            } catch (Throwable $e) {
+                $errors[] = 'fasttrack patch: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'fasttrack patch: ' . $e->getMessage();
+            }
+        }
+
+        $firstForwardRuleId = null;
+        try {
+            $firstRuleRequest = new RouterOS\Request('/ip/firewall/filter/print');
+            $firstRuleRequest->setArgument('.proplist', '.id');
+            $firstRuleRequest->setQuery(RouterOS\Query::where('chain', 'forward'));
+            $firstForwardRuleId = $client->sendSync($firstRuleRequest)->getProperty('.id');
+        } catch (Throwable $e) {
+            $firstForwardRuleId = null;
+        }
+
+        foreach ([
+            [
+                'comment' => $commentTag . ' hard drop forward',
+                'chain' => 'forward',
+                'action' => 'drop',
+                'src-address-list' => 'pppoe-expired',
+            ],
+            [
+                'comment' => $commentTag . ' drop marked conn',
+                'chain' => 'forward',
+                'action' => 'drop',
+                'connection-mark' => $connMark,
+            ],
+        ] as $rule) {
+            try {
+                $printRequest = new RouterOS\Request('/ip/firewall/filter/print');
+                $printRequest->setArgument('.proplist', '.id');
+                $printRequest->setQuery(RouterOS\Query::where('comment', $rule['comment']));
+                if ($client->sendSync($printRequest)->getProperty('.id')) {
+                    continue;
+                }
+                $addRequest = new RouterOS\Request('/ip/firewall/filter/add');
+                foreach ($rule as $key => $value) {
+                    if ($key === 'comment') {
+                        continue;
+                    }
+                    $addRequest->setArgument($key, $value);
+                }
+                $addRequest->setArgument('comment', $rule['comment']);
+                if (!empty($firstForwardRuleId)) {
+                    $addRequest->setArgument('place-before', $firstForwardRuleId);
+                }
+                $client->sendSync($addRequest);
+            } catch (Throwable $e) {
+                $errors[] = $rule['comment'] . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = $rule['comment'] . ': ' . $e->getMessage();
+            }
+        }
+
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+
+    /**
+     * Blocage radical avant fasttrack/NAT : raw prerouting sur pppoe-expired.
+     *
+     * @return array{ok: bool, errors: array<int, string>}
+     */
+    public static function ensurePppoeExpiredRawIsolation($client, $backendIp = '', $backendHttpPort = 0)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => []];
+        }
+
+        $commentTag = 'DYRSIA-PPPOE-EXPIRED';
+        $expiredList = 'pppoe-expired';
+        $allowList = 'pppoe-expired-allow';
+        $errors = [];
+
+        $backendIp = trim((string) $backendIp);
+        $backendHttpPort = (int) $backendHttpPort;
+        if ($backendIp !== '' && filter_var($backendIp, FILTER_VALIDATE_IP)) {
+            self::ensureAddressListEntry($client, $allowList, $backendIp, $commentTag . ' backend');
+        }
+        foreach (['10.10.10.1', '10.0.0.1'] as $localGw) {
+            self::ensureAddressListEntry($client, $allowList, $localGw, $commentTag . ' local');
+        }
+
+        $httpPorts = ['80', '443'];
+        if ($backendHttpPort > 0 && $backendHttpPort !== 80 && $backendHttpPort !== 443) {
+            $httpPorts[] = (string) $backendHttpPort;
+        }
+
+        $requiredRawComments = [
+            $commentTag . ' raw allow backend',
+            $commentTag . ' raw allow dns',
+            $commentTag . ' raw allow http captive',
+            $commentTag . ' raw block internet',
+        ];
+        if ($backendIp !== '' && filter_var($backendIp, FILTER_VALIDATE_IP)) {
+            $requiredRawComments[] = $commentTag . ' raw allow backend tcp';
+        }
+        $rawComplete = true;
+        foreach ($requiredRawComments as $requiredComment) {
+            try {
+                $printRequest = new RouterOS\Request('/ip/firewall/raw/print');
+                $printRequest->setArgument('.proplist', '.id');
+                $printRequest->setQuery(RouterOS\Query::where('comment', $requiredComment));
+                if (!$client->sendSync($printRequest)->getProperty('.id')) {
+                    $rawComplete = false;
+                    break;
+                }
+            } catch (Throwable $e) {
+                $rawComplete = false;
+                break;
+            } catch (Exception $e) {
+                $rawComplete = false;
+                break;
+            }
+        }
+
+        if (!$rawComplete) {
+            self::removeRawFirewallRulesByCommentPrefix($client, $commentTag . ' raw ');
+        }
+
+        $rawRules = [
+            [
+                'comment' => $commentTag . ' raw allow backend',
+                'chain' => 'prerouting',
+                'action' => 'accept',
+                'src-address-list' => $expiredList,
+                'dst-address-list' => $allowList,
+            ],
+        ];
+        if ($backendIp !== '' && filter_var($backendIp, FILTER_VALIDATE_IP)) {
+            $rawRules[] = [
+                'comment' => $commentTag . ' raw allow backend tcp',
+                'chain' => 'prerouting',
+                'action' => 'accept',
+                'src-address-list' => $expiredList,
+                'dst-address' => $backendIp,
+                'protocol' => 'tcp',
+            ];
+        }
+        $rawRules[] = [
+            'comment' => $commentTag . ' raw allow dns',
+            'chain' => 'prerouting',
+            'action' => 'accept',
+            'src-address-list' => $expiredList,
+            'protocol' => 'udp',
+            'dst-port' => '53',
+        ];
+        $rawRules[] = [
+            'comment' => $commentTag . ' raw allow http captive',
+            'chain' => 'prerouting',
+            'action' => 'accept',
+            'src-address-list' => $expiredList,
+            'protocol' => 'tcp',
+            'dst-port' => implode(',', $httpPorts),
+        ];
+        $rawRules[] = [
+            'comment' => $commentTag . ' raw block internet',
+            'chain' => 'prerouting',
+            'action' => 'drop',
+            'src-address-list' => $expiredList,
+        ];
+
+        foreach ($rawRules as $rule) {
+            if ($rawComplete) {
+                continue;
+            }
+            try {
+                $printRequest = new RouterOS\Request('/ip/firewall/raw/print');
+                $printRequest->setArgument('.proplist', '.id');
+                $printRequest->setQuery(RouterOS\Query::where('comment', $rule['comment']));
+                if ($client->sendSync($printRequest)->getProperty('.id')) {
+                    continue;
+                }
+                $addRequest = new RouterOS\Request('/ip/firewall/raw/add');
+                foreach ($rule as $key => $value) {
+                    if ($key === 'comment') {
+                        continue;
+                    }
+                    $addRequest->setArgument($key, $value);
+                }
+                $addRequest->setArgument('comment', $rule['comment']);
+                $client->sendSync($addRequest);
+            } catch (Throwable $e) {
+                $errors[] = $rule['comment'] . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = $rule['comment'] . ': ' . $e->getMessage();
+            }
+        }
+
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+
+    /**
+     * Isolation complète : raw (prioritaire) + mangle/fasttrack + forward.
+     *
+     * @return array{ok: bool, errors: array<int, string>}
+     */
+    public static function ensurePppoeExpiredIsolation($client, $backendIp = '', $backendHttpPort = 0)
+    {
+        if (self::$pppoeExpiredIsolationEnsured) {
+            return ['ok' => true, 'errors' => []];
+        }
+
+        $errors = [];
+        foreach ([
+            self::ensurePppoeExpiredRawIsolation($client, $backendIp, $backendHttpPort),
+            self::ensurePppoeExpiredFasttrackBypass($client),
+        ] as $result) {
+            if (!empty($result['errors'])) {
+                $errors = array_merge($errors, $result['errors']);
+            }
+        }
+
+        self::$pppoeExpiredIsolationEnsured = true;
+
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+
+    private static function removeRawFirewallRulesByCommentPrefix($client, $prefix)
+    {
+        $prefix = trim((string) $prefix);
+        if ($prefix === '') {
+            return;
+        }
+        $safePrefix = str_replace('"', '', $prefix);
+        self::runRouterOneShotScript(
+            $client,
+            'dyrsia_rm_raw',
+            '/ip firewall raw remove [find comment~"' . $safePrefix . '"]'
+        );
+    }
+
+    /**
+     * Enregistre l'IP expirée en base pour l'interception du portail captive (boot.php).
+     */
+    public static function rememberPppoeExpiredClientMeta($login, $ip, $routerName = '')
+    {
+        $login = trim((string) $login);
+        $ip = trim((string) $ip);
+        if ($login === '' || $ip === '' || !filter_var($ip, FILTER_VALIDATE_IP)) {
+            return;
+        }
+        $customer = ORM::for_table('tbl_customers')->where('pppoe_username', $login)->find_one();
+        if (!$customer) {
+            $customer = ORM::for_table('tbl_customers')->where('username', $login)->find_one();
+        }
+        if (!$customer) {
+            return;
+        }
+        $customerId = (int) $customer->id;
+        User::setAttribute('pppoe_expired_ip', $ip, $customerId);
+        if ($routerName !== '') {
+            User::setAttribute('pppoe_expired_router', $routerName, $customerId);
+        }
+        User::setAttribute('pppoe_expired_user', $login, $customerId);
+    }
+
+    public static function ensureAddressListEntry($client, $listName, $ip, $comment = '')
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return;
+        }
+        $listName = trim((string) $listName);
+        $ip = trim((string) $ip);
+        if ($listName === '' || $ip === '' || !filter_var($ip, FILTER_VALIDATE_IP)) {
+            return;
+        }
+        try {
+            $printRequest = new RouterOS\Request('/ip/firewall/address-list/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(
+                RouterOS\Query::where('list', $listName)
+                    ->andWhere('address', $ip)
+            );
+            if ($client->sendSync($printRequest)->getProperty('.id')) {
+                return;
+            }
+            $addRequest = new RouterOS\Request('/ip/firewall/address-list/add');
+            $addRequest->setArgument('list', $listName);
+            $addRequest->setArgument('address', $ip);
+            if ($comment !== '') {
+                $addRequest->setArgument('comment', $comment);
+            }
+            $client->sendSync($addRequest);
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+    }
+
+    /**
+     * Force la suspension PPPoE (profil EXPIRE + liste firewall + coupure flux) pour tous les clients expirés du routeur.
+     *
+     * @return array{ok: bool, enforced: int, errors: array<int, string>}
+     */
+    public static function syncExpiredPppoeSuspensions($client, $routerName, $admin = null, $secretsAlreadySynced = false)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'enforced' => 0, 'errors' => []];
+        }
+
+        $routerName = trim((string) $routerName);
+        if ($routerName === '') {
+            return ['ok' => false, 'enforced' => 0, 'errors' => ['Nom routeur manquant']];
+        }
+
+        self::ensurePppoeExpiredPlanDb($routerName, $admin);
+        $expirePlan = ORM::for_table('tbl_plans')
+            ->where('type', 'PPPOE')
+            ->where('routers', $routerName)
+            ->where('name_plan', 'EXPIRE')
+            ->find_one();
+        if (!$expirePlan) {
+            return ['ok' => false, 'enforced' => 0, 'errors' => ['Forfait EXPIRE introuvable sur ' . $routerName]];
+        }
+
+        global $config;
+        $cfg = is_array($config) ? $config : [];
+        $backendUrl = self::resolvePppoeCaptiveBackendUrl($cfg);
+        $backendIp = self::resolveAppBackendIpv4($backendUrl);
+        $backendPort = self::resolveAppBackendPort($backendUrl, false);
+        $isolation = self::ensurePppoeExpiredIsolation($client, $backendIp ?: '', $backendPort);
+        $errors = $isolation['errors'] ?? [];
+        $enforced = 0;
+
+        if (!$secretsAlreadySynced) {
+            $now = date('Y-m-d H:i:s');
+            $recharges = ORM::for_table('tbl_user_recharges')
+                ->where('routers', $routerName)
+                ->where_raw("LOWER(type) = 'pppoe'")
+                ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= ?)", [$now])
+                ->order_by_desc('id')
+                ->find_many();
+
+            $seenCustomers = [];
+            self::withPppoeSharedClient($client, static function ($driver) use ($recharges, $expirePlan, &$seenCustomers, &$enforced, &$errors) {
+                foreach ($recharges as $tur) {
+                    $customerId = (int) $tur['customer_id'];
+                    if ($customerId <= 0 || isset($seenCustomers[$customerId])) {
+                        continue;
+                    }
+                    $seenCustomers[$customerId] = true;
+                    $customer = ORM::for_table('tbl_customers')->find_one($customerId);
+                    if (!$customer) {
+                        continue;
+                    }
+                    try {
+                        $driver->sync_customer($customer->as_array(), $expirePlan->as_array());
+                        $enforced++;
+                    } catch (Throwable $e) {
+                        $login = $customer['pppoe_username'] ?? $customer['username'] ?? ('#' . $customerId);
+                        $errors[] = $login . ': ' . $e->getMessage();
+                    } catch (Exception $e) {
+                        $login = $customer['pppoe_username'] ?? $customer['username'] ?? ('#' . $customerId);
+                        $errors[] = $login . ': ' . $e->getMessage();
+                    }
+                }
+
+                return null;
+            });
+        }
+
+        $sweep = $secretsAlreadySynced
+            ? ['ok' => true, 'enforced' => 0, 'errors' => []]
+            : self::sweepActiveExpirePppoeSessions($client);
+        if (!empty($sweep['errors'])) {
+            $errors = array_merge($errors, $sweep['errors']);
+        }
+
+        return [
+            'ok' => empty($errors),
+            'enforced' => $enforced + (int) ($sweep['enforced'] ?? 0),
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * Renforce les suspensions PPPoE expirées sur tous les routeurs (cron / post-expiration).
+     */
+    public static function reinforceExpiredPppoeOnAllRouters()
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return 0;
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $routerNames = [];
+        foreach (ORM::for_table('tbl_user_recharges')
+            ->distinct()
+            ->select('routers')
+            ->where_raw("LOWER(type) = 'pppoe'")
+            ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= ?)", [$now])
+            ->find_many() as $row) {
+            $name = trim((string) ($row['routers'] ?? ''));
+            if ($name !== '' && strcasecmp($name, 'radius') !== 0) {
+                $routerNames[$name] = true;
+            }
+        }
+
+        $total = 0;
+        foreach (array_keys($routerNames) as $routerName) {
+            $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+            if (!$router) {
+                continue;
+            }
+            try {
+                $password = self::routerPassword($router['password']);
+                $client = self::getClient($router['ip_address'], $router['username'], $password, 30);
+                if (!$client) {
+                    continue;
+                }
+                $result = self::syncExpiredPppoeSuspensions($client, $routerName, null);
+                $total += (int) ($result['enforced'] ?? 0);
+            } catch (Throwable $e) {
+                _log('[PPPoE expire enforce] ' . $routerName . ': ' . $e->getMessage());
+            } catch (Exception $e) {
+                _log('[PPPoE expire enforce] ' . $routerName . ': ' . $e->getMessage());
+            }
+        }
+
+        return $total;
+    }
+
+    /**
+     * Bandwidth « PPPOE-EXPIRED » (profil EXPIRE).
+     */
+    public static function findPppoeExpiredBandwidth($admin = null)
+    {
+        $query = ORM::for_table('tbl_bandwidth')
+            ->where_raw("UPPER(TRIM(name_bw)) = 'PPPOE-EXPIRED'");
+        $bw = $query->find_one();
+        if ($bw) {
+            return $bw;
+        }
+
+        return ORM::for_table('tbl_bandwidth')
+            ->where_raw("UPPER(TRIM(name_bw)) LIKE '%EXPIRED%'")
+            ->find_one();
+    }
+
+    public static function ensurePppoeExpiredBandwidthDb($admin = null)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return null;
+        }
+
+        $bw = self::findPppoeExpiredBandwidth($admin);
+        if ($bw) {
+            return $bw;
+        }
+
+        $bw = ORM::for_table('tbl_bandwidth')->create();
+        $bw->name_bw = 'PPPOE-EXPIRED';
+        $bw->rate_down = 1;
+        $bw->rate_up = 1;
+        $bw->rate_down_unit = 'Kbps';
+        $bw->rate_up_unit = 'Kbps';
+        $bw->burst = '';
+        $bw->save();
+
+        return $bw;
+    }
+
+    /**
+     * Rate-limit MikroTik pour un forfait PPPoE (EXPIRE = 1 bps système).
+     */
+    public static function pppoeProfileRateLimit(array $planRow, $routerName = '', $admin = null)
+    {
+        $name = strtoupper(trim((string) ($planRow['name_plan'] ?? '')));
+        if ($name === 'EXPIRE') {
+            return self::pppoeExpireSystemRateLimit();
+        }
+
+        $bw = null;
+        if (!empty($planRow['id_bw'])) {
+            $bw = ORM::for_table('tbl_bandwidth')->find_one($planRow['id_bw']);
+        }
+
+        return self::hotspotPlanRateLimit($bw ? $bw->as_array() : null);
+    }
+
+    /**
+     * Rate-limit EXPIRE (1 bps système).
+     */
+    public static function resolvePppoeExpireRateLimit($routerName, $admin = null)
+    {
+        return self::pppoeExpireSystemRateLimit();
     }
 
     /**
@@ -507,6 +1628,27 @@ class Mikrotik
         $upserted = 0;
         $errors = [];
 
+        $profileMap = [];
+        try {
+            $printRequest = new RouterOS\Request('/ip/hotspot/user/profile/print');
+            $printRequest->setArgument('.proplist', '.id,name,shared-users,rate-limit');
+            foreach ($client->sendSync($printRequest) as $profile) {
+                $profileName = trim((string) $profile->getProperty('name'));
+                if ($profileName === '') {
+                    continue;
+                }
+                $profileMap[$profileName] = [
+                    'id' => $profile->getProperty('.id'),
+                    'shared-users' => (string) $profile->getProperty('shared-users'),
+                    'rate-limit' => (string) $profile->getProperty('rate-limit'),
+                ];
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'list profiles: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'list profiles: ' . $e->getMessage();
+        }
+
         foreach ($plansQuery->find_many() as $plan) {
             $name = trim((string) ($plan['name_plan'] ?? ''));
             if ($name === '') {
@@ -520,9 +1662,32 @@ class Mikrotik
             if ($sharedUsers < 1) {
                 $sharedUsers = 1;
             }
+            $sharedUsersStr = (string) $sharedUsers;
+            $rateStr = (string) $rate;
 
             try {
-                self::setHotspotPlan($client, $name, $sharedUsers, $rate);
+                if (isset($profileMap[$name])) {
+                    $existing = $profileMap[$name];
+                    if ($existing['shared-users'] === $sharedUsersStr && $existing['rate-limit'] === $rateStr) {
+                        continue;
+                    }
+                    $setRequest = new RouterOS\Request('/ip/hotspot/user/profile/set');
+                    $client->sendSync(
+                        $setRequest
+                            ->setArgument('numbers', $existing['id'])
+                            ->setArgument('shared-users', $sharedUsersStr)
+                            ->setArgument('rate-limit', $rateStr)
+                    );
+                    $profileMap[$name]['shared-users'] = $sharedUsersStr;
+                    $profileMap[$name]['rate-limit'] = $rateStr;
+                } else {
+                    self::addHotspotPlan($client, $name, $sharedUsers, $rateStr);
+                    $profileMap[$name] = [
+                        'id' => null,
+                        'shared-users' => $sharedUsersStr,
+                        'rate-limit' => $rateStr,
+                    ];
+                }
                 $upserted++;
             } catch (Throwable $e) {
                 $errors[] = $name . ': ' . $e->getMessage();
@@ -533,40 +1698,29 @@ class Mikrotik
 
         $protectedProfiles = ['default'];
         $removed = 0;
+        $expectedLookup = array_fill_keys($expectedNames, true);
 
-        try {
-            $printRequest = new RouterOS\Request('/ip/hotspot/user/profile/print');
-            $printRequest->setArgument('.proplist', '.id,name');
-            $profiles = $client->sendSync($printRequest);
-
-            foreach ($profiles as $profile) {
-                $profileName = trim((string) $profile->getProperty('name'));
-                if ($profileName === '' || in_array($profileName, $protectedProfiles, true)) {
-                    continue;
-                }
-                if (in_array($profileName, $expectedNames, true)) {
-                    continue;
-                }
-
-                $profileId = $profile->getProperty('.id');
-                if (empty($profileId)) {
-                    continue;
-                }
-
-                try {
-                    $removeRequest = new RouterOS\Request('/ip/hotspot/user/profile/remove');
-                    $client->sendSync($removeRequest->setArgument('numbers', $profileId));
-                    $removed++;
-                } catch (Throwable $e) {
-                    $errors[] = 'remove ' . $profileName . ': ' . $e->getMessage();
-                } catch (Exception $e) {
-                    $errors[] = 'remove ' . $profileName . ': ' . $e->getMessage();
-                }
+        foreach ($profileMap as $profileName => $meta) {
+            if ($profileName === '' || in_array($profileName, $protectedProfiles, true)) {
+                continue;
             }
-        } catch (Throwable $e) {
-            $errors[] = 'list profiles: ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'list profiles: ' . $e->getMessage();
+            if (isset($expectedLookup[$profileName])) {
+                continue;
+            }
+            $profileId = $meta['id'] ?? null;
+            if (empty($profileId)) {
+                continue;
+            }
+
+            try {
+                $removeRequest = new RouterOS\Request('/ip/hotspot/user/profile/remove');
+                $client->sendSync($removeRequest->setArgument('numbers', $profileId));
+                $removed++;
+            } catch (Throwable $e) {
+                $errors[] = 'remove ' . $profileName . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'remove ' . $profileName . ': ' . $e->getMessage();
+            }
         }
 
         return [
@@ -609,6 +1763,8 @@ class Mikrotik
             return ['ok' => true, 'plan_id' => 0, 'linked' => 0, 'errors' => []];
         }
 
+        self::ensurePppoeExpiredBandwidthDb($admin);
+
         $refPlan = ORM::for_table('tbl_plans')
             ->where('type', 'PPPOE')
             ->where('routers', $routerName)
@@ -634,10 +1790,11 @@ class Mikrotik
                 return ['ok' => false, 'plan_id' => 0, 'linked' => 0, 'errors' => ['Aucun forfait PPPoE sur ce routeur']];
             }
             $adminId = is_array($admin) ? (int) ($admin['id'] ?? $refPlan['admin_id']) : (int) $refPlan['admin_id'];
+            $expiredBw = self::findPppoeExpiredBandwidth($admin);
             $expirePlan = ORM::for_table('tbl_plans')->create();
             $expirePlan->admin_id = $adminId;
             $expirePlan->name_plan = 'EXPIRE';
-            $expirePlan->id_bw = $refPlan['id_bw'];
+            $expirePlan->id_bw = $expiredBw ? (int) $expiredBw->id : (int) $refPlan['id_bw'];
             $expirePlan->price = 0;
             $expirePlan->type = 'PPPOE';
             $expirePlan->validity = 1;
@@ -670,6 +1827,11 @@ class Mikrotik
                     $expirePlan->id_bw = $refPlan['id_bw'];
                     $changed = true;
                 }
+            }
+            $expiredBw = self::findPppoeExpiredBandwidth($admin);
+            if ($expiredBw && (int) $expirePlan->id_bw !== (int) $expiredBw->id) {
+                $expirePlan->id_bw = (int) $expiredBw->id;
+                $changed = true;
             }
             if ($changed) {
                 $expirePlan->save();
@@ -777,14 +1939,14 @@ class Mikrotik
             ->where('routers', $routerName)
             ->where('is_radius', 0);
         if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
-            $plansQuery->where('admin_id', (int) ($admin['id'] ?? 0));
+            $plansQuery->where_raw('(admin_id = ? OR name_plan = ?)', [(int) ($admin['id'] ?? 0), 'EXPIRE']);
         }
 
         $expectedNames = ['default', 'EXPIRE'];
         $upserted = 0;
         $errors = [];
-        $expiredOnUp = ':if ($remote-address!="") do={ /ip firewall address-list add list=pppoe-expired address=$remote-address comment=$user }';
-        $expiredOnDown = ':if ($remote-address!="") do={ /ip firewall address-list remove [find list=pppoe-expired address=$remote-address] }';
+        $expiredOnUp = self::pppoeExpiredProfileOnUpScript();
+        $expiredOnDown = self::pppoeExpiredProfileOnDownScript();
 
         foreach ($plansQuery->find_many() as $plan) {
             $name = trim((string) ($plan['name_plan'] ?? ''));
@@ -793,8 +1955,7 @@ class Mikrotik
             }
             $expectedNames[] = $name;
 
-            $bw = ORM::for_table('tbl_bandwidth')->find_one($plan['id_bw']);
-            $rate = ($name === 'EXPIRE') ? '128k/128k' : self::hotspotPlanRateLimit($bw);
+            $rate = self::pppoeProfileRateLimit($plan->as_array(), $routerName, $admin);
             $pool = ORM::for_table('tbl_pool')->where('pool_name', $plan['pool'])->find_one();
             $localAddress = self::resolvePoolGatewayAddress($pool ? $pool->as_array() : []);
             $remoteAddress = $pool['pool_name'] ?? '';
@@ -812,11 +1973,16 @@ class Mikrotik
                     'name' => $name,
                     'local-address' => $localAddress,
                     'remote-address' => $remoteAddress,
-                    'rate-limit' => $rate,
                 ];
+                if ($rate !== '') {
+                    $args['rate-limit'] = $rate;
+                }
                 if ($isExpiredProfile) {
                     $args['on-up'] = $expiredOnUp;
                     $args['on-down'] = $expiredOnDown;
+                    if ($localAddress !== '') {
+                        $args['dns-server'] = $localAddress;
+                    }
                 }
 
                 if (empty($profileId)) {
@@ -837,6 +2003,9 @@ class Mikrotik
                         $setRequest->setArgument($key, $value);
                     }
                     $client->sendSync($setRequest);
+                }
+                if ($name === 'EXPIRE') {
+                    self::unsetPppoeProfileRateLimit($client, $name);
                 }
                 if (!$isExpiredProfile && !empty($profileId)) {
                     foreach (['on-up', 'on-down'] as $scriptName) {
@@ -892,6 +2061,365 @@ class Mikrotik
     }
 
     /**
+     * Load MikrotikPppoe driver (system/devices, not PSR autoload).
+     *
+     * @return MikrotikPppoe
+     */
+    public static function pppoeDevice()
+    {
+        global $DEVICE_PATH;
+        $deviceFile = $DEVICE_PATH . DIRECTORY_SEPARATOR . 'MikrotikPppoe.php';
+        if (!is_file($deviceFile)) {
+            throw new Exception('Driver MikrotikPppoe introuvable');
+        }
+        require_once $deviceFile;
+
+        return new MikrotikPppoe();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function pppoeLoginNamesForCustomer(array $customer)
+    {
+        $names = [];
+        if (!empty($customer['pppoe_username'])) {
+            $names[] = trim((string) $customer['pppoe_username']);
+        }
+        if (!empty($customer['username'])) {
+            $names[] = trim((string) $customer['username']);
+        }
+
+        return array_values(array_unique(array_filter($names)));
+    }
+
+    /**
+     * Collect canonical PPPoE logins expected on a router (all tenants).
+     *
+     * @return array<string, true>
+     */
+    public static function collectPppoeExpectedLogins($routerName)
+    {
+        $routerName = trim((string) $routerName);
+        $expected = [];
+        $recharges = ORM::for_table('tbl_user_recharges')
+            ->where('routers', $routerName)
+            ->where_raw("LOWER(type) = 'pppoe'")
+            ->find_many();
+        foreach ($recharges as $tur) {
+            $customer = ORM::for_table('tbl_customers')->find_one((int) $tur['customer_id']);
+            if (!$customer) {
+                continue;
+            }
+            foreach (self::pppoeLoginNamesForCustomer($customer->as_array()) as $login) {
+                $expected[$login] = true;
+            }
+        }
+
+        return $expected;
+    }
+
+    /**
+     * Active recharge → forfait courant ; expiré / off → profil EXPIRE.
+     */
+    public static function resolvePppoeEffectivePlan(array $recharge, array $plan, $routerName, $admin = null)
+    {
+        $expirationRaw = trim((string) ($recharge['expiration'] ?? '') . ' ' . (string) ($recharge['time'] ?? ''));
+        $expiresAt = $expirationRaw !== '' ? strtotime($expirationRaw) : false;
+        $isActive = (($recharge['status'] ?? '') === 'on')
+            && ($expiresAt === false || $expiresAt > time());
+
+        if ($isActive) {
+            return $plan;
+        }
+
+        self::ensurePppoeExpiredPlanDb($routerName, $admin);
+        $expiredPlan = ORM::for_table('tbl_plans')
+            ->where('type', 'PPPOE')
+            ->where('routers', $routerName)
+            ->where('name_plan', 'EXPIRE')
+            ->find_one();
+
+        return $expiredPlan ? $expiredPlan->as_array() : $plan;
+    }
+
+    /**
+     * Upsert PPPoE client secrets from recharges and remove orphan / legacy secrets.
+     *
+     * @return array{ok: bool, synced: int, removed: int, disconnected: int, errors: array<int, string>}
+     */
+    public static function syncPppoeSecrets($client, $routerName, $admin = null, $removeOrphans = true)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'synced' => 0, 'removed' => 0, 'disconnected' => 0, 'errors' => []];
+        }
+
+        $routerName = trim((string) $routerName);
+        $errors = [];
+        $synced = 0;
+        $removed = 0;
+        $disconnected = 0;
+
+        $expectedLogins = self::collectPppoeExpectedLogins($routerName);
+
+        $planIds = [];
+        $plansQuery = ORM::for_table('tbl_plans')
+            ->where('type', 'PPPOE')
+            ->where('routers', $routerName)
+            ->where('is_radius', 0);
+        if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $plansQuery->where('admin_id', (int) ($admin['id'] ?? 0));
+        }
+        foreach ($plansQuery->find_many() as $planRow) {
+            $planIds[] = (int) $planRow['id'];
+        }
+
+        $customersToSync = [];
+        if (!empty($planIds)) {
+            $rechargesQuery = ORM::for_table('tbl_user_recharges')
+                ->where('routers', $routerName)
+                ->where_raw("LOWER(type) = 'pppoe'")
+                ->where_in('plan_id', $planIds)
+                ->order_by_desc('id');
+            foreach ($rechargesQuery->find_many() as $tur) {
+                $customerId = (int) $tur['customer_id'];
+                if ($customerId <= 0 || isset($customersToSync[$customerId])) {
+                    continue;
+                }
+                $customer = ORM::for_table('tbl_customers')->find_one($customerId);
+                if (!$customer) {
+                    continue;
+                }
+                $plan = ORM::for_table('tbl_plans')->find_one((int) $tur['plan_id']);
+                if (!$plan) {
+                    continue;
+                }
+                $customersToSync[$customerId] = [
+                    'customer' => $customer->as_array(),
+                    'plan' => self::resolvePppoeEffectivePlan($tur->as_array(), $plan->as_array(), $routerName, $admin),
+                ];
+            }
+        }
+
+        if ($removeOrphans) {
+            try {
+                $printRequest = new RouterOS\Request('/ppp/secret/print');
+                $printRequest->setArgument('.proplist', '.id,name,service');
+                foreach ($client->sendSync($printRequest) as $row) {
+                    $name = trim((string) $row->getProperty('name'));
+                    if ($name === '') {
+                        continue;
+                    }
+                    $service = strtolower(trim((string) $row->getProperty('service')));
+                    if ($service !== '' && $service !== 'pppoe' && $service !== 'any') {
+                        continue;
+                    }
+
+                    $isLegacyName = strpos($name, ' | ') !== false;
+                    $isExpected = isset($expectedLogins[$name]);
+                    if ($isExpected && !$isLegacyName) {
+                        continue;
+                    }
+
+                    $secretId = $row->getProperty('.id');
+                    if (empty($secretId)) {
+                        continue;
+                    }
+
+                    try {
+                        if (self::removePpoeActive($client, $name)) {
+                            $disconnected++;
+                        }
+                    } catch (Throwable $e) {
+                        $errors[] = 'disconnect ' . $name . ': ' . $e->getMessage();
+                    } catch (Exception $e) {
+                        $errors[] = 'disconnect ' . $name . ': ' . $e->getMessage();
+                    }
+
+                    try {
+                        $removeRequest = new RouterOS\Request('/ppp/secret/remove');
+                        $removeRequest->setArgument('numbers', $secretId);
+                        $client->sendSync($removeRequest);
+                        $removed++;
+                    } catch (Throwable $e) {
+                        $errors[] = 'remove secret ' . $name . ': ' . $e->getMessage();
+                    } catch (Exception $e) {
+                        $errors[] = 'remove secret ' . $name . ': ' . $e->getMessage();
+                    }
+                }
+            } catch (Throwable $e) {
+                $errors[] = 'list ppp secrets: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'list ppp secrets: ' . $e->getMessage();
+            }
+        }
+
+        try {
+            self::withPppoeSharedClient($client, static function ($driver) use ($customersToSync, &$synced, &$errors) {
+                foreach ($customersToSync as $entry) {
+                    try {
+                        $driver->sync_customer($entry['customer'], $entry['plan']);
+                        $synced++;
+                    } catch (Throwable $e) {
+                        $login = $entry['customer']['pppoe_username'] ?? $entry['customer']['username'] ?? '?';
+                        $errors[] = $login . ': ' . $e->getMessage();
+                    } catch (Exception $e) {
+                        $login = $entry['customer']['pppoe_username'] ?? $entry['customer']['username'] ?? '?';
+                        $errors[] = $login . ': ' . $e->getMessage();
+                    }
+                }
+
+                return null;
+            });
+        } catch (Throwable $e) {
+            return [
+                'ok' => false,
+                'synced' => $synced,
+                'removed' => $removed,
+                'disconnected' => $disconnected,
+                'errors' => array_merge($errors, [$e->getMessage()]),
+            ];
+        } catch (Exception $e) {
+            return [
+                'ok' => false,
+                'synced' => $synced,
+                'removed' => $removed,
+                'disconnected' => $disconnected,
+                'errors' => array_merge($errors, [$e->getMessage()]),
+            ];
+        }
+
+        $sweep = self::sweepActiveExpirePppoeSessions($client);
+        if (!empty($sweep['errors'])) {
+            $errors = array_merge($errors, $sweep['errors']);
+        }
+
+        return [
+            'ok' => empty($errors),
+            'synced' => $synced,
+            'removed' => $removed,
+            'disconnected' => $disconnected,
+            'errors' => $errors,
+            'expired_swept' => (int) ($sweep['enforced'] ?? 0),
+        ];
+    }
+
+    /**
+     * Block bridged IP traffic on PPPoE ports (clients must authenticate via PPPoE).
+     *
+     * @return array{ok: bool, added: bool, errors: array<int, string>}
+     */
+    public static function ensurePppoeBridgeForwardBlock($client, $bridgeName)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'added' => false, 'errors' => []];
+        }
+
+        $bridgeName = trim((string) $bridgeName);
+        if ($bridgeName === '') {
+            return ['ok' => false, 'added' => false, 'errors' => ['Nom du bridge PPPoE manquant.']];
+        }
+
+        $comment = 'DYRSIA: block IP bypass PPPoE';
+        $errors = [];
+        $added = false;
+
+        try {
+            $printRequest = new RouterOS\Request('/ip/firewall/filter/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(RouterOS\Query::where('comment', $comment));
+            $exists = (bool) $client->sendSync($printRequest)->getProperty('.id');
+            if (!$exists) {
+                $printRequest = new RouterOS\Request('/ip/firewall/filter/print');
+                $printRequest->setArgument('.proplist', '.id,chain,in-interface,action');
+                $printRequest->setQuery(
+                    RouterOS\Query::where('chain', 'forward')
+                        ->andWhere('in-interface', $bridgeName)
+                        ->andWhere('action', 'drop')
+                );
+                $exists = (bool) $client->sendSync($printRequest)->getProperty('.id');
+            }
+
+            if (!$exists) {
+                $addRequest = new RouterOS\Request('/ip/firewall/filter/add');
+                $addRequest->setArgument('chain', 'forward');
+                $addRequest->setArgument('in-interface', $bridgeName);
+                $addRequest->setArgument('action', 'drop');
+                $addRequest->setArgument('comment', $comment);
+                $client->sendSync($addRequest);
+                $added = true;
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'firewall bridge block: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'firewall bridge block: ' . $e->getMessage();
+        }
+
+        return [
+            'ok' => empty($errors),
+            'added' => $added,
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * Profiles + client secrets + anti-bypass firewall for one PPPoE router.
+     *
+     * @return array{ok: bool, plans: array<string, mixed>, secrets: array<string, mixed>, firewall: array<string, mixed>}
+     */
+    public static function fullPppoeRouterSync($client, $routerName, $admin = null, $bridgeName = '')
+    {
+        global $config;
+
+        self::resetPppoeSyncRuntimeState();
+
+        $routerName = trim((string) $routerName);
+        if ($bridgeName === '') {
+            $bridgeName = trim((string) ($config['pppoe_setup_bridge'] ?? 'bridge-pppoe'));
+        }
+
+        $planSync = self::syncPppoePlans($client, $routerName, $admin);
+        $secretSync = self::syncPppoeSecrets($client, $routerName, $admin, true);
+        $firewall = self::ensurePppoeBridgeForwardBlock($client, $bridgeName);
+
+        $captive = ['ok' => true, 'errors' => []];
+        $backendUrl = self::resolvePppoeCaptiveBackendUrl(is_array($config) ? $config : []);
+        $portalUrl = self::buildPppoeCaptivePortalUrl($routerName, is_array($config) ? $config : []);
+        if ($backendUrl !== '' && $portalUrl !== '') {
+            $captive = self::ensurePppoeExpiredCaptive($client, $portalUrl, $backendUrl, $routerName);
+        } elseif ($backendUrl === '') {
+            $captive = [
+                'ok' => false,
+                'errors' => [
+                    'URL backend captive introuvable — Settings → Hotspot → Hotspot API URL (ex. http://10.0.0.2:8080 ou https://wifizones.org)',
+                ],
+            ];
+        }
+
+        $suspensions = self::syncExpiredPppoeSuspensions($client, $routerName, $admin, true);
+
+        $errors = array_merge(
+            $planSync['errors'] ?? [],
+            $secretSync['errors'] ?? [],
+            $firewall['errors'] ?? [],
+            $captive['errors'] ?? [],
+            $suspensions['errors'] ?? []
+        );
+
+        return [
+            'ok' => empty($errors),
+            'plans' => $planSync,
+            'secrets' => $secretSync,
+            'firewall' => $firewall,
+            'captive' => $captive,
+            'suspensions' => $suspensions,
+            'errors' => $errors,
+        ];
+    }
+
+    /**
      * Resolve backend IPv4 for PPPoE captive NAT/DNS (APP_URL host).
      */
     public static function resolveAppBackendIpv4($appUrl)
@@ -925,25 +2453,199 @@ class Mikrotik
         return 80;
     }
 
-    private static function ensureNatRuleByComment($client, $comment, array $args)
+    /**
+     * IP WireGuard / VPN locale (ex. 10.0.0.2 sur le Mac dev).
+     */
+    public static function detectLocalVpnIpv4()
+    {
+        if (stripos(PHP_OS_FAMILY, 'Windows') === false) {
+            $output = @shell_exec("ifconfig 2>/dev/null | awk '/inet / {print $2}'");
+            if (is_string($output) && $output !== '') {
+                foreach (preg_split('/\s+/', trim($output)) as $ip) {
+                    $ip = trim($ip);
+                    if (preg_match('/^10\.0\.0\.\d+$/', $ip)) {
+                        return $ip;
+                    }
+                }
+            }
+        }
+        if (!empty($_SERVER['SERVER_ADDR']) && preg_match('/^10\.0\.0\.\d+$/', (string) $_SERVER['SERVER_ADDR'])) {
+            return (string) $_SERVER['SERVER_ADDR'];
+        }
+
+        return null;
+    }
+
+    /**
+     * URL du serveur DYRSIA joignable depuis le MikroTik (pas localhost).
+     */
+    public static function resolvePppoeCaptiveBackendUrl(array $appConfig = [])
+    {
+        global $config;
+        $cfg = !empty($appConfig) ? $appConfig : (is_array($config) ? $config : []);
+
+        $candidates = [];
+        foreach (['pppoe_captive_url', 'hotspot_api_url'] as $key) {
+            $value = trim((string) ($cfg[$key] ?? ''));
+            if ($value !== '') {
+                $candidates[] = $value;
+            }
+        }
+        if (defined('APP_URL')) {
+            $candidates[] = APP_URL;
+        }
+
+        foreach ($candidates as $url) {
+            $url = self::normalizePppoeCaptiveBackendUrl(trim($url));
+            if ($url !== '' && self::isRouterFetchableUrl($url)) {
+                return rtrim($url, '/');
+            }
+        }
+
+        if (defined('APP_URL')) {
+            $appHost = strtolower((string) parse_url(APP_URL, PHP_URL_HOST));
+            if (in_array($appHost, ['localhost', '127.0.0.1', '::1'], true)) {
+                $vpnIp = self::detectLocalVpnIpv4();
+                if ($vpnIp) {
+                    $scheme = parse_url(APP_URL, PHP_URL_SCHEME) ?: 'http';
+                    $port = (int) parse_url(APP_URL, PHP_URL_PORT);
+                    if ($port <= 0) {
+                        $port = ($scheme === 'https') ? 443 : 80;
+                    }
+                    $url = $scheme . '://' . $vpnIp;
+                    if (($scheme === 'http' && $port !== 80) || ($scheme === 'https' && $port !== 443)) {
+                        $url .= ':' . $port;
+                    }
+                    if (self::isRouterFetchableUrl($url)) {
+                        return rtrim($url, '/');
+                    }
+                }
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Normalise l'URL backend PPPoE (VPS 10.0.0.1 → port 80 ; dev 10.0.0.2 garde 8080).
+     */
+    public static function normalizePppoeCaptiveBackendUrl($url)
+    {
+        $url = trim((string) $url);
+        $parts = parse_url($url);
+        if (!$parts || empty($parts['host'])) {
+            return $url;
+        }
+        $host = $parts['host'];
+        $scheme = $parts['scheme'] ?? 'http';
+        $port = isset($parts['port']) ? (int) $parts['port'] : null;
+        if (filter_var($host, FILTER_VALIDATE_IP) && preg_match('/^10\.0\.0\.1$/', $host)) {
+            if ($port === null || $port === 8080) {
+                $port = ($scheme === 'https') ? 443 : 80;
+            }
+        } elseif ($port === null) {
+            $port = ($scheme === 'https') ? 443 : 80;
+        }
+        $out = $scheme . '://' . $host;
+        if (($scheme === 'http' && $port !== 80) || ($scheme === 'https' && $port !== 443)) {
+            $out .= ':' . $port;
+        }
+
+        return $out;
+    }
+
+    public static function buildPppoeCaptivePortalUrl($routerName, array $appConfig = [])
+    {
+        $base = self::resolvePppoeCaptiveBackendUrl($appConfig);
+        $routerName = trim((string) $routerName);
+        if ($base === '' || $routerName === '') {
+            return '';
+        }
+
+        return rtrim($base, '/')
+            . '/index.php?_route=plugin/pppoe_portal&router='
+            . rawurlencode($routerName);
+    }
+
+    private static function ensureNatRuleByComment($client, $comment, array $args, $placeBefore = null)
     {
         try {
             $printRequest = new RouterOS\Request('/ip/firewall/nat/print');
-            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setArgument('.proplist', 'comment,chain,action,protocol,dst-port,src-address-list,dst-address,to-addresses,to-ports');
             $printRequest->setQuery(RouterOS\Query::where('comment', $comment));
-            if ($client->sendSync($printRequest)->getProperty('.id')) {
-                return true;
+            $existing = $client->sendSync($printRequest);
+            foreach ($existing as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $matches = true;
+                foreach ($args as $key => $value) {
+                    if ((string) $row->getProperty($key) !== (string) $value) {
+                        $matches = false;
+                        break;
+                    }
+                }
+                if ($matches) {
+                    return true;
+                }
             }
+
+            self::removeFirewallRulesByComment($client, $comment);
             $addRequest = new RouterOS\Request('/ip/firewall/nat/add');
             foreach ($args as $key => $value) {
                 $addRequest->setArgument($key, $value);
             }
             $addRequest->setArgument('comment', $comment);
+            if (!empty($placeBefore)) {
+                $addRequest->setArgument('place-before', $placeBefore);
+            }
             $client->sendSync($addRequest);
 
             return true;
         } catch (Throwable $e) {
             return $e->getMessage();
+        }
+    }
+
+    /**
+     * Cible NAT captive : backend DYRSIA direct (pas le proxy hotspot — mauvais port en dev).
+     *
+     * @return array{ip: string, port: int, via_proxy: bool}
+     */
+    private static function resolvePppoeCaptiveNatDestination($client, $backendIp, $httpPort)
+    {
+        $backendIp = trim((string) $backendIp);
+        $httpPort = (int) $httpPort;
+
+        return [
+            'ip' => $backendIp,
+            'port' => $httpPort > 0 ? $httpPort : 80,
+            'via_proxy' => false,
+        ];
+    }
+
+    /**
+     * SNAT obligatoire quand le backend est joign directement (réponses via le routeur).
+     */
+    private static function ensurePppoeExpiredCaptiveBackendSnat($client, $backendIp, $httpPort, $httpsPort, $commentTag)
+    {
+        $backendIp = trim((string) $backendIp);
+        if ($backendIp === '') {
+            return;
+        }
+        $comment = $commentTag . ' SNAT backend';
+        self::removeFirewallRulesByComment($client, $comment);
+        try {
+            $addRequest = new RouterOS\Request('/ip/firewall/nat/add');
+            $addRequest->setArgument('chain', 'srcnat');
+            $addRequest->setArgument('protocol', 'tcp');
+            $addRequest->setArgument('dst-address', $backendIp);
+            $addRequest->setArgument('src-address-list', 'pppoe-expired');
+            $addRequest->setArgument('action', 'masquerade');
+            $addRequest->setArgument('comment', $comment);
+            $client->sendSync($addRequest);
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
         }
     }
 
@@ -963,7 +2665,6 @@ class Mikrotik
             'captive.apple.com',
             'www.apple.com',
             'detectportal.firefox.com',
-            'neverssl.com',
         ];
         foreach ($hosts as $host) {
             $result = self::ensureHotspotDnsStatic($client, $host, $backendIp);
@@ -982,6 +2683,38 @@ class Mikrotik
         }
 
         return $errors;
+    }
+
+    /**
+     * Autorise les clients expirés à interroger le DNS du routeur (static → backend).
+     */
+    private static function ensurePppoeExpiredCaptiveDnsInput($client, $commentTag)
+    {
+        foreach ([
+            $commentTag . ' input allow dns udp' => ['protocol' => 'udp'],
+            $commentTag . ' input allow dns tcp' => ['protocol' => 'tcp'],
+        ] as $comment => $extra) {
+            try {
+                $printRequest = new RouterOS\Request('/ip/firewall/filter/print');
+                $printRequest->setArgument('.proplist', '.id');
+                $printRequest->setQuery(RouterOS\Query::where('comment', $comment));
+                if ($client->sendSync($printRequest)->getProperty('.id')) {
+                    continue;
+                }
+                $addRequest = new RouterOS\Request('/ip/firewall/filter/add');
+                $addRequest->setArgument('chain', 'input');
+                $addRequest->setArgument('action', 'accept');
+                $addRequest->setArgument('src-address-list', 'pppoe-expired');
+                $addRequest->setArgument('dst-port', '53');
+                foreach ($extra as $key => $value) {
+                    $addRequest->setArgument($key, $value);
+                }
+                $addRequest->setArgument('comment', $comment);
+                $client->sendSync($addRequest);
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
     }
 
     /**
@@ -1040,10 +2773,44 @@ class Mikrotik
         }
 
         $portalUrl = trim((string) $portalUrl);
-        $appUrl = trim((string) ($appUrl ?: (defined('APP_URL') ? APP_URL : '')));
+        global $config;
+        $cfg = is_array($config) ? $config : [];
+        $resolvedBackend = self::resolvePppoeCaptiveBackendUrl($cfg);
+        if ($resolvedBackend !== '') {
+            $appUrl = $resolvedBackend;
+            $portalHost = strtolower((string) parse_url($portalUrl, PHP_URL_HOST));
+            if ($portalUrl === '' || in_array($portalHost, ['localhost', '127.0.0.1', '::1'], true)) {
+                $builtPortal = self::buildPppoeCaptivePortalUrl($routerName, $cfg);
+                if ($builtPortal !== '') {
+                    $portalUrl = $builtPortal;
+                }
+            }
+        } else {
+            $appUrl = trim((string) ($appUrl ?: (defined('APP_URL') ? APP_URL : '')));
+        }
         $errors = [];
 
+        $backendIp = self::resolveAppBackendIpv4($appUrl);
+        $backendHttpPort = self::resolveAppBackendPort($appUrl, false);
+        if (self::isPppoeExpiredCaptiveConfigured($client)) {
+            if ($routerName !== '') {
+                self::syncPppoeExpiredClientMeta($client, $routerName);
+            }
+            $isolation = self::ensurePppoeExpiredIsolation($client, $backendIp ?: '', $backendHttpPort);
+            if (!empty($isolation['errors'])) {
+                $errors = array_merge($errors, $isolation['errors']);
+            }
+
+            return [
+                'ok' => empty($errors),
+                'errors' => $errors,
+                'portal_url' => $portalUrl,
+                'backend_ip' => $backendIp,
+            ];
+        }
+
         if ($portalUrl !== '') {
+            self::pruneHotspotWalledGardenBatch($client);
             $wg = self::ensureHotspotWalledGarden($client, $portalUrl);
             if (empty($wg['ok'])) {
                 $errors = array_merge($errors, $wg['errors'] ?? ['walled-garden portal']);
@@ -1118,13 +2885,6 @@ class Mikrotik
             [
                 'chain' => 'forward',
                 'action' => 'accept',
-                'comment' => $commentTag . ' allow established',
-                'connection-state' => 'established,related',
-                'src-address-list' => 'pppoe-expired',
-            ],
-            [
-                'chain' => 'forward',
-                'action' => 'accept',
                 'comment' => $commentTag . ' allow DNS',
                 'protocol' => 'udp',
                 'dst-port' => '53',
@@ -1165,18 +2925,38 @@ class Mikrotik
         }
 
         self::removeFirewallRulesByComment($client, $commentTag . ' redirect http to portal');
+        self::removeFirewallRulesByComment($client, $commentTag . ' allow established');
 
         $backendIp = self::resolveAppBackendIpv4($appUrl);
+        $backendHttpPort = self::resolveAppBackendPort($appUrl, false);
         if ($backendIp && in_array($backendIp, ['127.0.0.1', '0.0.0.0'], true)) {
-            $errors[] = $commentTag . ': APP_URL pointe vers localhost — utilisez l\'URL publique (ex. https://wifizones.org)';
             $backendIp = null;
         }
         if ($backendIp) {
             $allowHosts[] = $backendIp;
             $allowHosts = array_values(array_unique(array_filter($allowHosts)));
 
-            $httpPort = self::resolveAppBackendPort($appUrl, false);
+            $httpPort = $backendHttpPort;
             $httpsPort = self::resolveAppBackendPort($appUrl, true);
+            if (strtolower((string) parse_url($appUrl, PHP_URL_SCHEME)) === 'http') {
+                $httpsPort = $httpPort;
+            }
+
+            $natTarget = self::resolvePppoeCaptiveNatDestination($client, $backendIp, $httpPort);
+            $redirectIp = $natTarget['ip'];
+            $redirectHttpPort = $natTarget['port'];
+            $redirectHttpsPort = $natTarget['via_proxy'] ? $natTarget['port'] : $httpsPort;
+
+            $firstDstNatRuleId = null;
+            try {
+                $firstDstNatRuleId = $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/nat/print'))
+                        ->setArgument('.proplist', '.id')
+                        ->setQuery(RouterOS\Query::where('chain', 'dstnat'))
+                )->getProperty('.id');
+            } catch (Throwable $e) {
+                $firstDstNatRuleId = null;
+            }
 
             $natRules = [
                 $commentTag . ' redirect http captive' => [
@@ -1185,8 +2965,8 @@ class Mikrotik
                     'dst-port' => '80',
                     'src-address-list' => 'pppoe-expired',
                     'action' => 'dst-nat',
-                    'to-addresses' => $backendIp,
-                    'to-ports' => (string) $httpPort,
+                    'to-addresses' => $redirectIp,
+                    'to-ports' => (string) $redirectHttpPort,
                 ],
                 $commentTag . ' redirect https captive' => [
                     'chain' => 'dstnat',
@@ -1194,27 +2974,38 @@ class Mikrotik
                     'dst-port' => '443',
                     'src-address-list' => 'pppoe-expired',
                     'action' => 'dst-nat',
-                    'to-addresses' => $backendIp,
-                    'to-ports' => (string) $httpsPort,
+                    'to-addresses' => $redirectIp,
+                    'to-ports' => (string) $redirectHttpsPort,
                 ],
-                $commentTag . ' redirect dns' => [
+                $commentTag . ' redirect backend port 80' => [
                     'chain' => 'dstnat',
-                    'protocol' => 'udp',
-                    'dst-port' => '53',
+                    'protocol' => 'tcp',
+                    'dst-port' => '80',
+                    'dst-address' => $backendIp,
                     'src-address-list' => 'pppoe-expired',
-                    'action' => 'redirect',
-                    'to-ports' => '53',
+                    'action' => 'dst-nat',
+                    'to-addresses' => $backendIp,
+                    'to-ports' => (string) $httpPort,
                 ],
             ];
+            self::removeFirewallRulesByComment($client, $commentTag . ' redirect dns');
+            foreach (array_keys($natRules) as $natComment) {
+                self::removeFirewallRulesByComment($client, $natComment);
+            }
             foreach ($natRules as $comment => $args) {
-                $result = self::ensureNatRuleByComment($client, $comment, $args);
+                $result = self::ensureNatRuleByComment($client, $comment, $args, $firstDstNatRuleId);
                 if ($result !== true) {
                     $errors[] = $comment . ': ' . $result;
                 }
             }
 
+            if (empty($natTarget['via_proxy'])) {
+                self::ensurePppoeExpiredCaptiveBackendSnat($client, $backendIp, $httpPort, $httpsPort, $commentTag);
+            }
+
             $dnsErrors = self::ensurePppoeCaptiveDetectionDns($client, $backendIp);
             $errors = array_merge($errors, $dnsErrors);
+            self::ensurePppoeExpiredCaptiveDnsInput($client, $commentTag);
 
             foreach ($allowHosts as $host) {
                 if (!filter_var($host, FILTER_VALIDATE_IP)) {
@@ -1243,11 +3034,27 @@ class Mikrotik
                 }
             }
         } elseif ($appUrl !== '') {
-            $errors[] = $commentTag . ': IP backend introuvable pour ' . $appUrl . ' (vérifiez APP_URL)';
+            $hint = 'Configurez Settings → Hotspot → Hotspot API URL (ex. http://10.0.0.2:8080 en VPN dev, https://wifizones.org en prod).';
+            if ($resolvedBackend === '' && defined('APP_URL') && in_array(
+                strtolower((string) parse_url(APP_URL, PHP_URL_HOST)),
+                ['localhost', '127.0.0.1', '::1'],
+                true
+            )) {
+                $vpnIp = self::detectLocalVpnIpv4();
+                $hint = $vpnIp
+                    ? 'APP_URL = localhost — utilisez Hotspot API URL : http://' . $vpnIp . ':' . max(80, (int) parse_url(APP_URL, PHP_URL_PORT) ?: 8080)
+                    : 'APP_URL = localhost — indiquez Hotspot API URL avec l\'IP VPN du serveur DYRSIA (ex. http://10.0.0.2:8080).';
+            }
+            $errors[] = $commentTag . ': IP backend introuvable pour ' . $appUrl . '. ' . $hint;
         }
 
         if ($routerName !== '') {
             self::syncPppoeExpiredClientMeta($client, $routerName);
+        }
+
+        $isolation = self::ensurePppoeExpiredIsolation($client, $backendIp ?: '', $backendHttpPort);
+        if (!empty($isolation['errors'])) {
+            $errors = array_merge($errors, $isolation['errors']);
         }
 
         return [
@@ -1475,10 +3282,15 @@ class Mikrotik
         $onlineRequest->setArgument('.proplist', '.id');
         $onlineRequest->setQuery(RouterOS\Query::where('name', $username));
         $id = $client->sendSync($onlineRequest)->getProperty('.id');
+        if (empty($id)) {
+            return false;
+        }
 
         $removeRequest = new RouterOS\Request('/ppp/active/remove');
         $removeRequest->setArgument('numbers', $id);
         $client->sendSync($removeRequest);
+
+        return true;
     }
 
     public static function removePool($client, $name)
@@ -1746,7 +3558,12 @@ class Mikrotik
             return $from === $to;
         }
         if (self::getRouterFileSize($client, $from) <= 0) {
-            return false;
+            $txtFrom = $from . '.txt';
+            if (self::getRouterFileSize($client, $txtFrom) > 0 || self::routerFileExists($client, $txtFrom)) {
+                $from = $txtFrom;
+            } elseif (!self::routerFileExists($client, $from)) {
+                return false;
+            }
         }
 
         // Delete target file if it exists (RouterOS refuses to rename over existing files)
@@ -1829,6 +3646,87 @@ class Mikrotik
     }
 
     /**
+     * RouterOS 7 often stores API-created files as "name.txt" after /file/print file=name.
+     */
+    public static function routerFileExists($client, $path)
+    {
+        $path = trim((string) $path);
+        if ($path === '') {
+            return false;
+        }
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/print'))
+                    ->setArgument('.proplist', 'name,type')
+                    ->setQuery(RouterOS\Query::where('name', $path))
+            );
+            foreach ($responses as $response) {
+                $name = (string) $response->getProperty('name');
+                $type = (string) $response->getProperty('type');
+                if ($name === $path && $type !== 'directory') {
+                    return true;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the actual router filename after /file/print file=… (plain name or .txt suffix).
+     *
+     * @return string|null
+     */
+    private static function resolveRouterWritePath($client, $path, $createIfMissing = false)
+    {
+        $path = trim((string) $path);
+        if ($path === '') {
+            return null;
+        }
+
+        $txtPath = $path . '.txt';
+        if (self::routerFileExists($client, $path)) {
+            return $path;
+        }
+        if (self::routerFileExists($client, $txtPath)) {
+            return $txtPath;
+        }
+        if (!$createIfMissing) {
+            return null;
+        }
+
+        self::removeRouterFile($client, $path);
+        self::removeRouterFile($client, $txtPath);
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/print'))
+                    ->setArgument('file', $path)
+            );
+            foreach ($responses->getAllOfType(RouterOS\Response::TYPE_ERROR) as $response) {
+                return null;
+            }
+        } catch (Throwable $e) {
+            return null;
+        } catch (Exception $e) {
+            return null;
+        }
+
+        usleep(800000);
+
+        if (self::routerFileExists($client, $path)) {
+            return $path;
+        }
+        if (self::routerFileExists($client, $txtPath)) {
+            return $txtPath;
+        }
+
+        return null;
+    }
+
+    /**
      * Write large router files in API-safe chunks (RouterOS limits single /file/set payloads).
      */
     public static function tryRouterFileWriteChunked($client, $path, $contents)
@@ -1840,40 +3738,200 @@ class Mikrotik
             return false;
         }
 
-        if ($length <= 8000) {
-            $util = new RouterOS\Util($client);
-            return self::tryRouterFileWrite($util, $path, $contents);
-        }
-
-        // Large files (>8KB): use PEAR2 Util->filePutContents which handles
-        // chunking automatically. This works over low-MTU/lossy tunnels where
-        // MikroTik /tool fetch (inbound 16KB) times out.
         self::removeRouterFile($client, $path);
         self::removeRouterFile($client, $path . '.txt');
 
-        $util = new RouterOS\Util($client);
+        // RouterOS 7 accepts login.html (~20 KB) in one /file/set. Prefer that — append
+        // scripts are often denied for API users (Dyrsia-access) even when /file/set works.
+        $singleShotLimit = 65536;
+        if ($length <= $singleShotLimit) {
+            if (!self::tryRouterFileWrite($client, $path, $contents)) {
+                return false;
+            }
+            $writePath = self::resolveRouterWritePath($client, $path, false);
+            if ($writePath !== null && $writePath !== $path) {
+                return self::renameRouterFile($client, $writePath, $path);
+            }
+
+            return true;
+        }
+
+        $chunkSize = 2800;
+        $offset = 0;
+        $first = true;
+        $writePath = null;
+        $accumulated = '';
+        while ($offset < $length) {
+            $chunk = substr($contents, $offset, $chunkSize);
+            if ($chunk === '') {
+                break;
+            }
+            $offset += strlen($chunk);
+            $accumulated .= $chunk;
+            if ($first) {
+                $written = self::tryRouterFileWrite($client, $path, $accumulated);
+                $writePath = self::resolveRouterWritePath($client, $path, false);
+                $first = false;
+            } else {
+                $appendPath = $writePath ?? self::resolveRouterWritePath($client, $path, false) ?? $path;
+                $written = self::tryRouterFileUpdate($client, $appendPath, $accumulated);
+            }
+            if (!$written) {
+                return false;
+            }
+            usleep(120000);
+        }
+
+        usleep(200000);
+
+        $finalPath = $writePath ?? self::resolveRouterWritePath($client, $path, false) ?? $path;
+        $writtenSize = self::getRouterFileSize($client, $finalPath);
+        if ($writtenSize >= (int) ($length * 0.9)) {
+            if ($finalPath !== $path) {
+                return self::renameRouterFile($client, $finalPath, $path);
+            }
+
+            return true;
+        }
+
+        $txtPath = $path . '.txt';
+        if ($finalPath !== $txtPath) {
+            $txtSize = self::getRouterFileSize($client, $txtPath);
+            if ($txtSize >= (int) ($length * 0.9)) {
+                return self::renameRouterFile($client, $txtPath, $path);
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Overwrite an existing router file (no recreate — used for growing uploads).
+     *
+     * @return bool
+     */
+    private static function tryRouterFileUpdate($client, $writePath, $contents)
+    {
+        $writePath = trim((string) $writePath);
+        $contents = (string) $contents;
+        if ($writePath === '' || !self::routerFileExists($client, $writePath)) {
+            return false;
+        }
+
         try {
-            $util->filePutContents($path, $contents);
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/set'))
+                    ->setArgument('numbers', $writePath)
+                    ->setArgument('contents', $contents)
+            );
+            foreach ($responses as $response) {
+                if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
+                    return false;
+                }
+            }
+            usleep(400000);
         } catch (Throwable $e) {
             return false;
         } catch (Exception $e) {
             return false;
         }
-        usleep(300000);
 
-        // Verify write succeeded
-        $writtenSize = self::getRouterFileSize($client, $path);
-        if ($writtenSize >= (int) ($length * 0.9)) {
+        return self::getRouterFileSize($client, $writePath) === strlen($contents);
+    }
+
+    /**
+     * Append binaire via script RouterOS (:frombase64, ROS7+ ; :fromhex fallback ROS6).
+     */
+    private static function routerFileAppendBase64Chunk($client, $path, $chunk)
+    {
+        $path = trim((string) $path);
+        $chunk = (string) $chunk;
+        if ($path === '' || $chunk === '') {
             return true;
         }
 
-        // Check if RouterOS created a .txt suffix
-        $txtSize = self::getRouterFileSize($client, $path . '.txt');
-        if ($txtSize >= (int) ($length * 0.9)) {
-            return self::renameRouterFile($client, $path . '.txt', $path);
+        $pathEsc = str_replace(['\\', '"'], ['\\\\', '\\"'], $path);
+        $b64 = base64_encode($chunk);
+        $hex = bin2hex($chunk);
+        $scriptName = 'dyrsia_append_' . substr(md5($path . $b64), 0, 10);
+        $source = ':do {'
+            . ' :local f [/file find name="' . $pathEsc . '"];'
+            . ' :if ([:len $f]=0) do={ :error "missing file"; };'
+            . ' :local cur [/file get $f contents];'
+            . ' :local add "";'
+            . ' :do { :set add [:tochar [:frombase64 "' . $b64 . '"]]; } on-error={'
+            . '   :set add [:tochar [:fromhex "' . $hex . '"]];'
+            . ' };'
+            . ' :if ([:len $add]=0) do={ :error "decode failed"; };'
+            . ' /file set $f contents=($cur . $add);'
+            . ' } on-error={ :error $message; };';
+
+        return self::runRouterOneShotScript($client, $scriptName, $source);
+    }
+
+    private static function runRouterOneShotScript($client, $scriptName, $source)
+    {
+        $scriptName = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $scriptName);
+        if ($scriptName === '') {
+            $scriptName = 'dyrsia_tmp';
         }
 
-        return false;
+        try {
+            $existing = $client->sendSync(
+                (new RouterOS\Request('/system/script/print'))
+                    ->setArgument('.proplist', '.id')
+                    ->setQuery(RouterOS\Query::where('name', $scriptName))
+            );
+            foreach ($existing as $row) {
+                $id = $row->getProperty('.id');
+                if ($id !== null && $id !== '') {
+                    $client->sendSync(
+                        (new RouterOS\Request('/system/script/remove'))
+                            ->setArgument('numbers', $id)
+                    );
+                }
+            }
+
+            $client->sendSync(
+                (new RouterOS\Request('/system/script/add'))
+                    ->setArgument('name', $scriptName)
+                    ->setArgument('source', $source)
+            );
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/system/script/run'))
+                    ->setArgument('number', $scriptName)
+            );
+            foreach ($responses as $response) {
+                if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
+                    return false;
+                }
+            }
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+
+        try {
+            $existing = $client->sendSync(
+                (new RouterOS\Request('/system/script/print'))
+                    ->setArgument('.proplist', '.id')
+                    ->setQuery(RouterOS\Query::where('name', $scriptName))
+            );
+            foreach ($existing as $row) {
+                $id = $row->getProperty('.id');
+                if ($id !== null && $id !== '') {
+                    $client->sendSync(
+                        (new RouterOS\Request('/system/script/remove'))
+                            ->setArgument('numbers', $id)
+                    );
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return true;
     }
 
     /**
@@ -1900,24 +3958,35 @@ class Mikrotik
     /**
      * @return array<int, string>
      */
-    public static function buildHotspotLoginFetchUrls($apiUrl, $appUrl, $fetchTs = null)
+    public static function buildHotspotLoginFetchUrls($apiUrl, $appUrl, $fetchTs = null, array $preferredBases = [], $includePublicDeploy = false)
     {
         $fetchTs = $fetchTs ?? time();
-        $bases = array_values(array_unique(array_filter([
-            rtrim((string) $apiUrl, '/'),
-            rtrim((string) $appUrl, '/'),
-        ], function ($base) {
-            return self::isRouterFetchableUrl($base);
-        })));
+        if ($includePublicDeploy) {
+            foreach (['https://wifizones.org', 'https://www.wifizones.org'] as $publicBase) {
+                if (!in_array($publicBase, $preferredBases, true)) {
+                    array_unshift($preferredBases, $publicBase);
+                }
+            }
+        }
+        $bases = [];
+        foreach (array_merge($preferredBases, [$apiUrl, $appUrl]) as $base) {
+            $base = rtrim((string) $base, '/');
+            if ($base === '' || !self::isRouterFetchableUrl($base)) {
+                continue;
+            }
+            if (!in_array($base, $bases, true)) {
+                $bases[] = $base;
+            }
+        }
         if (empty($bases)) {
             return [];
         }
 
         $urls = [];
         foreach ([
-            $bases[0] . '/hotspot_login.html?ts=' . $fetchTs,
             $bases[0] . '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs,
             $bases[0] . '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs,
+            $bases[0] . '/hotspot_login.html?ts=' . $fetchTs,
         ] as $url) {
             if (self::isRouterFetchableUrl($url)) {
                 $urls[] = $url;
@@ -1968,19 +4037,9 @@ class Mikrotik
         $errors = [];
         foreach (['/ip/firewall/nat', '/ip/firewall/filter'] as $chainPath) {
             try {
-                $rows = $client->sendSync(
-                    (new RouterOS\Request($chainPath . '/print'))
-                        ->setArgument('.proplist', '.id,comment')
-                );
-                foreach ($rows as $row) {
-                    if ((string) $row->getProperty('comment') !== $comment) {
-                        continue;
-                    }
-                    $client->sendSync(
-                        (new RouterOS\Request($chainPath . '/remove'))
-                            ->setArgument('numbers', $row->getProperty('.id'))
-                    );
-                }
+                $removeRequest = new RouterOS\Request($chainPath . '/remove');
+                $removeRequest->setQuery(RouterOS\Query::where('comment', $comment));
+                $client->sendSync($removeRequest);
             } catch (Throwable $e) {
                 $errors[] = $chainPath . ': ' . $e->getMessage();
             } catch (Exception $e) {
@@ -1991,6 +4050,190 @@ class Mikrotik
         return empty($errors) ? ['ok' => true] : ['ok' => false, 'errors' => $errors];
     }
 
+    private static function hotspotWalledGardenIpPrintPath($client)
+    {
+        foreach (['/ip/hotspot/walled-garden/ip', '/ip hotspot walled-garden ip'] as $wgPath) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request($wgPath . '/print'))
+                        ->setArgument('.proplist', '.id')
+                        ->setArgument('.count-only', 'true')
+                );
+                return $wgPath;
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        return '/ip/hotspot/walled-garden/ip';
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private static function fetchHotspotWalledGardenIpRows($client)
+    {
+        $wgPath = self::hotspotWalledGardenIpPrintPath($client);
+        $rows = [];
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request($wgPath . '/print'))
+                    ->setArgument('.proplist', '.id,dst-host,dst-address,dst-port,protocol,comment')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $rows[] = [
+                    'id' => (string) $row->getProperty('.id'),
+                    'dst-host' => strtolower(trim((string) $row->getProperty('dst-host'))),
+                    'dst-address' => trim((string) $row->getProperty('dst-address')),
+                    'dst-port' => trim((string) $row->getProperty('dst-port')),
+                ];
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return $rows;
+    }
+
+    private static function hotspotWalledGardenHostKey($host, $port, $isIp)
+    {
+        $host = strtolower(trim((string) $host));
+        $port = trim((string) $port);
+        return ($isIp ? 'ip:' : 'host:') . $host . ':' . $port;
+    }
+
+    private static function hotspotWalledGardenRowMatches($row, $host, $port, $isIp)
+    {
+        $field = $isIp ? 'dst-address' : 'dst-host';
+        $value = $isIp ? trim((string) $host) : strtolower(trim((string) $host));
+        $rowValue = $isIp ? trim((string) ($row['dst-address'] ?? '')) : strtolower(trim((string) ($row['dst-host'] ?? '')));
+        if ($rowValue === '' || strcasecmp($rowValue, $value) !== 0) {
+            return false;
+        }
+        $rowPort = trim((string) ($row['dst-port'] ?? ''));
+        return $rowPort === '' || $rowPort === (string) $port;
+    }
+
+    /**
+     * @param array<int, string> $apiUrls
+     * @return array{ok: bool, errors?: array<int, string>}
+     */
+    public static function ensureHotspotWalledGardenBatch($client, array $apiUrls)
+    {
+        $targets = [];
+        foreach ($apiUrls as $apiUrl) {
+            $apiUrl = trim((string) $apiUrl);
+            $apiHost = parse_url($apiUrl, PHP_URL_HOST);
+            if (!$apiHost) {
+                continue;
+            }
+            $apiPort = parse_url($apiUrl, PHP_URL_PORT);
+            $apiScheme = parse_url($apiUrl, PHP_URL_SCHEME);
+            if (!$apiPort) {
+                $apiPort = $apiScheme === 'https' ? 443 : 80;
+            }
+            $isIp = filter_var($apiHost, FILTER_VALIDATE_IP) !== false;
+            $key = self::hotspotWalledGardenHostKey($apiHost, $apiPort, $isIp);
+            $targets[$key] = [
+                'host' => $apiHost,
+                'port' => (string) $apiPort,
+                'url' => $apiUrl,
+                'isIp' => $isIp,
+            ];
+        }
+        if ($targets === []) {
+            return ['ok' => false, 'errors' => ['Hotspot API URL invalide']];
+        }
+
+        $wgPath = self::hotspotWalledGardenIpPrintPath($client);
+        $existing = self::fetchHotspotWalledGardenIpRows($client);
+        $errors = [];
+
+        foreach ($targets as $target) {
+            $found = false;
+            foreach ($existing as $row) {
+                if (self::hotspotWalledGardenRowMatches($row, $target['host'], $target['port'], $target['isIp'])) {
+                    $found = true;
+                    break;
+                }
+            }
+            if ($found) {
+                continue;
+            }
+
+            $field = $target['isIp'] ? 'dst-address' : 'dst-host';
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request($wgPath . '/add'))
+                        ->setArgument($field, $target['host'])
+                        ->setArgument('protocol', 'tcp')
+                        ->setArgument('dst-port', $target['port'])
+                        ->setArgument('action', 'accept')
+                        ->setArgument('comment', 'WifiZone hotspot API ' . $target['url'])
+                );
+                $existing[] = [
+                    'id' => '',
+                    'dst-host' => $target['isIp'] ? '' : strtolower($target['host']),
+                    'dst-address' => $target['isIp'] ? $target['host'] : '',
+                    'dst-port' => $target['port'],
+                ];
+            } catch (Throwable $e) {
+                $errors[] = $target['url'] . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = $target['url'] . ': ' . $e->getMessage();
+            }
+        }
+
+        return empty($errors) ? ['ok' => true] : ['ok' => false, 'errors' => $errors];
+    }
+
+    private static function hotspotApiNatProxyConfigured($client, $listenIp, $listenPort, $backendHost, $backendPort, $proxyComment, $snatComment, $inputComment)
+    {
+        $hasProxy = false;
+        $hasSnat = false;
+        $hasInput = false;
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/print'))
+                    ->setArgument('.proplist', 'comment,dst-address,dst-port,to-addresses,to-ports,action')
+            ) as $row) {
+                $comment = (string) $row->getProperty('comment');
+                if ($comment === $proxyComment
+                    && (string) $row->getProperty('dst-address') === $listenIp
+                    && (string) $row->getProperty('dst-port') === (string) $listenPort
+                    && (string) $row->getProperty('to-addresses') === $backendHost
+                    && (string) $row->getProperty('to-ports') === (string) $backendPort) {
+                    $hasProxy = true;
+                }
+                if ($comment === $snatComment
+                    && (string) $row->getProperty('dst-address') === $backendHost
+                    && (string) $row->getProperty('dst-port') === (string) $backendPort
+                    && (string) $row->getProperty('action') === 'masquerade') {
+                    $hasSnat = true;
+                }
+            }
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', 'comment,dst-address,dst-port,action')
+            ) as $row) {
+                if ((string) $row->getProperty('comment') === $inputComment
+                    && (string) $row->getProperty('dst-address') === $listenIp
+                    && (string) $row->getProperty('dst-port') === (string) $listenPort
+                    && (string) $row->getProperty('action') === 'accept') {
+                    $hasInput = true;
+                }
+            }
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+
+        return $hasProxy && $hasSnat && $hasInput;
+    }
+
     /**
      * Autorise le serveur API dans le walled-garden hotspot (avant fetch login.html).
      *
@@ -1998,65 +4241,7 @@ class Mikrotik
      */
     public static function ensureHotspotWalledGarden($client, $apiUrl)
     {
-        $apiUrl = trim((string) $apiUrl);
-        $apiHost = parse_url($apiUrl, PHP_URL_HOST);
-        if (!$apiHost) {
-            return ['ok' => false, 'errors' => ['Hotspot API URL invalide']];
-        }
-        $apiPort = parse_url($apiUrl, PHP_URL_PORT);
-        $apiScheme = parse_url($apiUrl, PHP_URL_SCHEME);
-        if (!$apiPort) {
-            $apiPort = $apiScheme === 'https' ? 443 : 80;
-        }
-
-        $apiIsIp = filter_var($apiHost, FILTER_VALIDATE_IP) !== false;
-        $queryField = $apiIsIp ? 'dst-address' : 'dst-host';
-        $walledGardenPaths = ['/ip/hotspot/walled-garden/ip', '/ip hotspot walled-garden ip'];
-        $errors = [];
-
-        foreach ($walledGardenPaths as $wgPath) {
-            try {
-                $walledGarden = $client->sendSync(
-                    (new RouterOS\Request($wgPath . '/print'))
-                        ->setArgument('.proplist', '.id,' . $queryField . ',dst-port')
-                        ->setQuery(RouterOS\Query::where($queryField, $apiHost))
-                );
-                $updated = false;
-                foreach ($walledGarden as $row) {
-                    if ((string) $row->getProperty('dst-port') === (string) $apiPort) {
-                        return ['ok' => true];
-                    }
-                    $client->sendSync(
-                        (new RouterOS\Request($wgPath . '/set'))
-                            ->setArgument('numbers', $row->getProperty('.id'))
-                            ->setArgument('dst-port', (string) $apiPort)
-                            ->setArgument('protocol', 'tcp')
-                            ->setArgument('action', 'accept')
-                            ->setArgument('comment', 'WifiZone hotspot API ' . $apiUrl)
-                    );
-                    $updated = true;
-                    break;
-                }
-                if (!$updated) {
-                    $client->sendSync(
-                        (new RouterOS\Request($wgPath . '/add'))
-                            ->setArgument($queryField, $apiHost)
-                            ->setArgument('protocol', 'tcp')
-                            ->setArgument('dst-port', (string) $apiPort)
-                            ->setArgument('action', 'accept')
-                            ->setArgument('comment', 'WifiZone hotspot API ' . $apiUrl)
-                    );
-                }
-
-                return ['ok' => true];
-            } catch (Throwable $e) {
-                $errors[] = $wgPath . ': ' . $e->getMessage();
-            } catch (Exception $e) {
-                $errors[] = $wgPath . ': ' . $e->getMessage();
-            }
-        }
-
-        return ['ok' => false, 'errors' => $errors];
+        return self::ensureHotspotWalledGardenBatch($client, [(string) $apiUrl]);
     }
 
     /**
@@ -2075,21 +4260,6 @@ class Mikrotik
                     ->setQuery(RouterOS\Query::where('interface', $interfaceName))
             );
             foreach ($responses as $row) {
-                $address = (string) $row->getProperty('address');
-                if (preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
-                    return $match[1];
-                }
-            }
-            $responses = $client->sendSync(
-                (new RouterOS\Request('/ip/address/print'))
-                    ->setArgument('.proplist', 'address,interface,actual-interface')
-            );
-            foreach ($responses as $row) {
-                $iface = (string) $row->getProperty('interface');
-                $actual = (string) $row->getProperty('actual-interface');
-                if ($iface !== $interfaceName && $actual !== $interfaceName) {
-                    continue;
-                }
                 $address = (string) $row->getProperty('address');
                 if (preg_match('/(\d+\.\d+\.\d+\.\d+)/', $address, $match)) {
                     return $match[1];
@@ -2200,6 +4370,10 @@ class Mikrotik
         $errors = [];
 
         try {
+            if (self::hotspotApiNatProxyConfigured($client, $listenIp, $listenPort, $backendHost, $backendPort, $proxyComment, $snatComment, $inputComment)) {
+                return ['ok' => true, 'captive_url' => $captiveUrl];
+            }
+
             self::removeFirewallRulesByComment($client, $proxyComment);
             self::removeFirewallRulesByComment($client, $snatComment);
             self::removeFirewallRulesByComment($client, $inputComment);
@@ -2252,13 +4426,12 @@ class Mikrotik
                 return ['ok' => false, 'errors' => ['Règle NAT proxy non créée sur le MikroTik (droits firewall ?)']];
             }
 
-            $wgBackend = self::ensureHotspotWalledGarden($client, 'http://' . $backendHost . ($backendPort === 80 ? '' : ':' . $backendPort));
+            $wgBackend = self::ensureHotspotWalledGardenBatch($client, [
+                'http://' . $backendHost . ($backendPort === 80 ? '' : ':' . $backendPort),
+                $captiveUrl,
+            ]);
             if (empty($wgBackend['ok'])) {
                 $errors = array_merge($errors, $wgBackend['errors'] ?? ['walled-garden backend']);
-            }
-            $wgCaptive = self::ensureHotspotWalledGarden($client, $captiveUrl);
-            if (empty($wgCaptive['ok'])) {
-                $errors = array_merge($errors, $wgCaptive['errors'] ?? ['walled-garden captive']);
             }
 
             if (!empty($errors)) {
@@ -2494,6 +4667,29 @@ class Mikrotik
     }
 
     /**
+     * @param array<int, string> $urls
+     * @return true|string
+     */
+    public static function verifyHotspotFetchUrls(array $urls, $timeout = 5)
+    {
+        $urls = array_values(array_filter(array_map('trim', $urls)));
+        if (empty($urls)) {
+            return 'Aucune URL de fetch valide pour login.html';
+        }
+
+        $errors = [];
+        foreach ($urls as $url) {
+            $result = self::verifyHotspotFetchUrl($url, $timeout);
+            if ($result === true) {
+                return true;
+            }
+            $errors[] = (string) $result;
+        }
+
+        return implode(' — ', $errors);
+    }
+
+    /**
      * @return string|null Error message on failure, null on success.
      */
     private static function attemptToolFetch($client, $url, $dstPath)
@@ -2649,6 +4845,25 @@ class Mikrotik
     }
 
     /**
+     * Admin lancé depuis localhost (php -S) : le routeur ne peut pas fetcher login.html
+     * depuis cette machine — déploiement API MikroTik uniquement.
+     */
+    public static function isLocalHotspotDevEnvironment($apiUrl = null)
+    {
+        foreach (array_filter([
+            $apiUrl,
+            defined('APP_URL') ? APP_URL : '',
+        ]) as $url) {
+            $host = strtolower((string) parse_url((string) $url, PHP_URL_HOST));
+            if (in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * @param array<int, string> $fetchUrls
      * @return array<int, string>
      */
@@ -2667,15 +4882,44 @@ class Mikrotik
     /**
      * @return bool
      */
-    public static function tryRouterFileWrite($util, $path, $contents)
+    public static function tryRouterFileWrite($client, $path, $contents)
     {
-        try {
-            $util->filePutContents($path, null);
-        } catch (Throwable $e) {
-        } catch (Exception $e) {
+        $path = trim((string) $path);
+        $contents = (string) $contents;
+        if ($path === '') {
+            return false;
         }
 
-        return $util->filePutContents($path, $contents, true);
+        $writePath = self::resolveRouterWritePath($client, $path, true);
+        if ($writePath === null) {
+            return false;
+        }
+
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/file/set'))
+                    ->setArgument('numbers', $writePath)
+                    ->setArgument('contents', '')
+            );
+            usleep(400000);
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/file/set'))
+                    ->setArgument('numbers', $writePath)
+                    ->setArgument('contents', $contents)
+            );
+            foreach ($responses as $response) {
+                if ($response->getType() === RouterOS\Response::TYPE_ERROR) {
+                    return false;
+                }
+            }
+            usleep(400000);
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+
+        return self::getRouterFileSize($client, $writePath) === strlen($contents);
     }
 
     /**
@@ -2736,7 +4980,7 @@ class Mikrotik
     {
         $html = (string) $html;
         $length = strlen($html);
-        $fetchUrls = array_slice(self::filterRouterFetchUrls($fetchUrls), 0, 2);
+        $fetchUrls = self::filterRouterFetchUrls($fetchUrls);
         $errors = [];
 
         self::ensureRouterDirectory($client, 'hotspot');
@@ -2843,23 +5087,109 @@ class Mikrotik
         return $html;
     }
 
+    /**
+     * Nettoie en une passe les doublons walled-garden (centaines d'entrées = sync très lente).
+     */
+    public static function pruneHotspotWalledGardenBatch($client)
+    {
+        $lines = [
+            '/ip hotspot walled-garden ip remove [find dst-host="wa.me"]',
+            '/ip hotspot walled-garden ip remove [find dst-host="api.whatsapp.com"]',
+            '/ip hotspot walled-garden ip remove [find dst-host="web.whatsapp.com"]',
+            '/ip hotspot walled-garden ip remove [find dst-host~"whatsapp"]',
+            '/ip hotspot walled-garden remove [find dst-host="wa.me"]',
+            '/ip hotspot walled-garden remove [find dst-host~"whatsapp"]',
+            '/ip hotspot walled-garden ip remove [find comment="DYRSIA hotspot captive extras"]',
+        ];
+
+        return self::runRouterOneShotScript($client, 'dyrsia_prune_wg', implode("\n", $lines));
+    }
+
+    /**
+     * Retire des hôtes du walled-garden hotspot (ex. WhatsApp après désactivation).
+     * Utilise un filtre API (une requête par liste) au lieu d'une suppression par entrée.
+     */
+    public static function removeHotspotWalledGardenHosts($client, array $hosts)
+    {
+        $hosts = array_values(array_filter(array_unique(array_map('strtolower', $hosts))));
+        if ($hosts === []) {
+            return ['ok' => true, 'removed' => 0];
+        }
+
+        $lines = [];
+        foreach ($hosts as $host) {
+            if ($host === '') {
+                continue;
+            }
+            $escaped = str_replace('"', '', $host);
+            $lines[] = '/ip hotspot walled-garden ip remove [find dst-host="' . $escaped . '"]';
+            $lines[] = '/ip hotspot walled-garden remove [find dst-host="' . $escaped . '"]';
+        }
+        if ($lines !== []) {
+            self::runRouterOneShotScript($client, 'dyrsia_rm_wg_hosts', implode("\n", $lines));
+        }
+
+        return ['ok' => true, 'removed' => count($hosts)];
+    }
+
+    /**
+     * Compte les entrées walled-garden pour un hôte (dst-host).
+     */
+    private static function countHotspotWalledGardenHost($client, $wgPath, $host)
+    {
+        try {
+            $rows = $client->sendSync(
+                (new RouterOS\Request($wgPath . '/print'))
+                    ->setArgument('.proplist', '.id,dst-host')
+                    ->setQuery(RouterOS\Query::where('dst-host', $host))
+            );
+            $count = 0;
+            foreach ($rows as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $count++;
+            }
+
+            return $count;
+        } catch (Throwable $e) {
+            return 0;
+        } catch (Exception $e) {
+            return 0;
+        }
+    }
+
     public static function ensureHotspotCaptiveExtrasWalledGarden($client, $appUrl)
     {
+        self::pruneHotspotWalledGardenBatch($client);
+        self::removeHotspotWalledGardenHosts($client, ['wa.me', 'api.whatsapp.com', 'web.whatsapp.com']);
+
         $hosts = array_filter(array_unique([
             parse_url(self::normalizeHotspotBackendApiUrl($appUrl), PHP_URL_HOST),
             'cdn.jsdelivr.net',
-            'wa.me',
-            'api.whatsapp.com',
-            'web.whatsapp.com',
         ]));
+        $existingHosts = [];
+        foreach (self::fetchHotspotWalledGardenIpRows($client) as $row) {
+            $host = strtolower(trim((string) ($row['dst-host'] ?? '')));
+            if ($host !== '') {
+                $existingHosts[$host] = true;
+            }
+        }
+
+        $wgPath = self::hotspotWalledGardenIpPrintPath($client);
         foreach ($hosts as $host) {
+            $host = strtolower(trim((string) $host));
+            if ($host === '' || isset($existingHosts[$host])) {
+                continue;
+            }
             try {
                 $client->sendSync(
-                    (new RouterOS\Request('/ip/hotspot/walled-garden/ip/add'))
+                    (new RouterOS\Request($wgPath . '/add'))
                         ->setArgument('dst-host', $host)
                         ->setArgument('action', 'accept')
                         ->setArgument('comment', 'DYRSIA hotspot captive extras')
                 );
+                $existingHosts[$host] = true;
             } catch (Throwable $e) {
             } catch (Exception $e) {
             }
@@ -2879,9 +5209,6 @@ class Mikrotik
         }
         $hosts = array_values(array_unique(array_filter(array_merge($hosts, [
             'cdn.jsdelivr.net',
-            'wa.me',
-            'api.whatsapp.com',
-            'web.whatsapp.com',
         ]))));
 
         $lines = ['# DYRSIA Hotspot captive portal walled-garden'];
@@ -2890,5 +5217,1207 @@ class Mikrotik
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Lit interfaces, pools, profils et serveurs hotspot pour l'assistant Hotspot Setup.
+     */
+    public static function fetchHotspotSetupSnapshot($client, $preferredHotspotName = '')
+    {
+        $preferredHotspotName = trim((string) $preferredHotspotName);
+        $snapshot = [
+            'ok' => true,
+            'interfaces' => [],
+            'pools' => [],
+            'hotspots' => [],
+            'profiles' => [],
+            'networks' => [],
+            'suggested' => [
+                'hotspot_name' => '',
+                'hotspot_interface' => '',
+                'hotspot_profile' => 'default',
+                'hotspot_local_address' => '10.0.0.1/24',
+                'hotspot_masquerade' => '1',
+                'hotspot_address_pool' => '10.0.0.1-10.0.0.254',
+                'hotspot_pool_name' => '',
+                'hotspot_pool_range' => '10.0.0.1-10.0.0.254',
+                'hotspot_smtp_server' => '0.0.0.0',
+                'hotspot_dns_server' => '8.8.8.8',
+                'hotspot_dns_name' => '',
+            ],
+            'errors' => [],
+        ];
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/interface/print'))
+                    ->setArgument('.proplist', 'name,type,disabled,running,comment')
+            );
+            foreach ($responses as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $name = trim((string) $row->getProperty('name'));
+                if ($name === '' || $name === 'lo') {
+                    continue;
+                }
+                $type = trim((string) $row->getProperty('type'));
+                $snapshot['interfaces'][] = [
+                    'name' => $name,
+                    'type' => $type,
+                    'disabled' => (string) $row->getProperty('disabled') === 'true',
+                    'label' => $name . ' (' . $type . ')',
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'interfaces: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'interfaces: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/pool/print'))
+                    ->setArgument('.proplist', 'name,ranges,next-pool,comment')
+            );
+            foreach ($responses as $row) {
+                $name = trim((string) $row->getProperty('name'));
+                if ($name === '') {
+                    continue;
+                }
+                $snapshot['pools'][] = [
+                    'name' => $name,
+                    'ranges' => trim((string) $row->getProperty('ranges')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'pools: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'pools: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/profile/print'))
+                    ->setArgument('.proplist', 'name,dns-name,smtp-server,dns-server,hotspot-address')
+            );
+            foreach ($responses as $row) {
+                $name = trim((string) $row->getProperty('name'));
+                if ($name === '') {
+                    continue;
+                }
+                $snapshot['profiles'][] = [
+                    'name' => $name,
+                    'dns_name' => trim((string) $row->getProperty('dns-name')),
+                    'smtp_server' => trim((string) $row->getProperty('smtp-server')),
+                    'dns_server' => trim((string) $row->getProperty('dns-server')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'profiles: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'profiles: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', 'name,interface,profile,address-pool,dns-name')
+            );
+            foreach ($responses as $row) {
+                $snapshot['hotspots'][] = [
+                    'name' => trim((string) $row->getProperty('name')),
+                    'interface' => trim((string) $row->getProperty('interface')),
+                    'profile' => trim((string) $row->getProperty('profile')),
+                    'address_pool' => trim((string) $row->getProperty('address-pool')),
+                    'dns_name' => trim((string) $row->getProperty('dns-name')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'hotspots: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'hotspots: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/network/print'))
+                    ->setArgument('.proplist', 'address,profile,comment')
+            );
+            foreach ($responses as $row) {
+                $address = trim((string) $row->getProperty('address'));
+                if ($address === '') {
+                    continue;
+                }
+                $snapshot['networks'][] = [
+                    'address' => $address,
+                    'profile' => trim((string) $row->getProperty('profile')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'networks: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'networks: ' . $e->getMessage();
+        }
+
+        $profileNames = array_column($snapshot['profiles'], 'name');
+        if (!in_array('default', $profileNames, true)) {
+            array_unshift($snapshot['profiles'], [
+                'name' => 'default',
+                'dns_name' => '',
+                'smtp_server' => '0.0.0.0',
+                'dns_server' => '8.8.8.8',
+            ]);
+        }
+
+        usort($snapshot['interfaces'], static function ($a, $b) {
+            $order = ['ether' => 1, 'wlan' => 2, 'bridge' => 3, 'vlan' => 4, 'bond' => 5, 'vrrp' => 6];
+            $oa = $order[$a['type']] ?? 99;
+            $ob = $order[$b['type']] ?? 99;
+            if ($oa !== $ob) {
+                return $oa <=> $ob;
+            }
+            return strnatcasecmp($a['name'], $b['name']);
+        });
+
+        $snapshot['suggested']['hotspot_masquerade'] = self::hotspotMasqueradeEnabled($client) ? '1' : '0';
+
+        foreach ($snapshot['hotspots'] as $hs) {
+            $poolName = trim((string) ($hs['address_pool'] ?? ''));
+            if ($poolName === '') {
+                continue;
+            }
+            $poolKnown = false;
+            foreach ($snapshot['pools'] as $pool) {
+                if (($pool['name'] ?? '') === $poolName) {
+                    $poolKnown = true;
+                    break;
+                }
+            }
+            if (!$poolKnown) {
+                $snapshot['pools'][] = [
+                    'name' => $poolName,
+                    'ranges' => '',
+                ];
+            }
+        }
+
+        $activeHotspot = null;
+        if (!empty($snapshot['hotspots'])) {
+            if ($preferredHotspotName !== '') {
+                foreach ($snapshot['hotspots'] as $hs) {
+                    if (strcasecmp((string) ($hs['name'] ?? ''), $preferredHotspotName) === 0) {
+                        $activeHotspot = $hs;
+                        break;
+                    }
+                }
+            }
+            if ($activeHotspot === null) {
+                $activeHotspot = $snapshot['hotspots'][0];
+            }
+        }
+
+        if ($activeHotspot !== null) {
+            $hs = $activeHotspot;
+            $snapshot['suggested']['hotspot_name'] = $hs['name'];
+            $snapshot['suggested']['hotspot_interface'] = $hs['interface'];
+            $snapshot['suggested']['hotspot_profile'] = $hs['profile'] !== '' ? $hs['profile'] : 'default';
+            $snapshot['suggested']['hotspot_pool_name'] = $hs['address_pool'];
+            if ($hs['dns_name'] !== '') {
+                $snapshot['suggested']['hotspot_dns_name'] = $hs['dns_name'];
+            }
+            foreach ($snapshot['pools'] as $pool) {
+                if ($pool['name'] === $hs['address_pool'] && $pool['ranges'] !== '') {
+                    $snapshot['suggested']['hotspot_address_pool'] = $pool['ranges'];
+                    $snapshot['suggested']['hotspot_pool_range'] = $pool['ranges'];
+                    break;
+                }
+            }
+        } elseif (!empty($snapshot['pools'])) {
+            $snapshot['suggested']['hotspot_pool_name'] = $snapshot['pools'][0]['name'];
+            if ($snapshot['pools'][0]['ranges'] !== '') {
+                $snapshot['suggested']['hotspot_address_pool'] = $snapshot['pools'][0]['ranges'];
+                $snapshot['suggested']['hotspot_pool_range'] = $snapshot['pools'][0]['ranges'];
+            }
+        }
+
+        if (!empty($snapshot['networks'])) {
+            $snapshot['suggested']['hotspot_local_address'] = $snapshot['networks'][0]['address'];
+        }
+
+        $profileName = $snapshot['suggested']['hotspot_profile'] ?: 'default';
+        foreach ($snapshot['profiles'] as $prof) {
+            if ($prof['name'] !== $profileName) {
+                continue;
+            }
+            if ($prof['smtp_server'] !== '') {
+                $snapshot['suggested']['hotspot_smtp_server'] = $prof['smtp_server'];
+            }
+            if ($prof['dns_server'] !== '') {
+                $snapshot['suggested']['hotspot_dns_server'] = $prof['dns_server'];
+            }
+            if ($prof['dns_name'] !== '' && $snapshot['suggested']['hotspot_dns_name'] === '') {
+                $snapshot['suggested']['hotspot_dns_name'] = $prof['dns_name'];
+            }
+            break;
+        }
+
+        if (!empty($snapshot['errors'])) {
+            $snapshot['ok'] = count($snapshot['interfaces']) > 0 || count($snapshot['pools']) > 0;
+        }
+
+        return $snapshot;
+    }
+
+    /**
+     * Crée ou met à jour le serveur hotspot MikroTik selon l'assistant Hotspot Setup.
+     *
+     * @return array{ok: bool, errors?: array<int, string>, actions?: array<int, string>, hotspot_name?: string}
+     */
+    public static function applyHotspotSetupFromConfig($client, array $config)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => false, 'errors' => ['Indisponible en mode démo.']];
+        }
+        if (class_exists('DemoShowcase')) {
+            global $admin;
+            if (DemoShowcase::blocksRouterSync($admin ?? null)) {
+                return ['ok' => false, 'errors' => ['Compte vitrine démo : configuration hotspot MikroTik désactivée.']];
+            }
+        }
+
+        $interface = trim((string) ($config['hotspot_interface'] ?? ''));
+        $poolName = trim((string) ($config['hotspot_pool_name'] ?? ''));
+        $poolRange = trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? ''));
+        $profileName = trim((string) ($config['hotspot_profile'] ?? 'default'));
+        $profileName = $profileName !== '' ? $profileName : 'default';
+        $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
+        $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
+        $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
+        $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
+        $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
+        $masquerade = !empty($config['hotspot_masquerade']) && (string) $config['hotspot_masquerade'] !== '0';
+        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'chap'));
+
+        if ($interface === '') {
+            return ['ok' => false, 'errors' => ['Interface hotspot manquante (étape 2 de l\'assistant).']];
+        }
+        if ($poolName === '' || $poolRange === '') {
+            return ['ok' => false, 'errors' => ['Pool IP manquant : renseignez le nom du pool et la plage (étape 2).']];
+        }
+
+        if ($hotspotName === '') {
+            $hotspotName = 'dyrsia-' . preg_replace('/[^a-z0-9_-]/i', '', $interface);
+            if ($hotspotName === 'dyrsia-') {
+                $hotspotName = 'dyrsia-hotspot';
+            }
+        }
+
+        $errors = [];
+        $actions = [];
+
+        try {
+            self::setPool($client, $poolName, $poolRange);
+            $actions[] = 'pool « ' . $poolName . ' »';
+        } catch (Throwable $e) {
+            $errors[] = 'pool: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'pool: ' . $e->getMessage();
+        }
+
+        if ($localAddress !== '') {
+            try {
+                self::ensureHotspotInterfaceAddress($client, $interface, $localAddress);
+                $actions[] = 'adresse ' . $localAddress . ' sur ' . $interface;
+            } catch (Throwable $e) {
+                $errors[] = 'adresse IP: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'adresse IP: ' . $e->getMessage();
+            }
+        }
+
+        try {
+            self::ensureHotspotProfileConfigured($client, $profileName, $dnsName, $smtpServer, $dnsServer, $loginMethods);
+            $actions[] = 'profil « ' . $profileName . ' »';
+        } catch (Throwable $e) {
+            $errors[] = 'profil: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'profil: ' . $e->getMessage();
+        }
+
+        if ($localAddress !== '') {
+            try {
+                self::ensureHotspotNetworkEntry($client, $localAddress, $profileName, $dnsServer);
+                $actions[] = 'réseau hotspot';
+            } catch (Throwable $e) {
+                $errors[] = 'réseau hotspot: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'réseau hotspot: ' . $e->getMessage();
+            }
+        }
+
+        try {
+            self::ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName);
+            $actions[] = 'serveur « ' . $hotspotName . ' »';
+        } catch (Throwable $e) {
+            $errors[] = 'serveur hotspot: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'serveur hotspot: ' . $e->getMessage();
+        }
+
+        if ($masquerade) {
+            try {
+                self::ensureHotspotSrcNatMasquerade($client, $interface);
+                $actions[] = 'masquerade NAT';
+            } catch (Throwable $e) {
+                $errors[] = 'masquerade: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'masquerade: ' . $e->getMessage();
+            }
+        }
+
+        return [
+            'ok' => empty($errors),
+            'errors' => $errors,
+            'actions' => $actions,
+            'hotspot_name' => $hotspotName,
+        ];
+    }
+
+    private static function parseHotspotLocalNetwork($localAddress)
+    {
+        $localAddress = trim((string) $localAddress);
+        if (!preg_match('#^(\d+\.\d+\.\d+\.\d+)/(\d+)$#', $localAddress, $match)) {
+            return null;
+        }
+        $ip = $match[1];
+        $prefix = (int) $match[2];
+        if ($prefix < 0 || $prefix > 32) {
+            return null;
+        }
+        $long = ip2long($ip);
+        if ($long === false) {
+            return null;
+        }
+        $mask = $prefix === 0 ? 0 : (-1 << (32 - $prefix)) & 0xFFFFFFFF;
+        $network = long2ip($long & $mask);
+
+        return [
+            'address' => $network . '/' . $prefix,
+            'gateway' => $ip,
+        ];
+    }
+
+    private static function routerEntityId($client, $path, $field, $value)
+    {
+        $responses = $client->sendSync(
+            (new RouterOS\Request($path . '/print'))
+                ->setArgument('.proplist', '.id')
+                ->setQuery(RouterOS\Query::where($field, $value))
+        );
+        foreach ($responses as $row) {
+            $id = $row->getProperty('.id');
+            if ($id !== null && $id !== '') {
+                return $id;
+            }
+        }
+
+        return null;
+    }
+
+    private static function ensureHotspotInterfaceAddress($client, $interface, $localAddress)
+    {
+        $interface = trim((string) $interface);
+        $localAddress = trim((string) $localAddress);
+        if ($interface === '' || $localAddress === '') {
+            return;
+        }
+
+        $responses = $client->sendSync(
+            (new RouterOS\Request('/ip/address/print'))
+                ->setArgument('.proplist', '.id,address,interface')
+                ->setQuery(RouterOS\Query::where('interface', $interface))
+        );
+        foreach ($responses as $row) {
+            $address = trim((string) $row->getProperty('address'));
+            if ($address === $localAddress || strpos($address, explode('/', $localAddress)[0] . '/') === 0) {
+                return;
+            }
+        }
+
+        $client->sendSync(
+            (new RouterOS\Request('/ip/address/add'))
+                ->setArgument('address', $localAddress)
+                ->setArgument('interface', $interface)
+                ->setArgument('comment', 'DYRSIA hotspot')
+        );
+    }
+
+    private static function normalizeHotspotLoginBy($loginMethods)
+    {
+        $allowed = ['chap', 'http-chap', 'cookie', 'https', 'http-pap', 'mac', 'trial'];
+        $methods = array_values(array_unique(array_filter(array_map('trim', explode(',', strtolower((string) $loginMethods))))));
+        $methods = array_values(array_intersect($methods, $allowed));
+        if (empty($methods)) {
+            $methods = ['chap', 'http-chap', 'cookie'];
+        }
+
+        return implode(',', $methods);
+    }
+
+    private static function ensureHotspotProfileConfigured($client, $profileName, $dnsName, $smtpServer, $dnsServer, $loginMethods)
+    {
+        $profileName = trim((string) $profileName);
+        if ($profileName === '') {
+            $profileName = 'default';
+        }
+
+        $profileId = self::routerEntityId($client, '/ip/hotspot/profile', 'name', $profileName);
+        if ($profileId === null) {
+            $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/profile/add'))
+                    ->setArgument('name', $profileName)
+            );
+            $profileId = self::routerEntityId($client, '/ip/hotspot/profile', 'name', $profileName);
+        }
+
+        $setRequest = (new RouterOS\Request('/ip/hotspot/profile/set'))
+            ->setArgument('numbers', $profileId)
+            ->setArgument('html-directory', 'hotspot')
+            ->setArgument('login-by', self::normalizeHotspotLoginBy($loginMethods))
+            ->setArgument('smtp-server', $smtpServer !== '' ? $smtpServer : '0.0.0.0')
+            ->setArgument('dns-server', $dnsServer !== '' ? $dnsServer : '8.8.8.8')
+            ->setArgument('use-radius', 'no');
+        if ($dnsName !== '') {
+            $setRequest->setArgument('dns-name', $dnsName);
+        }
+        $client->sendSync($setRequest);
+    }
+
+    private static function ensureHotspotNetworkEntry($client, $localAddress, $profileName, $dnsServer)
+    {
+        $network = self::parseHotspotLocalNetwork($localAddress);
+        if ($network === null) {
+            throw new Exception('Adresse locale invalide : ' . $localAddress);
+        }
+
+        $networkId = self::routerEntityId($client, '/ip/hotspot/network', 'address', $network['address']);
+        $setRequest = (new RouterOS\Request($networkId ? '/ip/hotspot/network/set' : '/ip/hotspot/network/add'))
+            ->setArgument('address', $network['address'])
+            ->setArgument('gateway', $network['gateway'])
+            ->setArgument('profile', $profileName)
+            ->setArgument('comment', 'DYRSIA hotspot');
+        if ($dnsServer !== '') {
+            $setRequest->setArgument('dns-server', $dnsServer);
+        }
+        if ($networkId) {
+            $setRequest->setArgument('numbers', $networkId);
+        }
+        $client->sendSync($setRequest);
+    }
+
+    private static function ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName)
+    {
+        $serverId = self::routerEntityId($client, '/ip/hotspot', 'name', $hotspotName);
+        if ($serverId === null) {
+            $serverId = self::routerEntityId($client, '/ip/hotspot', 'interface', $interface);
+        }
+
+        $args = [
+            'name' => $hotspotName,
+            'interface' => $interface,
+            'profile' => $profileName,
+            'address-pool' => $poolName,
+            'disabled' => 'no',
+        ];
+
+        if ($serverId !== null) {
+            $setRequest = (new RouterOS\Request('/ip/hotspot/set'))
+                ->setArgument('numbers', $serverId);
+            foreach ($args as $key => $value) {
+                $setRequest->setArgument($key, $value);
+            }
+            $client->sendSync($setRequest);
+
+            return;
+        }
+
+        $addRequest = new RouterOS\Request('/ip/hotspot/add');
+        foreach ($args as $key => $value) {
+            $addRequest->setArgument($key, $value);
+        }
+        $client->sendSync($addRequest);
+    }
+
+    private static function ensureHotspotSrcNatMasquerade($client, $interface)
+    {
+        $interface = trim((string) $interface);
+        $comment = 'DYRSIA hotspot masquerade';
+        $responses = $client->sendSync(
+            (new RouterOS\Request('/ip/firewall/nat/print'))
+                ->setArgument('.proplist', '.id,comment,action,out-interface')
+        );
+        foreach ($responses as $row) {
+            if ((string) $row->getProperty('comment') === $comment
+                && (string) $row->getProperty('action') === 'masquerade') {
+                return;
+            }
+        }
+
+        $addRequest = (new RouterOS\Request('/ip/firewall/nat/add'))
+            ->setArgument('chain', 'srcnat')
+            ->setArgument('action', 'masquerade')
+            ->setArgument('comment', $comment);
+        if ($interface !== '') {
+            $addRequest->setArgument('out-interface', $interface);
+        }
+        $client->sendSync($addRequest);
+    }
+
+    private static function hotspotMasqueradeEnabled($client)
+    {
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/print'))
+                    ->setArgument('.proplist', 'chain,action,disabled')
+            );
+            foreach ($responses as $row) {
+                if ((string) $row->getProperty('chain') === 'srcnat'
+                    && (string) $row->getProperty('action') === 'masquerade'
+                    && (string) $row->getProperty('disabled') !== 'true') {
+                    return true;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return false;
+    }
+
+    /**
+     * Valeurs par défaut assistant PPPoE Setup (scripts/mikrotik-pppoe-setup.rsc).
+     *
+     * @return array<string, string>
+     */
+    public static function pppoeSetupDefaults()
+    {
+        return [
+            'pppoe_setup_router' => '',
+            'pppoe_setup_bridge_name' => 'bridge-pppoe',
+            'pppoe_setup_bridge_ports' => 'ether2,ether3,ether4,ether5',
+            'pppoe_setup_gateway' => '10.10.10.1/24',
+            'pppoe_setup_pool_name' => 'pppoe-pool',
+            'pppoe_setup_pool_range' => '10.10.10.2-10.10.10.254',
+            'pppoe_setup_profile_default' => 'default',
+            'pppoe_setup_profile_expire' => 'EXPIRE',
+            'pppoe_setup_expire_rate_limit' => '',
+            'pppoe_setup_dns_servers' => '8.8.8.8,1.1.1.1',
+            'pppoe_setup_dns_allow_remote' => '1',
+            'pppoe_setup_service_name' => 'internet',
+            'pppoe_setup_server_interface' => 'bridge-pppoe',
+            'pppoe_setup_one_session' => '1',
+            'pppoe_setup_max_mru' => '1480',
+            'pppoe_setup_max_mtu' => '1480',
+            'pppoe_setup_expired_list' => 'pppoe-expired',
+            'pppoe_setup_nat_interface' => 'ether1',
+            'pppoe_setup_nat_masquerade' => '1',
+        ];
+    }
+
+    /**
+     * @return array{on-up: string, on-down: string}
+     */
+    private static function pppoeExpiredProfileScripts($listName)
+    {
+        $listName = trim((string) $listName);
+        if ($listName === '') {
+            $listName = 'pppoe-expired';
+        }
+        $listEsc = str_replace('"', '\\"', $listName);
+
+        return [
+            'on-up' => ':if ($remote-address!="") do={ /ip firewall address-list add list="' . $listEsc . '" address=$remote-address comment=$user }',
+            'on-down' => ':if ($remote-address!="") do={ /ip firewall address-list remove [find list="' . $listEsc . '" address=$remote-address] }',
+        ];
+    }
+
+    /**
+     * Lit bridge, pools, profils PPP et serveur PPPoE pour l'assistant PPPoE Setup.
+     */
+    public static function fetchPppoeSetupSnapshot($client)
+    {
+        $snapshot = [
+            'ok' => true,
+            'interfaces' => [],
+            'bridge_ports' => [],
+            'pools' => [],
+            'profiles' => [],
+            'servers' => [],
+            'addresses' => [],
+            'suggested' => self::pppoeSetupDefaults(),
+            'errors' => [],
+        ];
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/interface/print'))
+                    ->setArgument('.proplist', 'name,type,disabled,running')
+            );
+            foreach ($responses as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $name = trim((string) $row->getProperty('name'));
+                $type = trim((string) $row->getProperty('type'));
+                if ($name === '' || $name === 'lo') {
+                    continue;
+                }
+                if (!in_array($type, ['ether', 'bridge', 'vlan', 'bond', 'sfp'], true)) {
+                    continue;
+                }
+                $snapshot['interfaces'][] = [
+                    'name' => $name,
+                    'type' => $type,
+                    'label' => $name . ' (' . $type . ')',
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'interfaces: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'interfaces: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/interface/bridge/port/print'))
+                    ->setArgument('.proplist', 'bridge,interface')
+            );
+            foreach ($responses as $row) {
+                $bridge = trim((string) $row->getProperty('bridge'));
+                $iface = trim((string) $row->getProperty('interface'));
+                if ($bridge === '' || $iface === '') {
+                    continue;
+                }
+                if (!isset($snapshot['bridge_ports'][$bridge])) {
+                    $snapshot['bridge_ports'][$bridge] = [];
+                }
+                $snapshot['bridge_ports'][$bridge][] = $iface;
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'bridge_ports: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'bridge_ports: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/pool/print'))
+                    ->setArgument('.proplist', 'name,ranges')
+            );
+            foreach ($responses as $row) {
+                $name = trim((string) $row->getProperty('name'));
+                if ($name === '') {
+                    continue;
+                }
+                $snapshot['pools'][] = [
+                    'name' => $name,
+                    'ranges' => trim((string) $row->getProperty('ranges')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'pools: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'pools: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ppp/profile/print'))
+                    ->setArgument('.proplist', 'name,local-address,remote-address,rate-limit,dns-server')
+            );
+            foreach ($responses as $row) {
+                $name = trim((string) $row->getProperty('name'));
+                if ($name === '') {
+                    continue;
+                }
+                $snapshot['profiles'][] = [
+                    'name' => $name,
+                    'local_address' => trim((string) $row->getProperty('local-address')),
+                    'remote_address' => trim((string) $row->getProperty('remote-address')),
+                    'rate_limit' => trim((string) $row->getProperty('rate-limit')),
+                    'dns_server' => trim((string) $row->getProperty('dns-server')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'profiles: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'profiles: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/interface/pppoe-server/server/print'))
+                    ->setArgument('.proplist', 'service-name,interface,default-profile,disabled,one-session-per-host,max-mru,max-mtu')
+            );
+            foreach ($responses as $row) {
+                $snapshot['servers'][] = [
+                    'service_name' => trim((string) $row->getProperty('service-name')),
+                    'interface' => trim((string) $row->getProperty('interface')),
+                    'default_profile' => trim((string) $row->getProperty('default-profile')),
+                    'disabled' => (string) $row->getProperty('disabled') === 'true',
+                    'one_session_per_host' => trim((string) $row->getProperty('one-session-per-host')),
+                    'max_mru' => trim((string) $row->getProperty('max-mru')),
+                    'max_mtu' => trim((string) $row->getProperty('max-mtu')),
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'pppoe-server: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'pppoe-server: ' . $e->getMessage();
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/address/print'))
+                    ->setArgument('.proplist', 'address,interface')
+            );
+            foreach ($responses as $row) {
+                $address = trim((string) $row->getProperty('address'));
+                $iface = trim((string) $row->getProperty('interface'));
+                if ($address === '' || $iface === '') {
+                    continue;
+                }
+                $snapshot['addresses'][] = [
+                    'address' => $address,
+                    'interface' => $iface,
+                ];
+            }
+        } catch (Throwable $e) {
+            $snapshot['errors'][] = 'addresses: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $snapshot['errors'][] = 'addresses: ' . $e->getMessage();
+        }
+
+        try {
+            $dns = $client->sendSync(
+                (new RouterOS\Request('/ip/dns/print'))
+                    ->setArgument('.proplist', 'servers,allow-remote-requests')
+            );
+            foreach ($dns as $row) {
+                $servers = trim((string) $row->getProperty('servers'));
+                if ($servers !== '') {
+                    $snapshot['suggested']['pppoe_setup_dns_servers'] = $servers;
+                }
+                $snapshot['suggested']['pppoe_setup_dns_allow_remote'] =
+                    (string) $row->getProperty('allow-remote-requests') === 'true' ? '1' : '0';
+                break;
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        $bridgeName = 'bridge-pppoe';
+        foreach (array_keys($snapshot['bridge_ports']) as $name) {
+            if (stripos($name, 'pppoe') !== false) {
+                $bridgeName = $name;
+                break;
+            }
+        }
+        if (!empty($snapshot['bridge_ports'][$bridgeName])) {
+            $snapshot['suggested']['pppoe_setup_bridge_name'] = $bridgeName;
+            $snapshot['suggested']['pppoe_setup_bridge_ports'] = implode(',', $snapshot['bridge_ports'][$bridgeName]);
+            $snapshot['suggested']['pppoe_setup_server_interface'] = $bridgeName;
+        }
+
+        foreach ($snapshot['addresses'] as $addr) {
+            if (($addr['interface'] ?? '') === $bridgeName && !empty($addr['address'])) {
+                $snapshot['suggested']['pppoe_setup_gateway'] = $addr['address'];
+                break;
+            }
+        }
+
+        foreach ($snapshot['pools'] as $pool) {
+            $name = (string) ($pool['name'] ?? '');
+            if (stripos($name, 'pppoe') !== false || $name === 'pppoe-pool') {
+                $snapshot['suggested']['pppoe_setup_pool_name'] = $name;
+                if (!empty($pool['ranges'])) {
+                    $snapshot['suggested']['pppoe_setup_pool_range'] = $pool['ranges'];
+                }
+                break;
+            }
+        }
+
+        if (!empty($snapshot['servers'])) {
+            $srv = $snapshot['servers'][0];
+            if (!empty($srv['service_name'])) {
+                $snapshot['suggested']['pppoe_setup_service_name'] = $srv['service_name'];
+            }
+            if (!empty($srv['interface'])) {
+                $snapshot['suggested']['pppoe_setup_server_interface'] = $srv['interface'];
+            }
+            if (!empty($srv['default_profile'])) {
+                $snapshot['suggested']['pppoe_setup_profile_default'] = $srv['default_profile'];
+            }
+            if (!empty($srv['max_mru'])) {
+                $snapshot['suggested']['pppoe_setup_max_mru'] = $srv['max_mru'];
+            }
+            if (!empty($srv['max_mtu'])) {
+                $snapshot['suggested']['pppoe_setup_max_mtu'] = $srv['max_mtu'];
+            }
+            $snapshot['suggested']['pppoe_setup_one_session'] =
+                ($srv['one_session_per_host'] ?? '') === 'yes' ? '1' : '0';
+        }
+
+        foreach ($snapshot['profiles'] as $profile) {
+            $name = (string) ($profile['name'] ?? '');
+            if (strcasecmp($name, 'EXPIRE') === 0 && !empty($profile['rate_limit'])) {
+                $snapshot['suggested']['pppoe_setup_expire_rate_limit'] = $profile['rate_limit'];
+            }
+        }
+
+        try {
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/nat/print'))
+                    ->setArgument('.proplist', 'chain,action,out-interface,comment')
+            );
+            foreach ($responses as $row) {
+                if ((string) $row->getProperty('chain') === 'srcnat'
+                    && (string) $row->getProperty('action') === 'masquerade') {
+                    $out = trim((string) $row->getProperty('out-interface'));
+                    if ($out !== '') {
+                        $snapshot['suggested']['pppoe_setup_nat_interface'] = $out;
+                        $snapshot['suggested']['pppoe_setup_nat_masquerade'] = '1';
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        usort($snapshot['interfaces'], static function ($a, $b) {
+            $order = ['ether' => 1, 'sfp' => 2, 'bridge' => 3, 'vlan' => 4];
+            $oa = $order[$a['type']] ?? 99;
+            $ob = $order[$b['type']] ?? 99;
+            if ($oa !== $ob) {
+                return $oa <=> $ob;
+            }
+
+            return strnatcasecmp($a['name'], $b['name']);
+        });
+
+        return $snapshot;
+    }
+
+    /**
+     * Applique la configuration PPPoE Setup sur le MikroTik (équivalent mikrotik-pppoe-setup.rsc).
+     *
+     * @return array{ok: bool, errors?: array<int, string>, actions?: array<int, string>}
+     */
+    public static function applyPppoeSetupFromConfig($client, array $config)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => false, 'errors' => ['Indisponible en mode démo.']];
+        }
+
+        $defaults = self::pppoeSetupDefaults();
+        $get = static function ($key) use ($config, $defaults) {
+            $value = trim((string) ($config[$key] ?? $defaults[$key] ?? ''));
+
+            return $value;
+        };
+
+        $bridgeName = $get('pppoe_setup_bridge_name');
+        $bridgePorts = array_values(array_unique(array_filter(array_map('trim', explode(',', $get('pppoe_setup_bridge_ports'))))));
+        $gateway = $get('pppoe_setup_gateway');
+        $poolName = $get('pppoe_setup_pool_name');
+        $poolRange = $get('pppoe_setup_pool_range');
+        $profileDefault = $get('pppoe_setup_profile_default') ?: 'default';
+        $profileExpire = $get('pppoe_setup_profile_expire') ?: 'EXPIRE';
+        $routerName = $get('pppoe_setup_router');
+        global $admin;
+        $expireRate = self::resolvePppoeExpireRateLimit($routerName, $admin ?? null);
+        $dnsServers = $get('pppoe_setup_dns_servers');
+        $dnsAllowRemote = !empty($config['pppoe_setup_dns_allow_remote']) && (string) $config['pppoe_setup_dns_allow_remote'] !== '0';
+        $serviceName = $get('pppoe_setup_service_name') ?: 'internet';
+        $serverInterface = $get('pppoe_setup_server_interface') ?: $bridgeName;
+        $oneSession = !empty($config['pppoe_setup_one_session']) && (string) $config['pppoe_setup_one_session'] !== '0';
+        $maxMru = $get('pppoe_setup_max_mru') ?: '1480';
+        $maxMtu = $get('pppoe_setup_max_mtu') ?: '1480';
+        $expiredList = $get('pppoe_setup_expired_list') ?: 'pppoe-expired';
+        $natInterface = $get('pppoe_setup_nat_interface');
+        $natMasquerade = !empty($config['pppoe_setup_nat_masquerade']) && (string) $config['pppoe_setup_nat_masquerade'] !== '0';
+
+        if ($bridgeName === '') {
+            return ['ok' => false, 'errors' => ['Nom du bridge PPPoE manquant.']];
+        }
+        if (empty($bridgePorts)) {
+            return ['ok' => false, 'errors' => ['Ports bridge PPPoE manquants (ex. ether2,ether3,ether4,ether5).']];
+        }
+        if ($poolName === '' || $poolRange === '') {
+            return ['ok' => false, 'errors' => ['Pool PPPoE manquant (nom et plage IP).']];
+        }
+        if ($serverInterface === '') {
+            return ['ok' => false, 'errors' => ['Interface serveur PPPoE manquante.']];
+        }
+
+        $localGateway = self::resolvePoolGatewayAddress([
+            'local_ip' => explode('/', $gateway)[0] ?? '',
+            'range_ip' => $poolRange,
+        ]);
+        if ($localGateway === '') {
+            $localGateway = '10.10.10.1';
+        }
+
+        $errors = [];
+        $actions = [];
+        $expiredScripts = self::pppoeExpiredProfileScripts($expiredList);
+
+        try {
+            if (!self::routerEntityId($client, '/interface/bridge', 'name', $bridgeName)) {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/add'))
+                        ->setArgument('name', $bridgeName)
+                        ->setArgument('comment', 'DYRSIA PPPoE LAN')
+                );
+            }
+            $actions[] = 'bridge « ' . $bridgeName . ' »';
+        } catch (Throwable $e) {
+            $errors[] = 'bridge: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'bridge: ' . $e->getMessage();
+        }
+
+        foreach ($bridgePorts as $port) {
+            try {
+                $existing = $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/port/print'))
+                        ->setArgument('.proplist', '.id,bridge,interface')
+                        ->setQuery(RouterOS\Query::where('interface', $port))
+                );
+                $found = false;
+                foreach ($existing as $row) {
+                    if ((string) $row->getProperty('bridge') === $bridgeName) {
+                        $found = true;
+                        break;
+                    }
+                }
+                if (!$found) {
+                    $client->sendSync(
+                        (new RouterOS\Request('/interface/bridge/port/add'))
+                            ->setArgument('bridge', $bridgeName)
+                            ->setArgument('interface', $port)
+                    );
+                }
+            } catch (Throwable $e) {
+                $errors[] = 'port ' . $port . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'port ' . $port . ': ' . $e->getMessage();
+            }
+        }
+        $actions[] = 'ports ' . implode(', ', $bridgePorts);
+
+        if ($gateway !== '') {
+            try {
+                self::ensureHotspotInterfaceAddress($client, $bridgeName, $gateway);
+                $actions[] = 'passerelle ' . $gateway;
+            } catch (Throwable $e) {
+                $errors[] = 'passerelle: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'passerelle: ' . $e->getMessage();
+            }
+        }
+
+        try {
+            self::setPool($client, $poolName, $poolRange);
+            $actions[] = 'pool « ' . $poolName . ' »';
+        } catch (Throwable $e) {
+            $errors[] = 'pool: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'pool: ' . $e->getMessage();
+        }
+
+        foreach ([
+            $profileDefault => ['rate' => '', 'expire' => false],
+            $profileExpire => ['rate' => $expireRate, 'expire' => true],
+        ] as $profileName => $meta) {
+            try {
+                $profileId = self::routerEntityId($client, '/ppp/profile', 'name', $profileName);
+                $args = [
+                    'name' => $profileName,
+                    'local-address' => $localGateway,
+                    'remote-address' => $poolName,
+                ];
+                if (!empty($meta['rate'])) {
+                    $args['rate-limit'] = $meta['rate'];
+                }
+                if (!empty($dnsServers)) {
+                    $args['dns-server'] = $dnsServers;
+                }
+                if (!empty($meta['expire'])) {
+                    $args['on-up'] = $expiredScripts['on-up'];
+                    $args['on-down'] = $expiredScripts['on-down'];
+                }
+
+                if ($profileId === null) {
+                    $add = new RouterOS\Request('/ppp/profile/add');
+                    foreach ($args as $k => $v) {
+                        $add->setArgument($k, $v);
+                    }
+                    $client->sendSync($add);
+                } else {
+                    $set = new RouterOS\Request('/ppp/profile/set');
+                    $set->setArgument('numbers', $profileId);
+                    foreach ($args as $k => $v) {
+                        $set->setArgument($k, $v);
+                    }
+                    $client->sendSync($set);
+                }
+                if ($profileName === $profileExpire) {
+                    self::unsetPppoeProfileRateLimit($client, $profileName);
+                }
+                $actions[] = 'profil « ' . $profileName . ' »';
+            } catch (Throwable $e) {
+                $errors[] = 'profil ' . $profileName . ': ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'profil ' . $profileName . ': ' . $e->getMessage();
+            }
+        }
+
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/ip/dns/set'))
+                    ->setArgument('allow-remote-requests', $dnsAllowRemote ? 'yes' : 'no')
+                    ->setArgument('servers', $dnsServers)
+            );
+            $actions[] = 'DNS routeur';
+        } catch (Throwable $e) {
+            $errors[] = 'dns: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'dns: ' . $e->getMessage();
+        }
+
+        try {
+            $listExists = false;
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/address-list/print'))
+                    ->setArgument('.proplist', 'list')
+                    ->setQuery(RouterOS\Query::where('list', $expiredList))
+            );
+            foreach ($responses as $row) {
+                if ((string) $row->getProperty('list') === $expiredList) {
+                    $listExists = true;
+                    break;
+                }
+            }
+            if (!$listExists) {
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/address-list/add'))
+                        ->setArgument('list', $expiredList)
+                        ->setArgument('comment', 'DYRSIA clients PPPoE expires')
+                );
+            }
+            $actions[] = 'liste « ' . $expiredList . ' »';
+        } catch (Throwable $e) {
+            $errors[] = 'address-list: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'address-list: ' . $e->getMessage();
+        }
+
+        try {
+            $serverId = null;
+            $responses = $client->sendSync(
+                (new RouterOS\Request('/interface/pppoe-server/server/print'))
+                    ->setArgument('.proplist', '.id,interface,service-name')
+            );
+            foreach ($responses as $row) {
+                $iface = (string) $row->getProperty('interface');
+                $svc = (string) $row->getProperty('service-name');
+                if ($iface === $serverInterface || $svc === $serviceName) {
+                    $serverId = $row->getProperty('.id');
+                    break;
+                }
+            }
+
+            $serverArgs = [
+                'service-name' => $serviceName,
+                'interface' => $serverInterface,
+                'default-profile' => $profileDefault,
+                'disabled' => 'no',
+                'one-session-per-host' => $oneSession ? 'yes' : 'no',
+                'max-mru' => $maxMru,
+                'max-mtu' => $maxMtu,
+                'comment' => 'DYRSIA PPPoE server',
+            ];
+
+            if ($serverId === null) {
+                $add = new RouterOS\Request('/interface/pppoe-server/server/add');
+                foreach ($serverArgs as $k => $v) {
+                    $add->setArgument($k, $v);
+                }
+                $client->sendSync($add);
+            } else {
+                $set = new RouterOS\Request('/interface/pppoe-server/server/set');
+                $set->setArgument('numbers', $serverId);
+                foreach ($serverArgs as $k => $v) {
+                    $set->setArgument($k, $v);
+                }
+                $client->sendSync($set);
+            }
+            $actions[] = 'serveur PPPoE « ' . $serviceName . ' » sur ' . $serverInterface;
+        } catch (Throwable $e) {
+            $errors[] = 'serveur PPPoE: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'serveur PPPoE: ' . $e->getMessage();
+        }
+
+        if ($natMasquerade && $natInterface !== '') {
+            try {
+                $natId = null;
+                $responses = $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/nat/print'))
+                        ->setArgument('.proplist', '.id,chain,action,out-interface,comment')
+                );
+                foreach ($responses as $row) {
+                    if ((string) $row->getProperty('chain') === 'srcnat'
+                        && (string) $row->getProperty('action') === 'masquerade'
+                        && (string) $row->getProperty('out-interface') === $natInterface) {
+                        $natId = $row->getProperty('.id');
+                        break;
+                    }
+                }
+                if ($natId === null) {
+                    $client->sendSync(
+                        (new RouterOS\Request('/ip/firewall/nat/add'))
+                            ->setArgument('chain', 'srcnat')
+                            ->setArgument('action', 'masquerade')
+                            ->setArgument('out-interface', $natInterface)
+                            ->setArgument('comment', 'DYRSIA PPPoE NAT')
+                    );
+                }
+                $actions[] = 'NAT masquerade sur ' . $natInterface;
+            } catch (Throwable $e) {
+                $errors[] = 'NAT: ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'NAT: ' . $e->getMessage();
+            }
+        }
+
+        $bridgeBlock = self::ensurePppoeBridgeForwardBlock($client, $bridgeName);
+        if (!empty($bridgeBlock['added'])) {
+            $actions[] = 'firewall anti-contournement sur ' . $bridgeName;
+        }
+        if (!empty($bridgeBlock['errors'])) {
+            $errors = array_merge($errors, $bridgeBlock['errors']);
+        }
+
+        return [
+            'ok' => empty($errors),
+            'errors' => $errors,
+            'actions' => $actions,
+        ];
     }
 }

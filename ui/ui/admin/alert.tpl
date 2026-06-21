@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="{$app_url}/ui/ui/images/apple-touch-icon.png" />
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/font-awesome/css/font-awesome.min.css">
     <link rel="stylesheet" href="{$app_url}/ui/ui/fonts/inter/inter.css">
-    <meta http-equiv="refresh" content="{$time}; url={$url|escape:'url'}">
+    <meta http-equiv="refresh" content="{$time}; url={$url|escape:'html'}">
     <style>
         {literal}
         :root {
@@ -276,7 +276,7 @@
         <div class="wz-alert-progress" role="progressbar" aria-valuemin="0" aria-valuemax="{$time}" aria-valuenow="{$time}">
             <div class="wz-alert-progress-bar" id="progressBar"></div>
         </div>
-        <a href="{$url|escape:'url'}" id="button" class="wz-alert-btn">
+        <a href="{$url|escape:'html'}" id="button" class="wz-alert-btn">
             {Lang::T('Continue now')}
             <span class="countdown">(<span id="countBtn">{$time}</span>)</span>
         </a>

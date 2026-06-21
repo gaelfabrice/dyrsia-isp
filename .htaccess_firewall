@@ -18,6 +18,22 @@
     Allow from all
 </Files>
 
+<Files healthz.php>
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files health.php>
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+# Scripts de diagnostic — ne pas exposer à la racine web
+<FilesMatch "^(check_|test_|mtik_diag).*\.php$">
+    Order Deny,Allow
+    Deny from all
+</FilesMatch>
+
 RewriteEngine On
 RewriteBase /
 RewriteCond %{REQUEST_FILENAME} !-f

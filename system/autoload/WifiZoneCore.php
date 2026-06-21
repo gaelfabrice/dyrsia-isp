@@ -12,6 +12,7 @@ class WifiZoneCore
         self::ensureConfig();
         self::applyLocaleDefaults();
         self::applyBrandDefaults();
+        self::applyBandwidthDefaults();
     }
 
     public static function ensureUsersLoginTokenColumn()
@@ -54,6 +55,16 @@ class WifiZoneCore
             self::setConfig('language', 'english');
             self::setConfig('currency_code', 'XAF');
             self::setConfig('wifizone_project_locale_v1', 'yes');
+        }
+        if (self::config('wifizone_locale_fr_v2') !== 'yes') {
+            $lang = ORM::for_table('tbl_appconfig')->where('setting', 'language')->find_one();
+            if (!$lang || trim($lang->value) === '' || $lang->value === 'english') {
+                self::setConfig('language', 'french');
+            }
+            self::setConfig('wifizone_locale_fr_v2', 'yes');
+        }
+        if (!ORM::for_table('tbl_appconfig')->where('setting', 'user_notification_reminder')->find_one()) {
+            self::setConfig('user_notification_reminder', 'wa');
         } else {
             $cur = ORM::for_table('tbl_appconfig')->where('setting', 'currency_code')->find_one();
             if ($cur && in_array(strtoupper(trim($cur->value)), ['RP', 'IDR', 'BDT', 'USD', '₹', ''], true)) {
@@ -75,6 +86,100 @@ class WifiZoneCore
             'english' => 'English',
             'french' => 'Français',
         ];
+    }
+
+    /**
+     * Profils débit par défaut (Hotspot / PPPoE). Insérés une seule fois si tbl_bandwidth est vide.
+     * Modifiables ensuite via Réseau → Bandwidth.
+     *
+     * @return list<array{name_bw: string, rate_down: int, rate_down_unit: string, rate_up: int, rate_up_unit: string, burst: string}>
+     */
+    public static function defaultBandwidthProfiles()
+    {
+        return [
+            [
+                'name_bw' => '4M/2M',
+                'rate_down' => 4,
+                'rate_down_unit' => 'Mbps',
+                'rate_up' => 2,
+                'rate_up_unit' => 'Mbps',
+                'burst' => '4M/4M 8M/8M 3M/3M 16/16 8 2M/2M',
+            ],
+            [
+                'name_bw' => '8M/4M',
+                'rate_down' => 8,
+                'rate_down_unit' => 'Mbps',
+                'rate_up' => 4,
+                'rate_up_unit' => 'Mbps',
+                'burst' => '8M/8M 16M/16M 6M/6M 16/16 8 4M/4M',
+            ],
+            [
+                'name_bw' => '12M/6M',
+                'rate_down' => 12,
+                'rate_down_unit' => 'Mbps',
+                'rate_up' => 6,
+                'rate_up_unit' => 'Mbps',
+                'burst' => '6M/6M 12M/12M 4608k/4608k 16/16 8 3M/3M',
+            ],
+            [
+                'name_bw' => '20M/10M',
+                'rate_down' => 20,
+                'rate_down_unit' => 'Mbps',
+                'rate_up' => 10,
+                'rate_up_unit' => 'Mbps',
+                'burst' => '10M/10M 20M/20M 7680k/7680k 16/16 8 5M/5M',
+            ],
+            [
+                'name_bw' => '2M/1M',
+                'rate_down' => 2,
+                'rate_down_unit' => 'Mbps',
+                'rate_up' => 1,
+                'rate_up_unit' => 'Mbps',
+                'burst' => '',
+            ],
+            [
+                'name_bw' => '512k/256k',
+                'rate_down' => 512,
+                'rate_down_unit' => 'Kbps',
+                'rate_up' => 256,
+                'rate_up_unit' => 'Kbps',
+                'burst' => '128k/128k',
+            ],
+        ];
+    }
+
+    public static function applyBandwidthDefaults()
+    {
+        try {
+            if (self::config('wifizone_bandwidth_defaults_v1') === 'yes') {
+                return;
+            }
+            $count = (int) ORM::for_table('tbl_bandwidth')->count();
+            if ($count > 0) {
+                self::setConfig('wifizone_bandwidth_defaults_v1', 'yes');
+
+                return;
+            }
+            foreach (self::defaultBandwidthProfiles() as $profile) {
+                $existing = ORM::for_table('tbl_bandwidth')
+                    ->where('name_bw', $profile['name_bw'])
+                    ->find_one();
+                if ($existing) {
+                    continue;
+                }
+                $row = ORM::for_table('tbl_bandwidth')->create();
+                $row->name_bw = $profile['name_bw'];
+                $row->rate_down = $profile['rate_down'];
+                $row->rate_down_unit = $profile['rate_down_unit'];
+                $row->rate_up = $profile['rate_up'];
+                $row->rate_up_unit = $profile['rate_up_unit'];
+                $row->burst = $profile['burst'];
+                $row->save();
+            }
+            self::setConfig('wifizone_bandwidth_defaults_v1', 'yes');
+        } catch (Throwable $e) {
+            error_log('wifizone applyBandwidthDefaults: ' . $e->getMessage());
+        }
     }
 
     public static function config($key, $default = '')
@@ -239,8 +344,15 @@ class WifiZoneCore
             'wifizone_redis_host' => '127.0.0.1',
             'wifizone_redis_port' => '6379',
             'wifizone_jwt_secret' => bin2hex(random_bytes(16)),
-            'wifizone_renewal_notify_days' => '7,3,1',
-            'wifizone_plugin_telegram_errors' => 'no',
+            'wifizone_renewal_notify_days' => '7,3,24h',
+            'wifizone_plugin_telegram_errors' => 'yes',
+            'wifizone_ops_alerts' => 'yes',
+            'router_check' => '1',
+            'check_customer_online' => 'no',
+            'country_code_phone' => '237',
+            'hotspot_message' => '1',
+            'hotspot_message_via' => 'both',
+            'hotspot_help_whatsapp' => '33761951914',
             'wifizone_withdraw_commission_hotspot' => '15',
             'wifizone_withdraw_commission_pppoe' => '10',
             'wifizone_withdraw_commission_default' => '10',

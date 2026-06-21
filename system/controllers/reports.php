@@ -103,8 +103,8 @@ function reports_data_usage_fill_chart_series(array $dayMap, $startDate, $endDat
 function reports_data_usage_customer_join()
 {
     return " LEFT JOIN tbl_customers c ON (
-        u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci
-        OR u.username COLLATE utf8mb4_general_ci = c.pppoe_username COLLATE utf8mb4_general_ci
+        u.username COLLATE utf8mb4_unicode_ci = c.username COLLATE utf8mb4_unicode_ci
+        OR u.username COLLATE utf8mb4_unicode_ci = c.pppoe_username COLLATE utf8mb4_unicode_ci
     )";
 }
 
@@ -118,7 +118,7 @@ function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', 
             OR c.created_by = ?
             OR EXISTS (
                 SELECT 1 FROM tbl_routers r
-                WHERE r.name = {$prefix}.router_name
+                WHERE r.name COLLATE utf8mb4_unicode_ci = {$prefix}.router_name COLLATE utf8mb4_unicode_ci
                   AND r.enabled = 1
                   AND r.admin_id = ?
             )
@@ -158,7 +158,7 @@ function reports_data_usage_apply_service_filter(&$sql, &$params, $serviceType)
         return;
     }
     if ($serviceType === 'Hotspot') {
-        $sql .= " AND c.service_type = 'Hotspot' AND u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci";
+        $sql .= " AND c.service_type = 'Hotspot' AND u.username COLLATE utf8mb4_unicode_ci = c.username COLLATE utf8mb4_unicode_ci";
         return;
     }
     if ($serviceType === 'PPPoE') {
@@ -334,12 +334,17 @@ function reports_daily_sum_query($admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $
 
 function reports_data_usage_api_payload($admin)
 {
-    $db = ORM::get_db();
     $search = _req('q');
     $routerFilter = _req('router');
     $serviceType = _req('service_type');
     $startDate = _req('start_date', date('Y-01-01'));
     $endDate = _req('end_date', date('Y-m-d'));
+
+    if (DemoShowcase::isActive($admin)) {
+        return DemoShowcase::dataUsageApiPayload($startDate, $endDate, $serviceType, $routerFilter, $search);
+    }
+
+    $db = ORM::get_db();
     $targetUsername = $search;
     if (!empty($search)) {
         $customerQuery = ORM::for_table('tbl_customers')
@@ -355,14 +360,24 @@ function reports_data_usage_api_payload($admin)
 
     [$baseFrom, $baseParams] = reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType);
 
+    require_once __DIR__ . '/../cron_data_usage.php';
+    $liveSessions = cron_data_usage_fetch_live_sessions($admin);
+
     // Summary KPIs
-    $stmt = $db->prepare("SELECT COALESCE(SUM(u.download_bytes),0) AS dl, COALESCE(SUM(u.upload_bytes),0) AS ul, COUNT(DISTINCT u.username) AS unique_users, COUNT(DISTINCT CASE WHEN u.status = 'Connected' THEN u.username END) AS active_clients" . $baseFrom);
+    $stmt = $db->prepare("SELECT COALESCE(SUM(u.download_bytes),0) AS dl, COALESCE(SUM(u.upload_bytes),0) AS ul, COUNT(DISTINCT u.username) AS unique_users" . $baseFrom);
     $stmt->execute($baseParams);
     $summaryRow = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
     $totalDl = (double) ($summaryRow['dl'] ?? 0);
     $totalUl = (double) ($summaryRow['ul'] ?? 0);
     $uniqueUsers = (int) ($summaryRow['unique_users'] ?? 0);
-    $activeClients = (int) ($summaryRow['active_clients'] ?? 0);
+    $stmt = $db->prepare("SELECT DISTINCT u.username" . $baseFrom);
+    $stmt->execute($baseParams);
+    $activeClients = 0;
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $usageUsername) {
+        if (isset($liveSessions[strtolower((string) $usageUsername)])) {
+            $activeClients++;
+        }
+    }
 
     $stmt = $db->prepare("SELECT MAX(hourly_bytes) AS peak_bytes FROM (SELECT SUM(u.total_bytes) AS hourly_bytes" . $baseFrom . " GROUP BY DATE(u.log_date), HOUR(u.log_date)) t");
     $stmt->execute($baseParams);
@@ -426,17 +441,18 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Consommation par client (PPPoE + Hotspot), agrégée sur la période
-    $stmt = $db->prepare("SELECT u.username, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, MAX(u.router_name) AS router_name, MAX(u.status) AS status, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY u.username ORDER BY ttl_bytes DESC LIMIT 200");
+    $stmt = $db->prepare("SELECT u.username, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, MAX(u.router_name) AS router_name, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY u.username ORDER BY ttl_bytes DESC LIMIT 200");
     $stmt->execute($baseParams);
     $clientsBreakdown = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $liveKey = strtolower((string) $row['username']);
         $clientsBreakdown[] = [
             'username' => $row['username'],
             'fullname' => $row['fullname'] ?: '—',
             'phonenumber' => $row['phonenumber'] ?: '',
             'service_type' => $row['service_type'],
             'router' => $row['router_name'],
-            'status' => $row['status'],
+            'status' => isset($liveSessions[$liveKey]) ? 'Connected' : 'Disconnected',
             'download' => reports_data_usage_format((double) $row['dl_bytes']),
             'upload' => reports_data_usage_format((double) $row['ul_bytes']),
             'total' => reports_data_usage_format((double) $row['ttl_bytes']),
@@ -445,14 +461,15 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Detail rows
-    $stmt = $db->prepare("SELECT u.username, DATE(u.log_date) AS log_day, MAX(u.status) AS current_status, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes, MAX(u.router_name) AS router_name" . $baseFrom . " GROUP BY u.username, DATE(u.log_date) ORDER BY log_day DESC, u.username ASC LIMIT 500");
+    $stmt = $db->prepare("SELECT u.username, DATE(u.log_date) AS log_day, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes, MAX(u.router_name) AS router_name" . $baseFrom . " GROUP BY u.username, DATE(u.log_date) ORDER BY log_day DESC, u.username ASC LIMIT 500");
     $stmt->execute($baseParams);
     $formattedData = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $liveKey = strtolower((string) $row['username']);
         $formattedData[] = [
             'username' => $row['username'],
             'router' => $row['router_name'],
-            'status' => $row['current_status'],
+            'status' => isset($liveSessions[$liveKey]) ? 'Connected' : 'Disconnected',
             'date' => $row['log_day'],
             'metrics' => [
                 'download' => reports_data_usage_format($row['dl_bytes']),
@@ -494,6 +511,11 @@ function reports_data_usage_api_payload($admin)
 
 switch ($action) {
     case 'data-usage-sync':
+        @set_time_limit(120);
+        @ini_set('max_execution_time', '120');
+        if (DemoShowcase::isActive($admin)) {
+            r2(getUrl('reports/data-usage'), 'w', 'Compte vitrine démo : synchronisation MikroTik désactivée.');
+        }
         if ($_app_stage == 'Demo') {
             r2(getUrl('reports/data-usage'), 'e', 'Action désactivée en mode démo.');
         }
@@ -508,6 +530,8 @@ switch ($action) {
         break;
 
     case 'data-usage-api':
+        @set_time_limit(90);
+        @ini_set('max_execution_time', '90');
         reports_data_usage_install();
         header('Content-Type: application/json');
         try {
@@ -524,27 +548,33 @@ switch ($action) {
 
     case 'data-usage':
         reports_data_usage_install();
-        $routerQuery = ORM::for_table('tbl_routers')->where('enabled', 1);
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $routerQuery->where('admin_id', $admin['id']);
+        if (DemoShowcase::isActive($admin)) {
+            $ui->assign('routers', DemoShowcase::uiRouters());
+            $ui->assign('customers', DemoShowcase::uiCustomers());
+            $ui->assign('admins', []);
+        } else {
+            $routerQuery = ORM::for_table('tbl_routers')->where('enabled', 1);
+            if ($admin['user_type'] != 'SuperAdmin') {
+                $routerQuery->where('admin_id', $admin['id']);
+            }
+            $admins = [];
+            if ($admin['user_type'] == 'SuperAdmin') {
+                $admins = ORM::for_table('tbl_users')
+                    ->select('id')->select('fullname')->select('username')
+                    ->where_in('user_type', ['Admin', 'SuperAdmin', 'Agent'])
+                    ->order_by_asc('fullname')
+                    ->find_many();
+            }
+            $customersQuery = ORM::for_table('tbl_customers')
+                ->select('id')->select('username')->select('fullname')->select('service_type')
+                ->order_by_asc('fullname');
+            if ($admin['user_type'] != 'SuperAdmin') {
+                $customersQuery->where('created_by', $admin['id']);
+            }
+            $ui->assign('routers', $routerQuery->find_many());
+            $ui->assign('admins', $admins);
+            $ui->assign('customers', $customersQuery->find_many());
         }
-        $admins = [];
-        if ($admin['user_type'] == 'SuperAdmin') {
-            $admins = ORM::for_table('tbl_users')
-                ->select('id')->select('fullname')->select('username')
-                ->where_in('user_type', ['Admin', 'SuperAdmin', 'Agent'])
-                ->order_by_asc('fullname')
-                ->find_many();
-        }
-        $customersQuery = ORM::for_table('tbl_customers')
-            ->select('id')->select('username')->select('fullname')->select('service_type')
-            ->order_by_asc('fullname');
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $customersQuery->where('created_by', $admin['id']);
-        }
-        $ui->assign('routers', $routerQuery->find_many());
-        $ui->assign('admins', $admins);
-        $ui->assign('customers', $customersQuery->find_many());
         $ui->assign('service_types', ['Hotspot', 'PPPoE', 'Others']);
         $ui->assign('_title', Lang::T('Data Usage'));
         $ui->display('admin/reports/data-usage.tpl');

@@ -150,6 +150,16 @@ class Package
             }
         }
 
+        if ($_app_stage != 'demo' && $_app_stage != 'Demo' && class_exists('Mikrotik')) {
+            try {
+                Mikrotik::reinforceExpiredPppoeOnAllRouters();
+            } catch (Throwable $e) {
+                _log('[PPPoE expire reinforce] ' . $e->getMessage());
+            } catch (Exception $e) {
+                _log('[PPPoE expire reinforce] ' . $e->getMessage());
+            }
+        }
+
         return $processed;
     }
 

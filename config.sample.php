@@ -19,7 +19,11 @@ if ($appUrl !== '') {
     define('APP_URL', $protocol . $host . $baseDir);
 }
 
-$_app_stage = wz_env('APP_STAGE', 'Live');
+$_app_stage = wz_env('APP_STAGE', '');
+if ($_app_stage === '') {
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $_app_stage = (strpos($host, 'localhost') !== false || strpos($host, '127.0.0.1') !== false) ? 'Dev' : 'Live';
+}
 
 $app_key = wz_env('APP_KEY', '');
 $cron_token = wz_env('CRON_TOKEN', '');

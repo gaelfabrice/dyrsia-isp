@@ -158,13 +158,12 @@
             {$_MENU_AFTER_RADIUS}
 
             <li class="header wz-nav-section">{Lang::T('Notification')}</li>
-            <li class="{if $_system_menu eq 'pages' || ($_system_menu eq 'settings' && in_array($_routes[1], ['notifications','smtp']))}active menu-open{/if} treeview">
+            <li class="{if $_system_menu eq 'pages' || ($_system_menu eq 'settings' && in_array($_routes[1], ['notifications','app','smtp']))}active menu-open{/if} treeview">
                 <a href="#"><i class="ion ion-android-notifications"></i> <span class="wz-nav-label">{Lang::T('Notification')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
                 <ul class="treeview-menu">
-                    <li {if $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('settings/notifications')}">{Lang::T('Sms_notification')}</a></li>
-                    <li {if $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('settings/notifications')}">{Lang::T('Email_Notification')}</a></li>
-                    <li {if $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('settings/notifications')}">{Lang::T('Telegram_notification')}</a></li>
                     <li {if $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('settings/notifications')}">{Lang::T('User_notification')}</a></li>
+                    <li {if $_routes[1] eq 'app'}class="active"{/if}><a href="{Text::url('settings/app')}">{Lang::T('Reminder_Notification')}</a></li>
+                    <li {if $_routes[0] eq 'plugin' && $_routes[1] eq 'whatsappGateway'}class="active"{/if}><a href="{Text::url('plugin/whatsappGateway')}">WhatsApp Gateway</a></li>
                     <li {if $_routes[1] eq 'smtp'}class="active"{/if}><a href="{Text::url('settings/smtp')}">{Lang::T('SMTP_Server')}</a></li>
                     {$_MENU_NOTIFICATION}
                 </ul>
@@ -193,7 +192,8 @@
                 <a href="#"><i class="ion ion-gear-a"></i> <span class="wz-nav-label">{Lang::T('Settings')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
                 <ul class="treeview-menu">
                     {if in_array($_admin['user_type'], ['SuperAdmin','Admin'])}
-                    <li {if $_routes[0] eq 'settings' && $_routes[1] eq 'hotspot'}class="active"{/if}><a href="{Text::url('settings/hotspot')}">{Lang::T('Hotspot_Settings')}</a></li>
+                    <li {if $_routes[0] eq 'settings' && $_routes[1] eq 'hotspot'}class="active"{/if}><a href="{Text::url('settings/hotspot')}">{Lang::T('Hotspot_Setup')}</a></li>
+                    <li {if $_routes[0] eq 'settings' && $_routes[1] eq 'pppoe-setup'}class="active"{/if}><a href="{Text::url('settings/pppoe-setup')}">PPPoE Setup</a></li>
                     {/if}
                     {if $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
                     <li {if $_routes[1] eq 'app'}class="active"{/if}><a href="{Text::url('settings/app')}">{Lang::T('General_Settings')}</a></li>

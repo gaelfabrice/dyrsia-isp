@@ -208,8 +208,9 @@ class DemoShowcase
         $ftthOnline = self::randInt((int) ($ftthAct * 0.5), (int) ($ftthAct * 0.95));
 
         $routerNames = self::buildRouters($routersTotal, $routersConnected);
+        $customers = self::buildCustomers($cAll, $routerNames);
         $dataset = [
-            'customers' => self::buildCustomers($cAll, $routerNames),
+            'customers' => $customers,
             'routers' => $routerNames,
             'plans_hotspot' => self::buildPlans('Hotspot', $routerNames, mt_rand(5, 8)),
             'plans_pppoe' => self::buildPlans('PPPoE', $routerNames, mt_rand(4, 6)),
@@ -218,6 +219,8 @@ class DemoShowcase
             'monthly_registered' => self::buildMonthlyRegistered($cAll),
             'withdrawals' => self::buildWithdrawals($withdrawalsApproved),
             'transactions' => self::buildTransactions($iday, $imonth),
+            'subscription' => self::buildSubscriptionBundle($routersTotal, $imonth),
+            'expiry' => self::buildExpiryBundle($customers, $routerNames, $hExp, $pExp + $ftthExp),
         ];
 
         $stats = [
@@ -248,6 +251,7 @@ class DemoShowcase
         $_SESSION['demo_showcase_ip'] = (string) $ip;
         $_SESSION['demo_showcase_stats'] = $stats;
         $_SESSION['demo_showcase_dataset'] = $dataset;
+        self::syncShowcaseSubscriptionMeta($routersTotal);
         mt_srand();
 
         return $stats;
@@ -544,6 +548,333 @@ class DemoShowcase
         $ui->assign('demo_showcase_active', true);
     }
 
+    public static function uiRouters()
+    {
+        return self::dataset()['routers'] ?? [];
+    }
+
+    public static function uiCustomers()
+    {
+        return self::dataset()['customers'] ?? [];
+    }
+
+    public static function monitoringPayload()
+    {
+        $s = self::stats();
+        $dataset = self::dataset();
+        $routers = $dataset['routers'] ?? [];
+        $hTotal = (int) ($s['h_act'] + $s['h_exp']);
+        $pTotal = (int) ($s['p_act'] + $s['p_exp'] + $s['ftth_act'] + $s['ftth_exp']);
+        $hPct = $hTotal > 0 ? (int) round(($s['hotspot_online'] / $hTotal) * 100) : 0;
+        $pPct = $pTotal > 0 ? (int) round((($s['pppoe_online'] + $s['ftth_online']) / $pTotal) * 100) : 0;
+
+        return [
+            'c_all' => (int) $s['c_all'],
+            'h_all' => $hTotal,
+            'p_all' => $pTotal,
+            'h_act' => (int) $s['hotspot_online'],
+            'h_total' => $hTotal,
+            'h_off' => (int) $s['h_exp'],
+            'p_act' => (int) ($s['pppoe_online'] + $s['ftth_online']),
+            'p_total' => $pTotal,
+            'p_off' => (int) ($s['p_exp'] + $s['ftth_exp']),
+            'h_pct' => $hPct,
+            'p_pct' => $pPct,
+            'alerts' => self::randInt(0, 3),
+            'trends' => [
+                'customers' => self::randInt(2, 18),
+                'hotspot' => self::randInt(5, 35),
+                'pppoe' => self::randInt(3, 22),
+            ],
+            'sparklines' => [
+                'customers' => self::buildSparkline((int) $s['c_all'], 7),
+                'hotspot' => self::buildSparkline((int) $s['hotspot_online'], 7),
+                'pppoe' => self::buildSparkline((int) ($s['pppoe_online'] + $s['ftth_online']), 7),
+            ],
+            'chart' => [
+                'labels' => ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'],
+                'hotspot' => self::buildMonthlySeries((int) $s['h_act']),
+                'pppoe' => self::buildMonthlySeries((int) ($s['p_act'] + $s['ftth_act'])),
+            ],
+            'recent' => self::buildRecentConnections($dataset['customers'] ?? []),
+            'top_hotspots' => self::buildTopHotspots($routers),
+        ];
+    }
+
+    public static function assignMonitoringExpiry($ui)
+    {
+        $expiry = self::dataset()['expiry'] ?? ['expired' => [], 'coming' => [], 'rows' => []];
+        $page = max(1, (int) _get('exp_page', 1));
+        $perPage = 10;
+        $rows = $expiry['rows'] ?? [];
+        $totalEntries = count($rows);
+        $maxPages = max(1, (int) ceil($totalEntries / $perPage));
+        $page = min($page, $maxPages);
+        $offset = ($page - 1) * $perPage;
+
+        $ui->assign('exp_total_expired', count($expiry['expired'] ?? []));
+        $ui->assign('exp_total_coming', count($expiry['coming'] ?? []));
+        $ui->assign('exp_rows', array_slice($rows, $offset, $perPage));
+        $ui->assign('exp_total_entries', $totalEntries);
+        $ui->assign('exp_current_page', $page);
+        $ui->assign('exp_max_pages', $maxPages);
+        $logPage = max(1, (int) _get('log_page', 1));
+        $ui->assign('exp_prev_url', getUrl('monitoring/expiry&exp_page=' . max(1, $page - 1) . '&log_page=' . $logPage));
+        $ui->assign('exp_next_url', getUrl('monitoring/expiry&exp_page=' . min($maxPages, $page + 1) . '&log_page=' . $logPage));
+        $ui->assign('exp_today_label', date('d M Y'));
+    }
+
+    public static function assignCustomerExpiryWidget($ui)
+    {
+        $expiry = self::dataset()['expiry'] ?? ['expired' => [], 'coming' => []];
+        $page = max(1, (int) _get('exp_page', 1));
+        $perPage = 5;
+        $already = array_slice($expiry['expired'] ?? [], ($page - 1) * $perPage, $perPage);
+        $coming = array_slice($expiry['coming'] ?? [], ($page - 1) * $perPage, $perPage);
+        $totalAlready = count($expiry['expired'] ?? []);
+        $totalComing = count($expiry['coming'] ?? []);
+        $maxPages = max(1, (int) ceil(max($totalAlready, $totalComing) / $perPage));
+
+        $ui->assign('already_expired', $already);
+        $ui->assign('coming_expired', $coming);
+        $ui->assign('total_already', $totalAlready);
+        $ui->assign('total_coming', $totalComing);
+        $ui->assign('current_page', $page);
+        $ui->assign('max_pages', $maxPages);
+        $ui->assign('prev_page', max(1, $page - 1));
+        $ui->assign('next_page', min($maxPages, $page + 1));
+    }
+
+    public static function subscriptionStats()
+    {
+        $bundle = self::dataset()['subscription'] ?? [];
+        return $bundle['stats'] ?? [
+            'routers' => (int) (self::stats()['routers_total'] ?? 0),
+            'router_limit' => 3,
+            'invoice_total' => 0,
+            'paid_total' => 0,
+        ];
+    }
+
+    public static function subscriptionInvoices()
+    {
+        return self::dataset()['subscription']['invoices'] ?? [];
+    }
+
+    public static function subscriptionPayments()
+    {
+        return self::dataset()['subscription']['payments'] ?? [];
+    }
+
+    public static function dataUsageApiPayload($startDate, $endDate, $serviceType = '', $routerFilter = '', $search = '')
+    {
+        $s = self::stats();
+        $dataset = self::dataset();
+        $customers = $dataset['customers'] ?? [];
+        $routers = $dataset['routers'] ?? [];
+        $startDate = $startDate ?: date('Y-01-01');
+        $endDate = $endDate ?: date('Y-m-d');
+
+        $connectedKeys = [];
+        $onlineTarget = (int) ($s['hotspot_online'] + $s['pppoe_online'] + $s['ftth_online']);
+        foreach ($customers as $customer) {
+            if (($customer['status'] ?? '') !== 'Active') {
+                continue;
+            }
+            $username = !empty($customer['pppoe_username']) ? $customer['pppoe_username'] : $customer['username'];
+            if ($username === '') {
+                continue;
+            }
+            $connectedKeys[strtolower($username)] = true;
+            if (count($connectedKeys) >= $onlineTarget) {
+                break;
+            }
+        }
+
+        $usageRows = self::buildDataUsageRows($customers, $routers, $connectedKeys, $serviceType, $routerFilter, $search);
+        $totalDl = 0.0;
+        $totalUl = 0.0;
+        foreach ($usageRows as $row) {
+            $totalDl += (double) ($row['dl_bytes'] ?? 0);
+            $totalUl += (double) ($row['ul_bytes'] ?? 0);
+        }
+
+        $dayMap = [];
+        foreach ($usageRows as $row) {
+            $day = $row['log_day'];
+            if (!isset($dayMap[$day])) {
+                $dayMap[$day] = ['dl' => 0.0, 'ul' => 0.0];
+            }
+            $dayMap[$day]['dl'] += round(((double) $row['dl_bytes']) / 1048576, 2);
+            $dayMap[$day]['ul'] += round(((double) $row['ul_bytes']) / 1048576, 2);
+        }
+
+        if (function_exists('reports_data_usage_fill_chart_series')) {
+            [$chartLabels, $chartDownload, $chartUpload] = reports_data_usage_fill_chart_series($dayMap, $startDate, $endDate);
+        } else {
+            [$chartLabels, $chartDownload, $chartUpload] = self::fillChartSeries($dayMap, $startDate, $endDate);
+        }
+
+        $fmt = static function ($bytes) {
+            return function_exists('reports_data_usage_format')
+                ? reports_data_usage_format($bytes)
+                : self::formatBytes($bytes);
+        };
+
+        $clientsBreakdown = [];
+        $byUser = [];
+        foreach ($usageRows as $row) {
+            $username = $row['username'];
+            if (!isset($byUser[$username])) {
+                $byUser[$username] = [
+                    'username' => $username,
+                    'fullname' => $row['fullname'],
+                    'phonenumber' => $row['phonenumber'],
+                    'service_type' => $row['service_type'],
+                    'router' => $row['router'],
+                    'dl_bytes' => 0.0,
+                    'ul_bytes' => 0.0,
+                ];
+            }
+            $byUser[$username]['dl_bytes'] += (double) $row['dl_bytes'];
+            $byUser[$username]['ul_bytes'] += (double) $row['ul_bytes'];
+        }
+        foreach ($byUser as $row) {
+            $ttl = (double) $row['dl_bytes'] + (double) $row['ul_bytes'];
+            $clientsBreakdown[] = [
+                'username' => $row['username'],
+                'fullname' => $row['fullname'],
+                'phonenumber' => $row['phonenumber'],
+                'service_type' => $row['service_type'],
+                'router' => $row['router'],
+                'status' => isset($connectedKeys[strtolower($row['username'])]) ? 'Connected' : 'Disconnected',
+                'download' => $fmt($row['dl_bytes']),
+                'upload' => $fmt($row['ul_bytes']),
+                'total' => $fmt($ttl),
+                'total_bytes' => $ttl,
+            ];
+        }
+        usort($clientsBreakdown, static function ($a, $b) {
+            return ($b['total_bytes'] ?? 0) <=> ($a['total_bytes'] ?? 0);
+        });
+
+        $topUsers = [];
+        foreach (array_slice($clientsBreakdown, 0, 5) as $row) {
+            $topUsers[] = [
+                'username' => $row['username'],
+                'fullname' => $row['fullname'],
+                'download_formatted' => $row['download'],
+                'total_formatted' => $row['total'],
+            ];
+        }
+
+        $byRouter = [];
+        foreach ($usageRows as $row) {
+            $router = $row['router'] ?: 'Unknown';
+            if (!isset($byRouter[$router])) {
+                $byRouter[$router] = ['ttl' => 0.0, 'dl' => 0.0];
+            }
+            $byRouter[$router]['ttl'] += (double) $row['dl_bytes'] + (double) $row['ul_bytes'];
+            $byRouter[$router]['dl'] += (double) $row['dl_bytes'];
+        }
+        uasort($byRouter, static function ($a, $b) {
+            return $b['ttl'] <=> $a['ttl'];
+        });
+        $topRouters = [];
+        foreach (array_slice($byRouter, 0, 5, true) as $name => $metrics) {
+            $topRouters[] = [
+                'name' => $name,
+                'traffic_formatted' => $fmt($metrics['ttl']),
+                'download_formatted' => $fmt($metrics['dl']),
+            ];
+        }
+
+        $byService = [];
+        foreach ($clientsBreakdown as $row) {
+            $service = $row['service_type'] ?: 'Autre';
+            if (!isset($byService[$service])) {
+                $byService[$service] = 0.0;
+            }
+            $byService[$service] += (double) ($row['total_bytes'] ?? 0);
+        }
+        arsort($byService);
+        $topServices = [];
+        foreach (array_slice($byService, 0, 5, true) as $name => $bytes) {
+            $topServices[] = [
+                'name' => $name,
+                'traffic_formatted' => $fmt($bytes),
+            ];
+        }
+
+        $formattedData = [];
+        foreach ($usageRows as $row) {
+            $key = strtolower((string) $row['username']);
+            $formattedData[] = [
+                'username' => $row['username'],
+                'router' => $row['router'],
+                'status' => isset($connectedKeys[$key]) ? 'Connected' : 'Disconnected',
+                'date' => $row['log_day'],
+                'metrics' => [
+                    'download' => $fmt($row['dl_bytes']),
+                    'upload' => $fmt($row['ul_bytes']),
+                    'total' => $fmt((double) $row['dl_bytes'] + (double) $row['ul_bytes']),
+                    'raw_download_mb' => round(((double) $row['dl_bytes']) / 1048576, 2),
+                    'raw_upload_mb' => round(((double) $row['ul_bytes']) / 1048576, 2),
+                ],
+            ];
+        }
+
+        $activeClients = 0;
+        foreach (array_unique(array_column($clientsBreakdown, 'username')) as $username) {
+            if (isset($connectedKeys[strtolower((string) $username)])) {
+                $activeClients++;
+            }
+        }
+        $uniqueUsers = count($byUser);
+        $saturation = $uniqueUsers > 0 ? round(min(100, ($activeClients / $uniqueUsers) * 100), 1) : 0;
+        $peakMbps = round(self::randInt(12, 85) + (mt_rand(0, 99) / 100), 2);
+
+        $routersStatus = [];
+        foreach ($routers as $router) {
+            $online = (($router['status'] ?? '') === 'Online');
+            $routersStatus[] = [
+                'name' => $router['name'],
+                'ip' => $router['ip_address'],
+                'status' => $online ? 'online' : 'offline',
+                'last_sync' => $online ? date('d/m/Y H:i', strtotime('-' . self::randInt(2, 45) . ' minutes')) : 'Jamais',
+                'last_sync_raw' => $online ? date('Y-m-d H:i:s', strtotime('-' . self::randInt(2, 45) . ' minutes')) : null,
+                'error' => $online ? '' : 'Routeur hors ligne (démo)',
+            ];
+        }
+
+        return [
+            'status' => 'success',
+            'resolved_username' => $search,
+            'summary' => [
+                'download' => $fmt($totalDl),
+                'upload' => $fmt($totalUl),
+                'combined' => $fmt($totalDl + $totalUl),
+                'download_bytes' => $totalDl,
+                'upload_bytes' => $totalUl,
+                'peak_mbps' => $peakMbps,
+                'active_clients' => $activeClients,
+                'unique_users' => $uniqueUsers,
+                'saturation_pct' => $saturation,
+            ],
+            'chart' => [
+                'labels' => $chartLabels,
+                'download_mb' => $chartDownload,
+                'upload_mb' => $chartUpload,
+            ],
+            'top_users' => $topUsers,
+            'top_routers' => $topRouters,
+            'top_services' => $topServices,
+            'clients_breakdown' => $clientsBreakdown,
+            'routers_status' => $routersStatus,
+            'data' => $formattedData,
+        ];
+    }
+
     public static function blocksRouterSync($adminOrId = null)
     {
         return self::isShowcaseUser($adminOrId);
@@ -585,5 +916,271 @@ class DemoShowcase
             [$min, $max] = [$max, $min];
         }
         return $min === $max ? $min : mt_rand($min, $max);
+    }
+
+    private static function formatBytes($bytes)
+    {
+        $bytes = (double) $bytes;
+        if ($bytes <= 0) {
+            return '0 Bytes';
+        }
+        $base = log($bytes, 1024);
+        $suffixes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        $floor = min((int) floor($base), 4);
+        return round(pow(1024, $base - $floor), 2) . ' ' . $suffixes[$floor];
+    }
+
+    private static function syncShowcaseSubscriptionMeta($routersTotal)
+    {
+        $aid = (int) ($_SESSION['aid'] ?? 0);
+        if ($aid <= 0 || !self::isShowcaseUser($aid)) {
+            return;
+        }
+        try {
+            AdminSubscription::ensureSchema();
+            $sub = ORM::for_table('admin_subscriptions')->where('admin_id', $aid)->find_one();
+            if (!$sub) {
+                return;
+            }
+            $sub->plan_type = 'business';
+            $sub->status = 'active';
+            $sub->routers_count = (int) $routersTotal;
+            if (empty($sub->subscription_end) || strtotime((string) $sub->subscription_end) < time()) {
+                $sub->subscription_end = date('Y-m-d H:i:s', strtotime('+10 years'));
+            }
+            $sub->updated_at = date('Y-m-d H:i:s');
+            $sub->save();
+        } catch (Exception $e) {
+        }
+    }
+
+    private static function buildSparkline($latest, $points)
+    {
+        $latest = max(1, (int) $latest);
+        $values = [];
+        for ($i = 0; $i < $points; $i++) {
+            $values[] = self::randInt(max(1, (int) ($latest * 0.55)), $latest);
+        }
+        $values[$points - 1] = $latest;
+        return $values;
+    }
+
+    private static function buildMonthlySeries($maxValue)
+    {
+        $maxValue = max(1, (int) $maxValue);
+        $month = (int) date('n');
+        $series = [];
+        for ($m = 1; $m <= 12; $m++) {
+            if ($m <= $month) {
+                $series[] = self::randInt(max(1, (int) ($maxValue * 0.35)), $maxValue);
+            } else {
+                $series[] = 0;
+            }
+        }
+        return $series;
+    }
+
+    private static function buildRecentConnections(array $customers)
+    {
+        $events = [];
+        $plans = ['1 Heure', '24 Heures', 'PPPoE Pro 10M', 'FTTH Fibre 20M'];
+        foreach (array_slice($customers, 0, 8) as $customer) {
+            $online = ($customer['status'] ?? '') === 'Active';
+            $events[] = [
+                'text' => ($customer['service_type'] ?? 'Client') . ' · ' . ($customer['fullname'] ?? $customer['username']) . ($online ? ' connecté' : ' déconnecté'),
+                'time' => date('H:i', strtotime('-' . self::randInt(5, 240) . ' minutes')),
+                'type' => $customer['service_type'] ?? 'Hotspot',
+                'status' => $online ? 'on' : 'off',
+            ];
+        }
+        return $events;
+    }
+
+    private static function buildTopHotspots(array $routers)
+    {
+        $rows = [];
+        foreach (array_slice($routers, 0, 5) as $router) {
+            $rows[] = [
+                'name' => $router['name'],
+                'clients' => self::randInt(3, 28),
+            ];
+        }
+        return $rows;
+    }
+
+    private static function buildSubscriptionBundle($routersTotal, $monthlyRevenue)
+    {
+        $businessPrice = 5000.0;
+        if (class_exists('AdminSubscription')) {
+            $settings = AdminSubscription::settings();
+            $businessPrice = (float) ($settings['business_price'] ?? $businessPrice);
+        }
+        $paidTotal = $businessPrice * self::randInt(2, 4);
+        $now = date('Y-m-d H:i:s');
+        $invoices = [];
+        $payments = [];
+        for ($i = 1; $i <= 3; $i++) {
+            $created = date('Y-m-d H:i:s', strtotime('-' . ($i * 47) . ' days'));
+            $invoices[] = [
+                'invoice_no' => 'INV-DEMO-' . date('Ym', strtotime($created)) . '-' . $i,
+                'plan_type' => 'business',
+                'amount' => $businessPrice,
+                'status' => $i === 1 ? 'paid' : ($i === 2 ? 'paid' : 'unpaid'),
+                'created_at' => $created,
+            ];
+            if ($i < 3) {
+                $payments[] = [
+                    'amount' => $businessPrice,
+                    'method' => $i % 2 ? 'CamPay MTN' : 'CamPay Orange',
+                    'reference' => 'PAY-DEMO-' . mt_rand(100000, 999999),
+                    'status' => 'paid',
+                    'created_at' => $created,
+                ];
+            }
+        }
+        return [
+            'stats' => [
+                'routers' => (int) $routersTotal,
+                'router_limit' => 3,
+                'invoice_total' => $businessPrice * 3,
+                'paid_total' => $paidTotal,
+            ],
+            'invoices' => $invoices,
+            'payments' => $payments,
+        ];
+    }
+
+    private static function buildExpiryBundle(array $customers, array $routers, $expiredCount, $comingCount)
+    {
+        $routerName = $routers[0]['name'] ?? 'MikroTik-Centre';
+        $plans = ['1 Heure', '24 Heures', 'PPPoE Pro 10M', 'FTTH Fibre 20M'];
+        $expired = [];
+        $coming = [];
+        $rows = [];
+        $nowTs = time();
+        $idx = 0;
+        foreach ($customers as $customer) {
+            if ($idx >= ($expiredCount + $comingCount)) {
+                break;
+            }
+            $username = !empty($customer['pppoe_username']) ? $customer['pppoe_username'] : $customer['username'];
+            $isExpired = ($customer['status'] ?? '') !== 'Active' || $idx < (int) $expiredCount;
+            if ($isExpired) {
+                $expirationAt = date('Y-m-d H:i:s', $nowTs - self::randInt(3600, 86400 * 14));
+                $status = 'expired';
+            } else {
+                $expirationAt = date('Y-m-d H:i:s', $nowTs + self::randInt(86400, 86400 * 5));
+                $status = self::randInt(0, 1) ? 'soon' : 'coming';
+            }
+            $record = (object) [
+                'id' => (int) ($customer['id'] ?? (90000 + $idx)),
+                'username' => $username,
+                'fullname' => $customer['fullname'] ?? $username,
+                'phonenumber' => $customer['phonenumber'] ?? '',
+                'email' => $customer['email'] ?? '',
+                'namebp' => $plans[$idx % count($plans)],
+                'routers' => $customer['routers'] ?? $routerName,
+                'expiration' => substr($expirationAt, 0, 10),
+                'time' => substr($expirationAt, 11, 8),
+                'recharged_on' => date('Y-m-d', strtotime('-30 days')),
+                'recharged_time' => '10:00:00',
+            ];
+            $row = [
+                'id' => (int) $record->id,
+                'username' => (string) $record->username,
+                'fullname' => (string) $record->fullname,
+                'phonenumber' => (string) $record->phonenumber,
+                'email' => (string) $record->email,
+                'namebp' => (string) $record->namebp,
+                'routers' => (string) $record->routers,
+                'expiration_at' => $expirationAt,
+                'status' => $status,
+            ];
+            $rows[] = $row;
+            if ($status === 'expired') {
+                $expired[] = $record;
+            } else {
+                $coming[] = $record;
+            }
+            $idx++;
+        }
+        usort($rows, static function ($a, $b) {
+            $prio = ['expired' => 0, 'soon' => 1, 'coming' => 2];
+            $pa = $prio[$a['status']] ?? 3;
+            $pb = $prio[$b['status']] ?? 3;
+            return $pa <=> $pb ?: strcmp($a['expiration_at'], $b['expiration_at']);
+        });
+        return compact('expired', 'coming', 'rows');
+    }
+
+    private static function buildDataUsageRows(array $customers, array $routers, array $connectedKeys, $serviceType, $routerFilter, $search)
+    {
+        $rows = [];
+        $routerNames = array_column($routers, 'name');
+        $search = strtolower(trim((string) $search));
+        $end = new DateTime(date('Y-m-d'));
+        foreach ($customers as $customer) {
+            $username = !empty($customer['pppoe_username']) ? $customer['pppoe_username'] : $customer['username'];
+            $service = $customer['service_type'] ?? 'Hotspot';
+            if ($serviceType !== '' && strcasecmp($serviceType, $service) !== 0 && !($serviceType === 'Others' && !in_array($service, ['Hotspot', 'PPPoE'], true))) {
+                continue;
+            }
+            $router = $routerNames ? $routerNames[mt_rand(0, count($routerNames) - 1)] : 'MikroTik-Centre';
+            if ($routerFilter !== '' && strcasecmp($routerFilter, $router) !== 0) {
+                continue;
+            }
+            if ($search !== '') {
+                $hay = strtolower(implode(' ', [
+                    $username,
+                    $customer['fullname'] ?? '',
+                    $customer['phonenumber'] ?? '',
+                ]));
+                if (strpos($hay, $search) === false) {
+                    continue;
+                }
+            }
+            $days = self::randInt(1, 4);
+            for ($d = 0; $d < $days; $d++) {
+                $day = (clone $end)->modify('-' . $d . ' days')->format('Y-m-d');
+                $dl = (double) self::randInt(50, 1800) * 1048576;
+                $ul = (double) self::randInt(20, 650) * 1048576;
+                $rows[] = [
+                    'username' => $username,
+                    'fullname' => $customer['fullname'] ?? '—',
+                    'phonenumber' => $customer['phonenumber'] ?? '',
+                    'service_type' => $service,
+                    'router' => $router,
+                    'log_day' => $day,
+                    'dl_bytes' => $dl,
+                    'ul_bytes' => $ul,
+                ];
+            }
+        }
+        return $rows;
+    }
+
+    private static function fillChartSeries(array $dayMap, $startDate, $endDate, $maxDays = 90)
+    {
+        $start = new DateTime($startDate);
+        $end = new DateTime($endDate);
+        if ($start > $end) {
+            [$start, $end] = [$end, $start];
+        }
+        $totalDays = (int) $start->diff($end)->days + 1;
+        if ($totalDays > $maxDays) {
+            $start = (clone $end)->modify('-' . ($maxDays - 1) . ' days');
+        }
+        $labels = [];
+        $download = [];
+        $upload = [];
+        $cursor = clone $start;
+        while ($cursor <= $end) {
+            $key = $cursor->format('Y-m-d');
+            $labels[] = $key;
+            $download[] = (float) ($dayMap[$key]['dl'] ?? 0);
+            $upload[] = (float) ($dayMap[$key]['ul'] ?? 0);
+            $cursor->modify('+1 day');
+        }
+        return [$labels, $download, $upload];
     }
 }

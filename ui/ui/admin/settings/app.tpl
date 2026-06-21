@@ -954,7 +954,7 @@
                                 {Lang::T('By WhatsApp')}</option>
                             <option value="sms" {if $_c['user_notification_reminder']=='sms' }selected="selected" {/if}>
                                 {Lang::T('By SMS')}</option>
-                            <option value="sms" {if $_c['user_notification_reminder']=='email' }selected="selected"
+                            <option value="email" {if $_c['user_notification_reminder']=='email' }selected="selected"
                                 {/if}>{Lang::T('By Email')}</option>
                         </select>
                     </div>
@@ -964,7 +964,7 @@
                     <label class="col-md-3 control-label">
                         <input type="checkbox" name="notification_reminder_1day" value="yes"
                             {if !isset($_c['notification_reminder_1day']) || $_c['notification_reminder_1day'] neq 'no'}checked{/if}>
-                        {Lang::T('1 Day')}
+                        {Lang::T('24_Hours')}
                     </label>
                     <label class="col-md-3 control-label">
                         <input type="checkbox" name="notification_reminder_3days" value="yes"

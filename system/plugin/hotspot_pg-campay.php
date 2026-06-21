@@ -141,8 +141,13 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     $expired = date('Y-m-d H:i:s', strtotime('+1 day'));
     if ($expiration) {
         $expired = $expiration->expiration . ' ' . date('h:i A', strtotime($expiration->time));
-        if (function_exists('hotspot_sendMessage')) {
-            hotspot_sendMessage($phone, $expiration->namebp, $customer->username, $expiration->expiration);
+        if (function_exists('hotspot_scheduleCredentialsNotify')) {
+            hotspot_scheduleCredentialsNotify(
+                $phone,
+                $expiration->namebp,
+                $customer->username,
+                $expired
+            );
         }
     }
 

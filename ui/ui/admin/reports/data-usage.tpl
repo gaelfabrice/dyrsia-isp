@@ -351,6 +351,24 @@ body.theme-light .du-table th { background: #f8fafc; }
     border-bottom: 1px solid var(--du-line);
     color: var(--du-text);
 }
+.du-page .du-table th:first-child,
+.du-page .du-table td:first-child {
+    position: static;
+    background: transparent !important;
+    color: var(--du-text);
+}
+.du-page .du-table th:first-child {
+    background: rgba(2, 6, 23, 0.2) !important;
+}
+body.theme-light .du-page .du-table th:first-child {
+    background: #f8fafc !important;
+}
+.du-page .du-table td:first-child strong {
+    color: var(--du-heading);
+}
+.du-page .du-table td:first-child .du-rank-sub {
+    color: var(--du-muted);
+}
 .du-table tr:last-child td { border-bottom: 0; }
 .du-status {
     display: inline-flex;
@@ -810,7 +828,8 @@ var WZ_DU = {
         var html = '';
         rows.forEach(function(x) {
             var st = (x.status || '').toLowerCase() === 'connected' ? 'connected' : 'disconnected';
-            html += '<tr><td>' + x.date + '</td><td><strong>' + x.username + '</strong></td><td>' + (x.router || '—') + '</td>' +
+            var dateLabel = formatShortDate(x.date) || x.date;
+            html += '<tr><td>' + dateLabel + '</td><td><strong>' + x.username + '</strong></td><td>' + (x.router || '—') + '</td>' +
                 '<td><span class="du-status ' + st + '">' + x.status + '</span></td>' +
                 '<td>' + x.metrics.download + '</td><td>' + x.metrics.upload + '</td><td><strong>' + x.metrics.total + '</strong></td></tr>';
         });

@@ -1,6 +1,6 @@
 <?php
-// Set timezone untuk konsistensi
-date_default_timezone_set('Asia/Jakarta');  // Sesuaikan dengan timezone Anda
+// Set timezone (DYRSIA / CEMAC default)
+date_default_timezone_set(getenv('APP_TIMEZONE') ?: 'Africa/Douala');
 
 // Set environment for CLI
 if (php_sapi_name() === 'cli') {
@@ -83,6 +83,7 @@ function write_log($message)
 
 write_log("=== Starting ACS Device Sync ===");
 write_log("Time: " . date('Y-m-d H:i:s'));
+$start_time = microtime(true);
 
 // Check if specific server_id passed as argument
 $target_server_id = null;
@@ -409,7 +410,7 @@ foreach ($servers as $server) {
 
 // Final summary
 $end_time = microtime(true);
-$execution_time = round($end_time - microtime(true), 2);
+$execution_time = round($end_time - $start_time, 2);
 write_log("=== Sync Completed in {$execution_time} seconds ===");
 
 // Close log file

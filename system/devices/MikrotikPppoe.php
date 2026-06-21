@@ -12,6 +12,19 @@ use PEAR2\Net\RouterOS;
 
 class MikrotikPppoe
 {
+    /** @var RouterOS\Client|null */
+    private static $sharedClient = null;
+
+    public static function useSharedClient($client)
+    {
+        self::$sharedClient = $client;
+    }
+
+    public static function clearSharedClient()
+    {
+        self::$sharedClient = null;
+    }
+
     // show Description
     function description()
     {
@@ -120,6 +133,19 @@ class MikrotikPppoe
         return array_values(array_unique(array_filter($names)));
     }
 
+    private function resolvePlanRateLimit($plan, $bw)
+    {
+        if ($this->isExpirePlan($plan) || strtoupper(trim((string) ($plan['name_plan'] ?? ''))) === 'EXPIRE') {
+            return Mikrotik::pppoeExpireSystemRateLimit();
+        }
+        if (!$bw) {
+            return '';
+        }
+        $bwRow = is_object($bw) && method_exists($bw, 'as_array') ? $bw->as_array() : (array) $bw;
+
+        return Mikrotik::hotspotPlanRateLimit($bwRow);
+    }
+
     private function suspendPppoeSession($client, $customer, $profileName = 'EXPIRE', $plan = [])
     {
         global $_app_stage;
@@ -128,9 +154,11 @@ class MikrotikPppoe
         }
         foreach ($this->pppoeLoginNames($customer) as $name) {
             $activeRequest = new RouterOS\Request('/ppp/active/print');
-            $activeRequest->setArgument('.proplist', '.id,name,address');
+            $activeRequest->setArgument('.proplist', '.id,name,address,profile');
             $activeRequest->setQuery(RouterOS\Query::where('name', $name));
+            $foundActive = false;
             foreach ($client->sendSync($activeRequest) as $active) {
+                $foundActive = true;
                 $sessionId = $active->getProperty('.id');
                 $ip = trim((string) $active->getProperty('address'));
                 if ($ip !== '') {
@@ -138,10 +166,18 @@ class MikrotikPppoe
                     $this->rememberExpiredPppoeClient($customer, $plan, $ip, $name);
                 }
                 if (!empty($sessionId) && $profileName !== '') {
-                    $this->setActivePppoeProfile($client, $sessionId, $profileName);
+                    $this->setActivePppoeProfile($client, $sessionId, $profileName, $ip, $name);
+                }
+            }
+            if (!$foundActive) {
+                $storedIp = trim((string) User::getAttribute('pppoe_expired_ip', (int) ($customer['id'] ?? 0)));
+                if ($storedIp !== '') {
+                    $this->ensureAddressListEntry($client, 'pppoe-expired', $storedIp, $name);
                 }
             }
         }
+
+        // Isolation firewall (raw/mangle) : une seule fois par sync — voir ensurePppoeExpiredCaptive().
     }
 
     /**
@@ -172,12 +208,25 @@ class MikrotikPppoe
         }
     }
 
-    private function setActivePppoeProfile($client, $sessionId, $profileName)
+    private function setActivePppoeProfile($client, $sessionId, $profileName, $ip = '', $login = '')
     {
         $setRequest = new RouterOS\Request('/ppp/active/set');
         $setRequest->setArgument('numbers', $sessionId);
         $setRequest->setArgument('profile', $profileName);
         $client->sendSync($setRequest);
+
+        if (strtoupper(trim((string) $profileName)) === 'EXPIRE') {
+            $ip = trim((string) $ip);
+            if ($ip === '') {
+                $activePrint = new RouterOS\Request('/ppp/active/print');
+                $activePrint->setArgument('.proplist', 'address');
+                $activePrint->setQuery(RouterOS\Query::where('.id', $sessionId));
+                $ip = trim((string) $client->sendSync($activePrint)->getProperty('address'));
+            }
+            if ($ip !== '') {
+                Mikrotik::ensureAddressListEntry($client, 'pppoe-expired', $ip, (string) $login);
+            }
+        }
     }
 
     private function rememberExpiredPppoeClient($customer, $plan, $ip, $loginName = '')
@@ -308,36 +357,23 @@ class MikrotikPppoe
     {
         $client = $this->routerClient($plan['routers']);
 
-        //Add Pool
-
         $bw = ORM::for_table("tbl_bandwidth")->find_one($plan['id_bw']);
-        if ($bw['rate_down_unit'] == 'Kbps') {
-            $unitdown = 'K';
-        } else {
-            $unitdown = 'M';
-        }
-        if ($bw['rate_up_unit'] == 'Kbps') {
-            $unitup = 'K';
-        } else {
-            $unitup = 'M';
-        }
-        $rate = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown;
-        if(!empty(trim($bw['burst']))){
-            $rate .= ' '.$bw['burst'];
-        }
-		if ($bw['rate_up'] == '0' || $bw['rate_down'] == '0') {
-			$rate = '';
-		}
+        $rate = $this->resolvePlanRateLimit($plan, $bw);
         $pool = ORM::for_table("tbl_pool")->where("pool_name", $plan['pool'])->find_one();
         $localAddress = Mikrotik::resolvePoolGatewayAddress($pool);
         $addRequest = new RouterOS\Request('/ppp/profile/add');
-        $client->sendSync(
-            $addRequest
-                ->setArgument('name', $plan['name_plan'])
-                ->setArgument('local-address', $localAddress)
-                ->setArgument('remote-address', $pool['pool_name'])
-                ->setArgument('rate-limit', $rate)
-        );
+        $args = [
+            'name' => $plan['name_plan'],
+            'local-address' => $localAddress,
+            'remote-address' => $pool['pool_name'],
+        ];
+        if ($rate !== '') {
+            $args['rate-limit'] = $rate;
+        }
+        foreach ($args as $key => $value) {
+            $addRequest->setArgument($key, $value);
+        }
+        $client->sendSync($addRequest);
     }
 
     /**
@@ -370,35 +406,19 @@ class MikrotikPppoe
             $this->add_plan($new_plan);
         } else {
             $bw = ORM::for_table("tbl_bandwidth")->find_one($new_plan['id_bw']);
-            if ($bw['rate_down_unit'] == 'Kbps') {
-                $unitdown = 'K';
-            } else {
-                $unitdown = 'M';
-            }
-            if ($bw['rate_up_unit'] == 'Kbps') {
-                $unitup = 'K';
-            } else {
-                $unitup = 'M';
-            }
-            $rate = $bw['rate_up'] . $unitup . "/" . $bw['rate_down'] . $unitdown;
-            if(!empty(trim($bw['burst']))){
-                $rate .= ' '.$bw['burst'];
-            }
-			if ($bw['rate_up'] == '0' || $bw['rate_down'] == '0') {
-				$rate = '';
-			}
+            $rate = $this->resolvePlanRateLimit($new_plan, $bw);
             $pool = ORM::for_table("tbl_pool")->where("pool_name", $new_plan['pool'])->find_one();
             $localAddress = Mikrotik::resolvePoolGatewayAddress($pool);
             $setRequest = new RouterOS\Request('/ppp/profile/set');
-            $client->sendSync(
-                $setRequest
-                    ->setArgument('numbers', $profileID)
-                    ->setArgument('local-address', $localAddress)
-                    ->setArgument('remote-address', $pool['pool_name'])
-                    ->setArgument('rate-limit', $rate)
-                    ->setArgument('on-up', $new_plan['on_login'])
-                    ->setArgument('on-down', $new_plan['on_logout'])
-            );
+            $setRequest->setArgument('numbers', $profileID);
+            $setRequest->setArgument('local-address', $localAddress);
+            $setRequest->setArgument('remote-address', $pool['pool_name']);
+            if ($rate !== '') {
+                $setRequest->setArgument('rate-limit', $rate);
+            }
+            $setRequest->setArgument('on-up', $new_plan['on_login']);
+            $setRequest->setArgument('on-down', $new_plan['on_logout']);
+            $client->sendSync($setRequest);
         }
     }
 
@@ -498,14 +518,24 @@ class MikrotikPppoe
 
     function info($name)
     {
-        return ORM::for_table('tbl_routers')->where('name', $name)->find_one();
+        global $admin;
+
+        return Mikrotik::resolveRouterRecord($name, $admin ?? null);
     }
 
     function routerClient($routerName)
     {
+        if (self::$sharedClient !== null) {
+            return self::$sharedClient;
+        }
         $mikrotik = $this->info($routerName);
         if (!$mikrotik) {
-            throw new Exception(Lang::T('Router not found'));
+            $hint = trim((string) $routerName);
+            throw new Exception(
+                Lang::T('Router not found')
+                . ($hint !== '' ? ' (' . $hint . ')' : '')
+                . ' — vérifiez Réseau → Routeurs et le champ Routeur du forfait.'
+            );
         }
         $password = Mikrotik::routerPassword($mikrotik['password']);
         return Mikrotik::getClient(

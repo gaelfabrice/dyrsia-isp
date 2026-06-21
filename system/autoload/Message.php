@@ -280,15 +280,22 @@ class Message
         }
 
 
-        if (
-            !empty($customer['phonenumber']) && strlen($customer['phonenumber']) > 5
-            && !empty($message) && in_array($via, ['sms', 'wa'])
+        if ($via === 'email') {
+            if (!empty($customer['email'])) {
+                self::sendEmail(
+                    $customer['email'],
+                    '[' . $config['CompanyName'] . '] ' . Lang::T('Internet Plan Reminder'),
+                    $msg
+                );
+            }
+        } elseif (
+            !empty($customer['phonenumber'])
+            && strlen($customer['phonenumber']) > 5
+            && in_array($via, ['sms', 'wa'], true)
         ) {
-            if ($via == 'sms') {
+            if ($via === 'sms') {
                 Message::sendSMS($customer['phonenumber'], $msg);
-            } else if ($via == 'email') {
-                self::sendEmail($customer['email'], '[' . $config['CompanyName'] . '] ' . Lang::T("Internet Plan Reminder"), $msg);
-            } else if ($via == 'wa') {
+            } elseif ($via === 'wa') {
                 Message::sendWhatsapp($customer['phonenumber'], $msg);
             }
         }

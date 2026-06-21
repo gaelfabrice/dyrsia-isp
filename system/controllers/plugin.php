@@ -275,6 +275,18 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
     }
 }
 
+if ($pluginFn === 'pppoe_verify') {
+    $reference = trim((string) ($_GET['reference'] ?? ''));
+    if ($reference !== '') {
+        $pending = ORM::for_table('tbl_hotspot_payments')
+            ->where('transaction_ref', $reference)
+            ->find_one();
+        if ($pending && function_exists('pppoe_is_transaction') && pppoe_is_transaction($pending) && function_exists('pppoe_sync_transaction')) {
+            pppoe_sync_transaction($pending);
+        }
+    }
+}
+
 if ($pluginFn === 'hotspot_verify') {
     $reference = trim((string) ($_GET['reference'] ?? ''));
     if ($reference !== '') {

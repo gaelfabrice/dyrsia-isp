@@ -1104,9 +1104,28 @@ function hotspot_verify()
             'message' => $message,
         ];
         if ($status === 'paid') {
-            $payload['username'] = $check->voucher_code;
-            $payload['voucher_code'] = $check->voucher_code;
-            $payload['password'] = HotspotCustomer::defaultPassword();
+            $password = HotspotCustomer::defaultPassword();
+            $username = (string) ($check->voucher_code ?? '');
+            if ($username === '' && !empty($check->phone_number)) {
+                $byPhone = ORM::for_table('tbl_customers')
+                    ->where('phonenumber', Lang::phoneFormat($check->phone_number))
+                    ->find_one();
+                if ($byPhone) {
+                    $username = (string) $byPhone->username;
+                }
+            }
+            $customer = $username !== ''
+                ? ORM::for_table('tbl_customers')->where('username', $username)->find_one()
+                : null;
+            if ($customer && (string) $customer->password !== '') {
+                $password = (string) $customer->password;
+            }
+            if ($username !== '') {
+                $payload['username'] = $username;
+                $payload['voucher_code'] = $username;
+            }
+            $payload['password'] = $password;
+            $payload['auto_login'] = true;
         }
         echo json_encode($payload);
         exit;
@@ -2976,13 +2995,28 @@ function hotspot_update()
 }
 
 
+function hotspot_scheduleCredentialsNotify($phone, $package, $login_code, $expiry)
+{
+    register_shutdown_function(static function () use ($phone, $package, $login_code, $expiry) {
+        try {
+            hotspot_sendMessage($phone, $package, $login_code, $expiry);
+        } catch (Throwable $e) {
+            _log('Hotspot notify deferred: ' . $e->getMessage());
+        }
+    });
+}
+
+/**
+ * Envoi secondaire des identifiants (SMS puis WhatsApp).
+ * La connexion Internet se fait via le portail captive (auto-login), pas via ce message.
+ */
 function hotspot_sendMessage($phone, $package, $login_code, $expiry)
 {
     global $config;
     $UPLOAD_PATH = 'system' . DIRECTORY_SEPARATOR . 'uploads';
-    $notifications_file = $UPLOAD_PATH . DIRECTORY_SEPARATOR . "hotspot_message.json";
+    $notifications_file = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'hotspot_message.json';
 
-    $default_message = "Dear Customer,\r\nYour [[package]] subscription has been activated.\r\nVoucher Code is: [[login_code]]\r\nAccount expires on: [[expiry]]\r\n\r\n[[company]]";
+    $default_message = "DYRSIA — Forfait [[package]] activé.\r\nIdentifiant : [[login_code]]\r\nExpire : [[expiry]]\r\n(Conservez ce SMS si vous vous reconnectez plus tard.)";
 
     if (file_exists($notifications_file)) {
         $json_data = file_get_contents($notifications_file);
@@ -2996,37 +3030,33 @@ function hotspot_sendMessage($phone, $package, $login_code, $expiry)
         $messageContent = $default_message;
     }
 
-    if ($config['hotspot_message'] == true) {
-        // Replace placeholders with actual values
-        $message = str_replace('[[company]]', $config['CompanyName'], $messageContent);
-        $message = str_replace('[[package]]', $package, $message);
-        $message = str_replace('[[expiry]]', $expiry, $message);
-        $message = str_replace('[[login_code]]', $login_code, $message);
+    if (empty($config['hotspot_message']) || (string) $config['hotspot_message'] === '0') {
+        return;
+    }
 
-        $sendVia = $config['hotspot_message_via'];
+    $message = str_replace('[[company]]', $config['CompanyName'] ?? 'DYRSIA', $messageContent);
+    $message = str_replace('[[package]]', $package, $message);
+    $message = str_replace('[[expiry]]', $expiry, $message);
+    $message = str_replace('[[login_code]]', $login_code, $message);
 
-        $channels = [
-            'sms' => [
-                'enabled' => $sendVia == 'sms' || $sendVia == 'both',
-                'method' => 'Message::sendSMS',
-                'args' => [$phone, $message]
-            ],
-            'whatsapp' => [
-                'enabled' => $sendVia == 'wa' || $sendVia == 'both',
-                'method' => 'Message::sendWhatsapp',
-                'args' => [$phone, $message]
-            ]
-        ];
+    $sendVia = strtolower(trim((string) ($config['hotspot_message_via'] ?? 'sms')));
+    $enableSms = in_array($sendVia, ['sms', 'both'], true);
+    $enableWa = in_array($sendVia, ['wa', 'both'], true);
 
-        foreach ($channels as $channel => $channelData) {
-            if ($channelData['enabled']) {
-                try {
-                    call_user_func_array($channelData['method'], $channelData['args']);
-                } catch (Exception $e) {
-                    // Log the error and handle the failure
-                    _log("Failed to send voucher code to $phone via $channel: " . $e->getMessage());
-                }
-            }
+    // SMS d'abord (tous les numéros Mobile Money), WhatsApp en secours seulement.
+    $channels = [];
+    if ($enableSms) {
+        $channels[] = ['sms', 'Message::sendSMS', [$phone, $message]];
+    }
+    if ($enableWa) {
+        $channels[] = ['wa', 'Message::sendWhatsapp', [$phone, $message]];
+    }
+
+    foreach ($channels as [$label, $method, $args]) {
+        try {
+            call_user_func_array($method, $args);
+        } catch (Throwable $e) {
+            _log("Hotspot notify $label failed for $phone: " . $e->getMessage());
         }
     }
 }
@@ -3901,7 +3931,11 @@ function hotspot_GenerateVoucher()
                         $expired = $expired_date . " " . date("h:i A", strtotime($expired_time));
                         $plan_name = $expiration->namebp;
                         $loginCode = $config['hotspot_voucher_mode'] ? $final_code : $phone;
-                        hotspot_sendMessage($phone, $plan_name, $loginCode, $expired);
+                        if (function_exists('hotspot_scheduleCredentialsNotify')) {
+                            hotspot_scheduleCredentialsNotify($phone, $plan_name, $loginCode, $expired);
+                        } elseif (function_exists('hotspot_sendMessage')) {
+                            hotspot_sendMessage($phone, $plan_name, $loginCode, $expired);
+                        }
                     } catch (Exception $e) {
                         _log("Failed to process voucher: " . $e->getMessage());
                         r2($_SERVER['HTTP_REFERER'], 'e', Lang::T("An error occurred while generating vouchers, check logs for more info"));

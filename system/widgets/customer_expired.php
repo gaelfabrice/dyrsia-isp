@@ -61,6 +61,11 @@ class customer_expired
     {
         global $ui, $admin;
 
+        if (DemoShowcase::isActive($admin)) {
+            DemoShowcase::assignMonitoringExpiry($ui);
+            return;
+        }
+
         $now = date('Y-m-d H:i:s');
         $nowTs = time();
         $soonTs = strtotime('+3 days');
@@ -141,7 +146,12 @@ class customer_expired
 
     public function getWidget()
     {
-        global $ui, $current_date, $config;
+        global $ui, $current_date, $config, $admin;
+
+        if (DemoShowcase::isActive($admin ?? null)) {
+            DemoShowcase::assignCustomerExpiryWidget($ui);
+            return $ui->fetch('widget/customer_expired.tpl');
+        }
 
         $now = date('Y-m-d H:i:s');
         $three_days_later_dt = date('Y-m-d H:i:s', strtotime('+3 days'));

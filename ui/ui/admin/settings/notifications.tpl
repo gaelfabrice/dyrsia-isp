@@ -71,10 +71,10 @@
                 </div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label class="col-md-2 control-label">{Lang::T('Reminder 1 day')}</label>
+                        <label class="col-md-2 control-label">{Lang::T('Reminder 24 hours')}</label>
                         <div class="col-md-6">
-                            <textarea class="form-control" id="reminder_1_day" name="reminder_1_day"
-                                rows="4">{Lang::htmlspecialchars($_json['reminder_1_day'])}</textarea>
+                            <textarea class="form-control" id="reminder_24h" name="reminder_24h"
+                                rows="4">{if $_json['reminder_24h']!=''}{Lang::htmlspecialchars($_json['reminder_24h'])}{else}{Lang::htmlspecialchars($_json['reminder_1_day'])}{/if}</textarea>
                         </div>
                         <p class="help-block col-md-4">
                             <b>[[name]]</b> - {Lang::T('will be replaced with Customer Name')}.<br>

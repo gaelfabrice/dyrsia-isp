@@ -12,6 +12,11 @@ $adminId = intval($admin['id']);
 if ($action === 'expiry') {
     $ui->assign('_title', Lang::T('Customer Expiry Status'));
     $ui->assign('_system_menu', 'monitoring');
+    if (DemoShowcase::isActive($admin)) {
+        DemoShowcase::assignMonitoringExpiry($ui);
+        $ui->display('admin/monitoring_expiry.tpl');
+        return;
+    }
     require_once $GLOBALS['WIDGET_PATH'] . DIRECTORY_SEPARATOR . 'customer_expired.php';
     (new customer_expired())->prepareMonitoringPage();
     $ui->display('admin/monitoring_expiry.tpl');
@@ -376,12 +381,12 @@ monitoring_scope_routers($routerQuery, $admin);
 $routers = $routerQuery->find_many();
 
 if (DemoShowcase::isActive($admin)) {
-    $mon = monitoring_demo_payload();
+    $mon = DemoShowcase::monitoringPayload();
+    $ui->assign('routers', DemoShowcase::uiRouters());
 } else {
     $mon = monitoring_build_payload($admin, $routerFilter);
+    $ui->assign('routers', $routers);
 }
-
 $ui->assign('mon', $mon);
-$ui->assign('routers', $routers);
 $ui->assign('router_filter', $routerFilter);
 $ui->display('admin/monitoring.tpl');

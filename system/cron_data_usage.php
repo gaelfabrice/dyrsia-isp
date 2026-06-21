@@ -118,6 +118,132 @@ function cron_data_usage_collect_pppoe_users($client)
     return $users;
 }
 
+function cron_data_usage_live_sessions_cache_key($admin = null)
+{
+    if (is_array($admin) && (($admin['user_type'] ?? '') !== 'SuperAdmin')) {
+        return 'live_sessions_admin_' . (int) $admin['id'];
+    }
+    return 'live_sessions_all';
+}
+
+function cron_data_usage_read_live_sessions_cache($admin = null, $maxAge = 45)
+{
+    $metaKey = cron_data_usage_live_sessions_cache_key($admin);
+    try {
+        $metaRow = ORM::for_table('api_data_usage_meta')->where('meta_key', $metaKey)->find_one();
+        if (!$metaRow) {
+            return null;
+        }
+        $payload = json_decode((string) $metaRow->meta_value, true);
+        if (!is_array($payload) || !isset($payload['at'], $payload['sessions']) || !is_array($payload['sessions'])) {
+            return null;
+        }
+        if ((time() - strtotime((string) $payload['at'])) > $maxAge) {
+            return null;
+        }
+        return $payload['sessions'];
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+function cron_data_usage_write_live_sessions_cache($admin, array $sessions)
+{
+    $metaKey = cron_data_usage_live_sessions_cache_key($admin);
+    $payload = json_encode([
+        'at' => date('Y-m-d H:i:s'),
+        'sessions' => $sessions,
+    ]);
+    try {
+        $db = ORM::get_db();
+        $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
+        $stmt->execute([$metaKey, $payload, $payload]);
+    } catch (Exception $e) {
+    }
+}
+
+function cron_data_usage_collect_router_live_sessions($client, $routerName)
+{
+    $live = [];
+    try {
+        $pppActiveRequest = new PEAR2\Net\RouterOS\Request('/ppp/active/print');
+        $pppActiveRequest->setArgument('.proplist', 'name');
+        foreach ($client->sendSync($pppActiveRequest) as $active) {
+            $username = trim((string) $active->getProperty('name'));
+            if ($username === '') {
+                continue;
+            }
+            $key = strtolower($username);
+            $live[$key] = [
+                'username' => $username,
+                'router' => $routerName,
+                'status' => 'Connected',
+            ];
+        }
+    } catch (Exception $e) {
+    }
+    try {
+        $hotspotRequest = new PEAR2\Net\RouterOS\Request('/ip/hotspot/active/print');
+        $hotspotRequest->setArgument('.proplist', 'user');
+        foreach ($client->sendSync($hotspotRequest) as $active) {
+            $username = trim((string) $active->getProperty('user'));
+            if ($username === '') {
+                continue;
+            }
+            $key = strtolower($username);
+            if (!isset($live[$key])) {
+                $live[$key] = [
+                    'username' => $username,
+                    'router' => $routerName,
+                    'status' => 'Connected',
+                ];
+            }
+        }
+    } catch (Exception $e) {
+    }
+    return $live;
+}
+
+function cron_data_usage_fetch_live_sessions($admin = null, $maxAge = 45)
+{
+    if (class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin)) {
+        return [];
+    }
+
+    $cached = cron_data_usage_read_live_sessions_cache($admin, $maxAge);
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    $routerQuery = ORM::for_table('tbl_routers')->where('enabled', 1);
+    if (is_array($admin) && (($admin['user_type'] ?? '') !== 'SuperAdmin')) {
+        $routerQuery->where('admin_id', (int) $admin['id']);
+    }
+    $routers = $routerQuery->find_many();
+    $live = [];
+
+    if (!class_exists('Mikrotik')) {
+        return $live;
+    }
+
+    foreach ($routers as $router) {
+        $routerName = (string) $router['name'];
+        try {
+            $password = Mikrotik::routerPassword($router['password']);
+            $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password, 4);
+            if (!$client) {
+                continue;
+            }
+            $live = array_merge($live, cron_data_usage_collect_router_live_sessions($client, $routerName));
+        } catch (Throwable $e) {
+        }
+    }
+
+    cron_data_usage_write_live_sessions_cache($admin, $live);
+
+    return $live;
+}
+
 function cron_data_usage_sync()
 {
     $db = ORM::get_db();

@@ -215,11 +215,34 @@ try {
     }
 } catch (Throwable $e) {
 }
+function wifizone_extend_sync_time_limit()
+{
+    if (php_sapi_name() === 'cli') {
+        return;
+    }
+    $route = trim((string) ($_GET['_route'] ?? $_POST['_route'] ?? ''));
+    $longSync = preg_match('#^(settings/(hotspot|pppoe-setup)|services/sync/|reports/data-usage-(api|sync))#', $route) === 1
+        || !empty($_POST['send_mikrotik'])
+        || !empty($_POST['sync_hotspot_plans'])
+        || (strpos($route, 'services/sync/pppoe') === 0)
+        || (strpos($route, 'settings/pppoe-setup') === 0);
+    if (!$longSync) {
+        return;
+    }
+    @set_time_limit(600);
+    @ini_set('max_execution_time', '600');
+    @ini_set('default_socket_timeout', '30');
+    @ignore_user_abort(true);
+}
+wifizone_extend_sync_time_limit();
 wifizone_register_activity_logging();
 wifizone_cleanup_ghost_activity_logs();
 WifiZoneLogger::loadPlugins($PLUGIN_PATH);
 if (function_exists('wifizone_ensure_kpi_widget')) {
     wifizone_ensure_kpi_widget();
+}
+if (function_exists('wifizone_ensure_setup_widget')) {
+    wifizone_ensure_setup_widget();
 }
 
 if ((!empty($radius_user) && $config['radius_enable']) || _post('radius_enable')) {
@@ -409,6 +432,120 @@ function wifizone_json_error($message, $httpCode = 400)
 /**
  * Expired PPPoE clients hitting any HTTP(S) page via MikroTik NAT are routed to the portal.
  */
+function wifizone_pppoe_expired_pool_prefix()
+{
+    global $config;
+    $gateway = trim((string) ($config['pppoe_setup_gateway'] ?? '10.10.10.1'));
+    if (preg_match('/^(\d+\.\d+\.\d+\.)/', $gateway, $matches)) {
+        return $matches[1];
+    }
+
+    return '10.10.10.';
+}
+
+function wifizone_pppoe_portal_route_for_ip($clientIp)
+{
+    $customerId = 0;
+    $router = trim((string) ($_GET['router'] ?? $_GET['routername'] ?? ''));
+    $login = trim((string) ($_GET['user'] ?? $_GET['pppoe_username'] ?? ''));
+
+    $fieldRow = ORM::for_table('tbl_customers_fields')
+        ->where('field_name', 'pppoe_expired_ip')
+        ->where('field_value', $clientIp)
+        ->find_one();
+    if ($fieldRow) {
+        $customerId = (int) $fieldRow['customer_id'];
+    }
+
+    if ($customerId > 0) {
+        if ($login === '') {
+            $login = User::getAttribute('pppoe_expired_user', $customerId, '');
+        }
+        if ($router === '') {
+            $router = User::getAttribute('pppoe_expired_router', $customerId, '');
+        }
+        $customer = ORM::for_table('tbl_customers')->find_one($customerId);
+        if ($customer) {
+            if ($login === '') {
+                $login = (string) ($customer['pppoe_username'] ?: $customer['username']);
+            }
+            if ($router === '') {
+                $lastRecharge = ORM::for_table('tbl_user_recharges')
+                    ->where('customer_id', $customerId)
+                    ->where_raw("LOWER(type) = 'pppoe'")
+                    ->order_by_desc('id')
+                    ->find_one();
+                if ($lastRecharge) {
+                    $router = (string) $lastRecharge['routers'];
+                }
+            }
+        }
+    }
+
+    if ($router === '') {
+        $lastExpired = ORM::for_table('tbl_user_recharges')
+            ->where_raw("LOWER(type) = 'pppoe'")
+            ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= NOW())")
+            ->order_by_desc('id')
+            ->find_one();
+        if ($lastExpired) {
+            $router = (string) $lastExpired['routers'];
+            if ($login === '') {
+                $login = (string) $lastExpired['username'];
+            }
+        }
+    }
+
+    if ($router === '') {
+        return null;
+    }
+
+    $_GET['router'] = $router;
+    $_GET['routername'] = $router;
+    $_GET['user'] = $login;
+    $_GET['pppoe_username'] = $login;
+    $_REQUEST['router'] = $router;
+    $_REQUEST['user'] = $login;
+
+    return 'plugin/pppoe_portal';
+}
+
+/**
+ * Requête HTTP redirigée par NAT MikroTik (SNAT masque l'IP client → IP routeur 10.0.0.x).
+ */
+function wifizone_pppoe_captive_snat_redirect_request($remoteIp)
+{
+    global $config;
+    if (!preg_match('/^10\.0\.0\.\d+$/', (string) $remoteIp)) {
+        return false;
+    }
+    $host = strtolower(trim((string) ($_SERVER['HTTP_HOST'] ?? '')));
+    if ($host === '') {
+        return false;
+    }
+    if (strpos($host, ':') !== false) {
+        $host = (string) parse_url('http://' . $host, PHP_URL_HOST);
+    }
+    $backendUrl = class_exists('Mikrotik')
+        ? Mikrotik::resolvePppoeCaptiveBackendUrl(is_array($config) ? $config : [])
+        : '';
+    if ($backendUrl === '' && defined('APP_URL')) {
+        $backendUrl = (string) APP_URL;
+    }
+    $backendHost = strtolower((string) parse_url($backendUrl, PHP_URL_HOST));
+    if ($backendHost === '') {
+        return true;
+    }
+    if ($host === $backendHost) {
+        return false;
+    }
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        return $host !== $backendHost;
+    }
+
+    return true;
+}
+
 function wifizone_pppoe_captive_intercept($currentRoute)
 {
     if (php_sapi_name() === 'cli') {
@@ -428,6 +565,51 @@ function wifizone_pppoe_captive_intercept($currentRoute)
     }
 
     try {
+        if (wifizone_pppoe_captive_snat_redirect_request($clientIp)) {
+            $portalRoute = wifizone_pppoe_portal_route_for_ip('');
+            if ($portalRoute !== null) {
+                return $portalRoute;
+            }
+        }
+
+        $fieldRow = ORM::for_table('tbl_customers_fields')
+            ->where('field_name', 'pppoe_expired_ip')
+            ->where('field_value', $clientIp)
+            ->find_one();
+        if ($fieldRow) {
+            $customerId = (int) $fieldRow['customer_id'];
+            $router = User::getAttribute('pppoe_expired_router', $customerId, '');
+            $login = User::getAttribute('pppoe_expired_user', $customerId, '');
+            if ($router === '' || $login === '') {
+                $customer = ORM::for_table('tbl_customers')->find_one($customerId);
+                if ($customer) {
+                    if ($login === '') {
+                        $login = (string) ($customer['pppoe_username'] ?: $customer['username']);
+                    }
+                    if ($router === '') {
+                        $lastRecharge = ORM::for_table('tbl_user_recharges')
+                            ->where('customer_id', $customerId)
+                            ->where_raw("LOWER(type) = 'pppoe'")
+                            ->order_by_desc('id')
+                            ->find_one();
+                        if ($lastRecharge) {
+                            $router = (string) $lastRecharge['routers'];
+                        }
+                    }
+                }
+            }
+            if ($router !== '' && $login !== '') {
+                $_GET['router'] = $router;
+                $_GET['routername'] = $router;
+                $_GET['user'] = $login;
+                $_GET['pppoe_username'] = $login;
+                $_REQUEST['router'] = $router;
+                $_REQUEST['user'] = $login;
+
+                return 'plugin/pppoe_portal';
+            }
+        }
+
         $row = ORM::for_table('tbl_user_recharges')
             ->where('type', 'PPPOE')
             ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= NOW())")
@@ -438,6 +620,12 @@ function wifizone_pppoe_captive_intercept($currentRoute)
             ->order_by_desc('id')
             ->find_one();
         if (!$row) {
+            if (strpos($clientIp, wifizone_pppoe_expired_pool_prefix()) === 0) {
+                $portalRoute = wifizone_pppoe_portal_route_for_ip($clientIp);
+                if ($portalRoute !== null) {
+                    return $portalRoute;
+                }
+            }
             return $currentRoute;
         }
 

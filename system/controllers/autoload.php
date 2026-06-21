@@ -26,6 +26,28 @@ function autoload_scoped_router_query($admin)
 }
 
 switch ($action) {
+    case 'router-pools':
+        header('Content-Type: application/json; charset=utf-8');
+        $router = trim((string) (_get('router') ?: _post('router')));
+        if ($router === '') {
+            echo json_encode(['ok' => false, 'message' => Lang::T('Select Routers'), 'pools' => []]);
+            die();
+        }
+        if (class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin)) {
+            echo json_encode([
+                'ok' => false,
+                'message' => Lang::T('Demo mode — router sync is disabled'),
+                'pools' => Mikrotik::fetchRouterIpPools($router, $admin),
+            ]);
+            die();
+        }
+        try {
+            $pools = Mikrotik::fetchRouterIpPools($router, $admin);
+            echo json_encode(['ok' => true, 'pools' => $pools, 'router' => $router]);
+        } catch (Throwable $e) {
+            echo json_encode(['ok' => false, 'message' => $e->getMessage(), 'pools' => []]);
+        }
+        die();
     case 'pool':
         $routers = _get('routers');
         if (empty($routers)) {

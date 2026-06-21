@@ -10,6 +10,10 @@ services:
         value: Live
       - key: APP_KEY
         generateValue: true
+      - key: CRON_TOKEN
+        generateValue: true
+      - key: HEALTH_TOKEN
+        generateValue: true
       - key: APP_URL
         sync: false
       - key: DB_HOST
@@ -22,3 +26,57 @@ services:
         sync: false
       - key: DB_PASSWORD
         sync: false
+
+  - type: cron
+    name: dyrsia-cron
+    runtime: docker
+    schedule: "*/5 * * * *"
+    dockerCommand: php /var/www/html/system/cron_wifizone.php
+    envVars:
+      - key: APP_STAGE
+        value: Live
+      - key: APP_KEY
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: APP_KEY
+      - key: CRON_TOKEN
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: CRON_TOKEN
+      - key: HEALTH_TOKEN
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: HEALTH_TOKEN
+      - key: APP_URL
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: APP_URL
+      - key: DB_HOST
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: DB_HOST
+      - key: DB_PORT
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: DB_PORT
+      - key: DB_DATABASE
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: DB_DATABASE
+      - key: DB_USERNAME
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: DB_USERNAME
+      - key: DB_PASSWORD
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: DB_PASSWORD

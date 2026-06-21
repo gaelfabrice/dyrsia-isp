@@ -12,6 +12,7 @@ class wifizone_kpi
                 'sales_today' => $s['iday'],
                 'sales_month' => $s['imonth'],
                 'routers_offline' => max(0, $s['routers_total'] - $s['routers_connected']),
+                'expiring_soon' => 0,
             ]);
         }
         $cacheKey = 'kpi_' . ($admin['id'] ?? 0) . '_' . date('Y-m-d-H');
@@ -38,7 +39,14 @@ class wifizone_kpi
             'sales_today' => $salesTodayQ->sum('price') ?: 0,
             'sales_month' => $salesMonthQ->sum('price') ?: 0,
             'routers_offline' => 0,
+            'expiring_soon' => 0,
         ];
+        $expiringQ = ORM::for_table('tbl_user_recharges')->where('status', 'on');
+        if ($isAdmin) {
+            $expiringQ->where('admin_id', $adminId);
+        }
+        $windowEnd = date('Y-m-d', strtotime('+7 days'));
+        $kpi['expiring_soon'] = $expiringQ->where_lte('expiration', $windowEnd)->count();
         $routers = $routersQ->find_many();
         foreach ($routers as $r) {
             $parts = explode(':', $r->ip_address);
@@ -67,6 +75,7 @@ class wifizone_kpi
         return '<div class="wz-kpi"><div class="row">'
             . $box('bg-aqua', 'ion ion-person', Lang::T('Active_Customers'), (int) $kpi['active_customers'])
             . $box('bg-green', 'ion ion-cash', Lang::T('Sales Today'), $cur . ' ' . number_format($kpi['sales_today'], 2))
+            . $box('bg-red', 'ion ion-clock', Lang::T('Expiring soon'), (int) ($kpi['expiring_soon'] ?? 0))
             . $box('bg-yellow', 'ion ion-wifi', Lang::T('Routers_Offline'), (int) $kpi['routers_offline'])
             . '</div></div>';
     }

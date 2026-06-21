@@ -1,6 +1,23 @@
-# MikroTik RouterOS — PPPoE + portail forfait expiré (WifiZone / DYRSIA)
-# Adapter les valeurs marquées CHANGE_ME avant import :
-#   /import file-name=mikrotik-pppoe-setup.rsc
+# MikroTik RouterOS — PPPoE RB2011 (WifiZone / DYRSIA)
+# Ports PPPoE : ether2, ether3, ether4, ether5  →  bridge-pppoe
+# Hotspot (deja en place) : ether8  →  bridge-hotspot  (10.0.0.0/24)
+# WAN : ether1
+#
+# Import : uploadez ce fichier puis  /import file-name=mikrotik-pppoe-setup.rsc
+# Si bridge-pppoe existe deja, supprimez ou commentez la section 0 avant import.
+
+# ===== 0. Bridge PPPoE (ports 2, 3, 4, 5) =====
+/interface bridge
+add name=bridge-pppoe comment="DYRSIA PPPoE LAN"
+
+/interface bridge port
+add bridge=bridge-pppoe interface=ether2
+add bridge=bridge-pppoe interface=ether3
+add bridge=bridge-pppoe interface=ether4
+add bridge=bridge-pppoe interface=ether5
+
+/ip address
+add address=10.10.10.1/24 interface=bridge-pppoe comment="DYRSIA PPPoE gateway"
 
 # ===== 1. Pool IP clients PPPoE =====
 /ip pool
@@ -14,12 +31,13 @@ add name=EXPIRE local-address=10.10.10.1 remote-address=pppoe-pool rate-limit=12
     on-down=":if (\$remote-address!=\"\") do={ /ip firewall address-list remove [find list=pppoe-expired address=\$remote-address] }" \
     comment="DYRSIA forfait expire"
 
-# ===== 3. Serveur PPPoE sur le bridge LAN =====
+# ===== 3. Serveur PPPoE sur bridge-pppoe =====
 /interface pppoe-server server
-add service-name=internet interface=bridge disabled=no default-profile=default one-session-per-host=yes max-mru=1480 max-mtu=1480
+add service-name=internet interface=bridge-pppoe disabled=no default-profile=default \
+    one-session-per-host=yes max-mru=1480 max-mtu=1480 comment="DYRSIA PPPoE server"
 
 # ===== 4. Pare-feu : clients expires = acces portail + paiement seulement =====
-# Les regles detaillees sont poussees par l'application (Services > PPPoE > Captive expire)
+# Regles detaillees poussees par DYRSIA (Services > PPPoE > Captive expire)
 /ip firewall address-list
 add list=pppoe-expired comment="DYRSIA clients PPPoE expires"
 
@@ -27,17 +45,17 @@ add list=pppoe-expired comment="DYRSIA clients PPPoE expires"
 /ip firewall nat
 add chain=srcnat action=masquerade out-interface=ether1 comment="DYRSIA PPPoE NAT"
 
-# ===== 6. API (deja configure chez vous via WireGuard) =====
-# /ip service set api address=10.0.0.0/24
-# L'application pousse /ppp/secret et /ppp/profile via API
+# ===== 6. API (deja configure via WireGuard 10.0.0.3) =====
+# /ip service set api address=10.0.0.0/24 disabled=no
+# DYRSIA pousse /ppp/secret et /ppp/profile via API
 
-# ===== CHECKLIST APPLICATION =====
-# 1. Reseau > Pools : creer pool pppoe-pool (10.10.10.2-10.10.10.254) routeur MK
-# 2. Services > PPPoE : forfaits actifs (12M, 4M…) — le plan EXPIRE est cree automatiquement au deploiement
-# 3. Tous les forfaits PPPoE sont lies au profil EXPIRE a expiration (sans deconnexion PPPoE)
-# 4. Clients : renseigner pppoe_username / pppoe_password
-# 5. Recharge client -> sync auto vers /ppp/secret
-# 6. Services > PPPoE > "Captive expire" -> deploy profils EXPIRE + firewall + portail renouvellement
-# 7. A expiration : le client reste connecte en PPPoE, internet coupe, HTTP -> portail forfaits PPPoE
-# 8. Cron : */5 * * * * php system/cron.php (obligatoire pour forfaits en minutes)
-# 9. Portail : https://wifizones.org/index.php?_route=plugin/pppoe_portal&router=MK
+# ===== TEST MANUEL (optionnel) =====
+# /ppp secret add name=test-pppoe password=Test1234 profile=default service=pppoe
+# Client : user test-pppoe / pass Test1234 / service-name internet
+
+# ===== CHECKLIST DYRSIA =====
+# 1. Reseau > Pools : pppoe-pool, 10.10.10.2-10.10.10.254, local 10.10.10.1, routeur RB2011
+# 2. Services > PPPoE : forfaits (12M, 4M…) — plan EXPIRE auto au deploiement
+# 3. Clients : pppoe_username / pppoe_password
+# 4. Services > PPPoE > Captive expire : deploy firewall + portail
+# 5. Cron : */5 * * * * php system/cron.php

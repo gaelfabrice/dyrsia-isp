@@ -98,26 +98,6 @@
         }
         .rating { color: var(--muted); font-size: 14px; margin: 0; }
         .rating strong { color: #fde047; }
-        .integrations {
-            padding: 40px 0; text-align: center;
-            border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-            background: rgba(255, 255, 255, 0.02);
-        }
-        .integrations p {
-            color: var(--muted); font-size: 12px; text-transform: uppercase;
-            letter-spacing: 0.12em; margin: 0 0 18px;
-        }
-        .logo-row {
-            display: flex; flex-wrap: wrap; justify-content: center;
-            gap: 14px; align-items: center;
-        }
-        .logo-chip {
-            display: inline-flex; align-items: center; gap: 8px;
-            padding: 12px 22px; border-radius: 14px;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--line); font-weight: 800; font-size: 14px;
-        }
-        .logo-chip .fa { color: var(--brand); }
         .section { padding: 64px 0; }
         .section-band {
             padding: 64px 0;
@@ -893,25 +873,13 @@
     <main id="top">
         <section class="container hero">
             <span class="pill"><i class="fa fa-shield"></i> La référence des Wifi Zone en Afrique</span>
-            <h1>Gérez votre Wifi Zone.<br>Sans aucune limite.</h1>
-            <p>Pilotez vos opérations Hotspot, PPPoE et IP statique, automatisez vos encaissements et développez votre activité d'accès internet avec une solution de gestion tout-en-un.</p>
+            <h1>Gérez votre Wifi Zone, Sans aucune limite.<br>Gérez tous vos routeurs en même temps</h1>
+            <p>Pilotez vos opérations Hotspot, PPPoE et IP statique, automatisez vos encaissements et développez votre activité d'accès internet avec une solution de gestion tout-en-un. Obtenez vos gains rapidement.</p>
             <div class="hero-cta">
                 <a class="btn btn-primary" href="{Text::url('provision')}"><i class="fa fa-play-circle"></i> Démarrer l'essai gratuit</a>
                 <a class="btn" href="#demo"><i class="fa fa-video-camera"></i> Voir la démo</a>
             </div>
             <p class="rating"><strong>★★★★★</strong> Noté 4.9/5 par plus de 150 gérants de Wifi Zone</p>
-        </section>
-
-        <section class="integrations">
-            <div class="container">
-                <p>Intégrations natives</p>
-                <div class="logo-row">
-                    <span class="logo-chip"><i class="fa fa-server"></i> MikroTik</span>
-                    <span class="logo-chip"><i class="fa fa-mobile"></i> MTN MoMo</span>
-                    <span class="logo-chip"><i class="fa fa-mobile"></i> Orange Money</span>
-                    <span class="logo-chip"><i class="fa fa-credit-card"></i> CamPay</span>
-                </div>
-            </div>
         </section>
 
         <section class="section container" id="features">
@@ -924,11 +892,7 @@
                 <article class="feat-card">
                     <div class="feat-card-icon"><i class="fa fa-credit-card"></i></div>
                     <h3>Encaissez en 1 clic via Mobile Money</h3>
-                    <p>Vos clients choisissent leur forfait, payent instantanément par MTN ou Orange Money avec CamPay, et reçoivent leur accès internet automatiquement.</p>
-                    <div class="feat-logos">
-                        <img src="{$app_url}/ui/ui/images/mtn.png" alt="MTN MoMo">
-                        <img src="{$app_url}/ui/ui/images/orange.png" alt="Orange Money">
-                    </div>
+                    <p>Vos clients choisissent leur forfait, payent instantanément par Mobile Money, et reçoivent leur accès internet automatiquement.</p>
                 </article>
                 <article class="feat-card">
                     <div class="feat-card-icon"><i class="fa fa-wifi"></i></div>

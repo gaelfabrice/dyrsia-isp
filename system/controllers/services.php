@@ -65,6 +65,57 @@ function services_ensure_pppoe_expire_plans($admin)
     }
 }
 
+/**
+ * Reassign PPPoE plans whose routers field does not match any configured MikroTik.
+ *
+ * @return int Number of plans updated
+ */
+function services_reassign_orphan_pppoe_plans($admin)
+{
+    $validRouterNames = [];
+    foreach (services_scoped_router_query($admin)->find_many() as $routerRow) {
+        $name = trim((string) $routerRow['name']);
+        if ($name !== '') {
+            $validRouterNames[] = $name;
+        }
+    }
+
+    if (empty($validRouterNames)) {
+        return 0;
+    }
+
+    $targetRouter = count($validRouterNames) === 1 ? $validRouterNames[0] : '';
+    $updated = 0;
+    $plans = services_scoped_plan_query($admin)->where('type', 'PPPOE')->find_many();
+
+    foreach ($plans as $plan) {
+        $planRouter = trim((string) ($plan['routers'] ?? ''));
+        $isRadius = !empty($plan['is_radius']);
+        if ($isRadius) {
+            continue;
+        }
+
+        $resolved = $planRouter !== '' ? Mikrotik::resolveRouterRecord($planRouter, $admin) : null;
+        if ($resolved) {
+            $canonical = trim((string) $resolved['name']);
+            if ($canonical !== '' && $planRouter !== $canonical) {
+                $plan->routers = $canonical;
+                $plan->save();
+                $updated++;
+            }
+            continue;
+        }
+
+        if ($targetRouter !== '') {
+            $plan->routers = $targetRouter;
+            $plan->save();
+            $updated++;
+        }
+    }
+
+    return $updated;
+}
+
 function services_sync_plan_to_device($deviceClass, $plan, $action, $oldPlan = null)
 {
     global $_app_stage;
@@ -118,26 +169,131 @@ switch ($action) {
     case 'sync':
         set_time_limit(-1);
         if ($routes['2'] == 'hotspot') {
+            if (DemoShowcase::isActive($admin)) {
+                r2(getUrl('services/hotspot'), 'w', 'Compte vitrine démo : synchronisation MikroTik désactivée.');
+            }
             $plans = services_scoped_plan_query($admin)->where('type', 'Hotspot')->find_many();
-            $log = '';
+            $routerNames = [];
             foreach ($plans as $plan) {
-                $syncError = services_sync_plan_to_device($plan['device'], $plan, 'add');
-                if ($syncError) {
-                    $log .= "FAILED : $plan[name_plan] — " . htmlspecialchars($syncError, ENT_QUOTES, 'UTF-8') . "<br>";
-                } else {
-                    $log .= "DONE : $plan[name_plan], $plan[device]<br>";
+                $routerName = trim((string) ($plan['routers'] ?? ''));
+                if ($routerName !== '' && strcasecmp($routerName, 'radius') !== 0) {
+                    $routerNames[$routerName] = true;
                 }
+            }
+            $log = '';
+            foreach (array_keys($routerNames) as $routerName) {
+                $router = services_scoped_router_query($admin)->where('name', $routerName)->find_one();
+                if (!$router) {
+                    $log .= "FAILED : routeur « {$routerName} » introuvable<br>";
+                    continue;
+                }
+                try {
+                    $password = class_exists('Mikrotik')
+                        ? Mikrotik::routerPassword($router['password'])
+                        : $router['password'];
+                    $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password, 20);
+                    if (!$client) {
+                        $log .= "FAILED : {$routerName} — connexion MikroTik impossible<br>";
+                        continue;
+                    }
+                    $result = Mikrotik::syncHotspotPlans($client, $routerName, $admin);
+                    if (empty($result['ok'])) {
+                        $log .= "FAILED : {$routerName} — " . htmlspecialchars(implode(' | ', $result['errors'] ?? ['erreur']), ENT_QUOTES, 'UTF-8') . "<br>";
+                    } else {
+                        $log .= "DONE : {$routerName} — "
+                            . (int) ($result['upserted'] ?? 0)
+                            . ' forfait(s), '
+                            . (int) ($result['removed'] ?? 0)
+                            . " ancien(s) supprimé(s)<br>";
+                    }
+                } catch (Throwable $e) {
+                    $log .= "FAILED : {$routerName} — " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "<br>";
+                }
+            }
+            if ($log === '') {
+                $log = 'Aucun forfait Hotspot avec routeur MikroTik configuré.';
             }
             r2(getUrl('services/hotspot'), 's', $log);
         } else if ($routes['2'] == 'pppoe') {
-            $plans = services_scoped_plan_query($admin)->where('type', 'PPPOE')->find_many();
+            $reassigned = services_reassign_orphan_pppoe_plans($admin);
             $log = '';
+            if ($reassigned > 0) {
+                $log .= "INFO : {$reassigned} forfait(s) PPPoE réassigné(s) au routeur configuré.<br>";
+            }
+
+            global $config;
+            $routers = [];
+            $plans = services_scoped_plan_query($admin)->where('type', 'PPPOE')->find_many();
             foreach ($plans as $plan) {
-                $syncError = services_sync_plan_to_device($plan['device'], $plan, 'add');
-                if ($syncError) {
-                    $log .= "FAILED : $plan[name_plan] — " . htmlspecialchars($syncError, ENT_QUOTES, 'UTF-8') . "<br>";
-                } else {
-                    $log .= "DONE : $plan[name_plan], $plan[device]<br>";
+                $routerName = trim((string) ($plan['routers'] ?? ''));
+                if ($routerName !== '' && strcasecmp($routerName, 'radius') !== 0) {
+                    $routers[$routerName] = true;
+                }
+            }
+
+            if (empty($routers)) {
+                r2(getUrl('services/pppoe'), 'w', 'Aucun forfait PPPoE avec routeur MikroTik configuré.');
+            }
+
+            foreach (array_keys($routers) as $routerName) {
+                $router = services_scoped_router_query($admin)->where('name', $routerName)->find_one();
+                if (!$router) {
+                    $log .= "FAILED : routeur « " . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8') . " » introuvable<br>";
+                    continue;
+                }
+                try {
+                    $routerPassword = $router['password'];
+                    if (function_exists('lcg_decrypt')) {
+                        $routerPassword = rtrim(lcg_decrypt($routerPassword));
+                    } elseif (class_exists('Encryption') && method_exists('Encryption', 'decrypt')) {
+                        $routerPassword = rtrim(Encryption::decrypt($routerPassword));
+                    }
+                    $client = Mikrotik::getClient($router['ip_address'], $router['username'], $routerPassword, 60);
+                    if (!$client) {
+                        $log .= "FAILED : connexion MikroTik « " . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8') . " »<br>";
+                        continue;
+                    }
+                    $bridgeName = trim((string) ($config['pppoe_setup_bridge'] ?? 'bridge-pppoe'));
+                    $sync = Mikrotik::fullPppoeRouterSync($client, $routerName, $admin, $bridgeName);
+                    $planSync = $sync['plans'] ?? [];
+                    $secretSync = $sync['secrets'] ?? [];
+                    $log .= "DONE : "
+                        . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8')
+                        . ' — '
+                        . (int) ($planSync['upserted'] ?? 0)
+                        . ' profil(s), '
+                        . (int) ($secretSync['synced'] ?? 0)
+                        . ' client(s), '
+                        . (int) ($secretSync['removed'] ?? 0)
+                        . ' secret(s) orphelin(s) supprimé(s)';
+                    if (!empty($secretSync['disconnected'])) {
+                        $log .= ', ' . (int) $secretSync['disconnected'] . ' session(s) coupée(s)';
+                    }
+                    if (!empty($sync['firewall']['added'])) {
+                        $log .= ', firewall anti-contournement activé';
+                    }
+                    if (!empty($sync['captive']['ok'])) {
+                        $log .= ', captive expiré OK';
+                    }
+                    if (!empty($sync['suspensions']['enforced'])) {
+                        $log .= ', ' . (int) $sync['suspensions']['enforced'] . ' expiré(s) suspendu(s)';
+                    }
+                    $log .= '<br>';
+                    foreach ($sync['errors'] ?? [] as $err) {
+                        $log .= "WARN : " . htmlspecialchars((string) $err, ENT_QUOTES, 'UTF-8') . "<br>";
+                    }
+                } catch (Throwable $e) {
+                    $log .= "FAILED : "
+                        . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8')
+                        . " — "
+                        . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8')
+                        . "<br>";
+                } catch (Exception $e) {
+                    $log .= "FAILED : "
+                        . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8')
+                        . " — "
+                        . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8')
+                        . "<br>";
                 }
             }
             r2(getUrl('services/pppoe'), 's', $log);
@@ -167,12 +323,23 @@ switch ($action) {
             if (!$client) {
                 r2(getUrl('services/pppoe'), 'e', 'Connexion MikroTik impossible.');
             }
-            $portalUrl = rtrim(APP_URL, '/') . '/index.php?_route=plugin/pppoe_portal&router=' . rawurlencode($routerName);
+            $portalUrl = Mikrotik::buildPppoeCaptivePortalUrl($routerName, $config);
+            $backendUrl = Mikrotik::resolvePppoeCaptiveBackendUrl($config);
+            if ($portalUrl === '' || $backendUrl === '') {
+                r2(
+                    getUrl('services/pppoe'),
+                    'e',
+                    'URL backend captive introuvable. Settings → Hotspot → Hotspot API URL : '
+                    . 'http://10.0.0.2:8080 (VPN dev Mac) ou https://wifizones.org (prod). '
+                    . 'Ne pas utiliser localhost.'
+                );
+            }
             $expiredPlan = Mikrotik::ensurePppoeExpiredPlan($client, $routerName, $admin);
             $planSync = Mikrotik::syncPppoePlans($client, $routerName, $admin);
-            $captive = Mikrotik::ensurePppoeExpiredCaptive($client, $portalUrl, APP_URL, $routerName);
+            $captive = Mikrotik::ensurePppoeExpiredCaptive($client, $portalUrl, $backendUrl, $routerName);
+            $suspensions = Mikrotik::syncExpiredPppoeSuspensions($client, $routerName, $admin);
             if (empty($planSync['ok']) || empty($captive['ok']) || empty($expiredPlan['ok'])) {
-                $errors = array_merge($planSync['errors'] ?? [], $captive['errors'] ?? [], $expiredPlan['errors'] ?? []);
+                $errors = array_merge($planSync['errors'] ?? [], $captive['errors'] ?? [], $expiredPlan['errors'] ?? [], $suspensions['errors'] ?? []);
                 r2(getUrl('services/pppoe'), 'e', 'Déploiement PPPoE partiel : ' . implode(' | ', $errors));
             }
             r2(
@@ -184,7 +351,9 @@ switch ($action) {
                 . (int) ($planSync['upserted'] ?? 0)
                 . ' profil(s), EXPIRE lié à '
                 . (int) ($expiredPlan['linked'] ?? 0)
-                . ' forfait(s), captive expiré OK. Portail : '
+                . ' forfait(s), '
+                . (int) ($suspensions['enforced'] ?? 0)
+                . ' client(s) expiré(s) suspendu(s), captive OK. Portail : '
                 . $portalUrl
             );
         } catch (Throwable $e) {
@@ -652,7 +821,15 @@ case 'hotspot-bulk-delete':
         }
         $ui->assign('devices', $devices);
         $ui->assign('mikrotik_routers', services_scoped_router_query($admin)->order_by_asc('name')->find_many());
-        $ui->assign('pppoe_portal_base', rtrim(APP_URL, '/') . '/index.php?_route=plugin/pppoe_portal&router=');
+        global $config;
+        $pppoeBackend = Mikrotik::resolvePppoeCaptiveBackendUrl(is_array($config) ? $config : []);
+        $ui->assign('pppoe_captive_backend', $pppoeBackend);
+        $ui->assign(
+            'pppoe_portal_base',
+            $pppoeBackend !== ''
+                ? rtrim($pppoeBackend, '/') . '/index.php?_route=plugin/pppoe_portal&router='
+                : rtrim(APP_URL, '/') . '/index.php?_route=plugin/pppoe_portal&router='
+        );
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
             ->where('tbl_plans.type', 'PPPOE');
@@ -704,6 +881,7 @@ case 'hotspot-bulk-delete':
         $ui->assign('d', $d);
         $r = services_scoped_router_query($admin)->find_many();
         $ui->assign('r', $r);
+        $ui->assign('pppoe_pool_fetch_url', getUrl('autoload/router-pools'));
         $devices = [];
         $files = scandir($DEVICE_PATH);
         foreach ($files as $file) {
@@ -833,7 +1011,12 @@ break;
         $validity_unit = _post('validity_unit');
         $routers = _post('routers');
         $device = _post('device');
-        $pool = _post('pool_name');
+        $pool_mode = _post('pool_mode') === 'new' ? 'new' : 'existing';
+        $pool = $pool_mode === 'new'
+            ? trim((string) _post('pool_name_new'))
+            : trim((string) _post('pool_existing'));
+        $pool_range = trim((string) _post('pool_range'));
+        $pool_local_ip = trim((string) _post('pool_local_ip'));
         $enabled = _post('enabled');
         $prepaid = _post('prepaid');
         $expired_date = _post('expired_date');
@@ -848,6 +1031,9 @@ break;
         }
         if ($name == '' or $id_bw == '' or $price == '' or $validity == '' or $pool == '') {
             $msg .= Lang::T('All field is required') . '<br>';
+        }
+        if ($pool_mode === 'new' && $pool_range === '' && empty($radius) && $routers !== '') {
+            $msg .= Lang::T('Range IP') . ' — ' . Lang::T('Required for a new pool on MikroTik') . '<br>';
         }
         if (strtoupper(trim((string) $name)) === 'EXPIRE') {
             $msg .= Lang::T('The EXPIRE plan name is reserved for the system plan') . '<br>';
@@ -864,6 +1050,13 @@ break;
         }
         run_hook('add_ppoe'); #HOOK
         if ($msg == '') {
+            if (empty($radius) && $routers !== '') {
+                try {
+                    $pool = Mikrotik::ensureRouterIpPool($routers, $pool, $pool_range, $pool_local_ip, $admin, $pool_mode);
+                } catch (Throwable $e) {
+                    r2(getUrl('services/pppoe-add'), 'e', $e->getMessage());
+                }
+            }
             $b = ORM::for_table('tbl_bandwidth')->where('id', $id_bw)->find_one();
             if ($b['rate_down_unit'] == 'Kbps') {
                 $unitdown = 'K';

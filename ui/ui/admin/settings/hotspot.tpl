@@ -1,25 +1,27 @@
 {include file="sections/header.tpl"}
 
+{assign var=hs_wizard_step value=$smarty.get.step|default:'1'}
+{if $hs_wizard_step lt 1 or $hs_wizard_step gt 3}{assign var=hs_wizard_step value='1'}{/if}
+
 {assign var=hs_title value=$_c['hotspot_page_title']|default:'yoyo'}
 {assign var=hs_tagline value=$_c['hotspot_page_tagline']|default:''}
 {assign var=hs_api_url value=$_c['hotspot_api_url']|default:'https://wifizones.org'}
 {assign var=hs_router value=$_c['hotspot_login_router']|default:''}
-{assign var=hs_color value=$_c['hotspot_login_color']|default:'green'}
-{assign var=hs_shape value=$_c['hotspot_card_shape']|default:'rounded'}
 {assign var=hs_display value=$_c['hotspot_card_display']|default:'auto'}
-{assign var=hs_banner value=$_c['hotspot_banner_text']|default:''}
-{assign var=hs_name value=$_c['hotspot_name']|default:'hotspot1'}
-{assign var=hs_interface value=$_c['hotspot_interface']|default:'bridge'}
-{assign var=hs_profile value=$_c['hotspot_profile']|default:'hsprof1'}
-{assign var=hs_dns value=$_c['hotspot_dns_name']|default:'hotspot.monreseau.net'}
+{assign var=hs_name value=$_c['hotspot_name']|default:''}
+{assign var=hs_interface value=$_c['hotspot_interface']|default:''}
+{assign var=hs_profile value=$_c['hotspot_profile']|default:'default'}
+{assign var=hs_dns value=$_c['hotspot_dns_name']|default:''}
+{assign var=hs_local value=$_c['hotspot_local_address']|default:'10.0.0.1/24'}
+{assign var=hs_masquerade value=$_c['hotspot_masquerade']|default:'1'}
+{assign var=hs_address_pool value=$_c['hotspot_address_pool']|default:''}
+{assign var=hs_pool_name value=$_c['hotspot_pool_name']|default:''}
+{assign var=hs_pool_range value=$_c['hotspot_pool_range']|default:'10.0.0.1-10.0.0.254'}
+{assign var=hs_dns_server value=$_c['hotspot_dns_server']|default:'8.8.8.8'}
+{assign var=hs_smtp value=$_c['hotspot_smtp_server']|default:'0.0.0.0'}
 {assign var=hs_cookie value=$_c['hotspot_cookie_lifetime']|default:'1d'}
 {assign var=hs_idle value=$_c['hotspot_idle_timeout']|default:'00:10:00'}
-{assign var=hs_pool_mode value=$_c['hotspot_pool_mode']|default:'new'}
-{assign var=hs_pool_name value=$_c['hotspot_pool_name']|default:'hs-pool'}
-{assign var=hs_pool_range value=$_c['hotspot_pool_range']|default:'10.5.50.2-10.5.50.254'}
 {assign var=hs_keepalive value=$_c['hotspot_keepalive_timeout']|default:'00:00:30'}
-{assign var=hs_smtp value=$_c['hotspot_smtp_server']|default:'0.0.0.0'}
-{assign methods explode(',', $_c['hotspot_login_methods']|default:'chap')}
 
 <style>
 .hs-wizard-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
@@ -117,6 +119,16 @@
     border-radius: 50%; background: #25d366; color: #fff; align-items: center;
     justify-content: center; font-size: 16px; box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
+.hs-sync-status { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; font-size: 13px; display: none; }
+.hs-sync-status.loading { display: block; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.hs-sync-status.ok { display: block; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.hs-sync-status.error { display: block; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.hs-name-picker-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.hs-name-picker-row select.hs-name-picker { flex: 0 0 42%; min-width: 140px; max-width: 100%; }
+.hs-name-picker-row input.hs-name-input { flex: 1 1 180px; min-width: 0; }
+@media (max-width: 640px) {
+    .hs-name-picker-row select.hs-name-picker { flex: 1 1 100%; }
+}
 .hs-summary { background: #f9fafb; border-radius: 8px; padding: 12px 16px; }
 .hs-summary-row {
     display: flex; justify-content: space-between; gap: 12px;
@@ -137,6 +149,7 @@
 <form method="post" action="{Text::url('settings/hotspot')}" id="hs-wizard-form" class="form-horizontal">
     <input type="hidden" name="send_mikrotik" id="hs-send-mikrotik-field" value="">
     <input type="hidden" name="sync_hotspot_plans" id="hs-sync-plans-field" value="">
+    <input type="hidden" name="hs_wizard_step" id="hs_wizard_step" value="{$hs_wizard_step|escape}">
     <div class="hs-wizard-wrap">
         <div class="hs-wizard-main">
             <div class="box box-primary">
@@ -145,14 +158,14 @@
                 </div>
                 <div class="box-body">
                     <div class="hs-step-indicators">
-                        <span id="hs-indicator-1" class="active">1. Personnalisation</span>
-                        <span id="hs-indicator-2">2. Configuration réseau</span>
+                        <span id="hs-indicator-1" class="active">1. Personnalisation portail</span>
+                        <span id="hs-indicator-2">2. Hotspot Setup</span>
                         <span id="hs-indicator-3">3. Finalisation</span>
                     </div>
 
-                    {* ——— Étape 1 : Hotspot Settings ——— *}
+                    {* ——— Étape 1 : Personnalisation portail ——— *}
                     <div id="hs-step-1">
-                        <h4><i class="fa fa-magic"></i> {Lang::T('Hotspot Settings')}</h4>
+                        <h4><i class="fa fa-magic"></i> Personnalisation portail</h4>
                         <div class="form-group">
                             <label class="col-md-3 control-label">{Lang::T('Hotspot Page Title')}</label>
                             <div class="col-md-9">
@@ -169,7 +182,7 @@
                             <label class="col-md-3 control-label">{Lang::T('Hotspot API URL')}</label>
                             <div class="col-md-9">
                                 <input type="text" name="hotspot_api_url" class="form-control" value="{$hs_api_url}" placeholder="https://wifizones.org">
-                                <p class="help-block">URL publique du serveur DYRSIA (sans port MikroTik). Ex: <code>https://wifizones.org</code> — pas <code>10.0.0.3:8000</code>. Le walled-garden est créé automatiquement à l'envoi vers MikroTik.</p>
+                                <p class="help-block">Adresse du <strong>serveur DYRSIA</strong> (PHP), pas du routeur MikroTik. Production : <code>https://wifizones.org</code> — VPN : <code>http://10.0.0.1</code> (serveur). L'IP du routeur (ex. <code>10.0.0.2</code>) va dans <em>Réseau → Routeurs</em> seulement.</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -195,28 +208,6 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-3 control-label">{Lang::T('Color Scheme')}</label>
-                            <div class="col-md-9">
-                                <select name="hotspot_login_color" class="form-control">
-                                    <option value="green" {if $hs_color eq 'green'}selected{/if}>Green</option>
-                                    <option value="blue" {if $hs_color eq 'blue'}selected{/if}>Blue</option>
-                                    <option value="red" {if $hs_color eq 'red'}selected{/if}>Red</option>
-                                    <option value="dark" {if $hs_color eq 'dark'}selected{/if}>Dark</option>
-                                    <option value="light" {if $hs_color eq 'light'}selected{/if}>Light</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="col-md-3 control-label">{Lang::T('Hotspot Card Shape')}</label>
-                            <div class="col-md-9">
-                                <select name="hotspot_card_shape" class="form-control">
-                                    <option value="rounded" {if $hs_shape eq 'rounded'}selected{/if}>Rounded</option>
-                                    <option value="square" {if $hs_shape eq 'square'}selected{/if}>Square</option>
-                                    <option value="pill" {if $hs_shape eq 'pill'}selected{/if}>Pill</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-group">
                             <label class="col-md-3 control-label">{Lang::T('Hotspot Card Auto/ Manual Display')}</label>
                             <div class="col-md-9">
                                 <select name="hotspot_card_display" class="form-control">
@@ -225,100 +216,103 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="form-group">
-                            <label class="col-md-3 control-label">{Lang::T('Panneau_publicitaire')}</label>
-                            <div class="col-md-9">
-                                <input type="text" name="hotspot_banner_text" class="form-control" value="{$hs_banner}" placeholder="Laisser vide pour désactiver">
-                            </div>
-                        </div>
                     </div>
 
-                    {* ——— Étape 2 : Hotspot Setup Wizard ——— *}
+                    {* ——— Étape 2 : Hotspot Setup ——— *}
                     <div id="hs-step-2" style="display:none;">
-                        <h4><i class="fa fa-wrench"></i> {Lang::T('Hotspot Setup Wizard')}</h4>
+                        <h4><i class="fa fa-wrench"></i> {Lang::T('Hotspot_Setup')}</h4>
+                        <p class="text-muted">Les champs se synchronisent automatiquement depuis le routeur sélectionné à l'étape 1.</p>
+                        <div id="hs-sync-status" class="hs-sync-status"></div>
+
                         <div class="form-group">
                             <label class="col-md-4 control-label">Nom du Hotspot</label>
                             <div class="col-md-8">
-                                <input name="hotspot_name" class="form-control" value="{$hs_name}">
+                                <input name="hotspot_name" id="hotspot_name" class="form-control" value="{$hs_name|escape}" placeholder="Ex. hotspot1">
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-4 control-label">Interface</label>
+                            <label class="col-md-4 control-label">HotSpot Interface</label>
                             <div class="col-md-8">
-                                <select name="hotspot_interface" class="form-control">
-                                    <option value="bridge" {if $hs_interface eq 'bridge'}selected{/if}>bridge</option>
-                                    <option value="wlan1" {if $hs_interface eq 'wlan1'}selected{/if}>wlan1</option>
-                                    <option value="wlan2" {if $hs_interface eq 'wlan2'}selected{/if}>wlan2</option>
-                                    <option value="ether1" {if $hs_interface eq 'ether1'}selected{/if}>ether1</option>
-                                    <option value="ether2" {if $hs_interface eq 'ether2'}selected{/if}>ether2</option>
+                                <select name="hotspot_interface" id="hotspot_interface" class="form-control">
+                                    {if $hs_interface neq ''}
+                                        <option value="{$hs_interface|escape}" selected>{$hs_interface|escape}</option>
+                                    {else}
+                                        <option value="">— Sélectionnez un routeur à l'étape 1 —</option>
+                                    {/if}
                                 </select>
+                                <p class="help-block">Interfaces physiques, virtuelles, bridge et SFP détectées sur le MikroTik.</p>
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-4 control-label">Nom de profil</label>
+                            <label class="col-md-4 control-label">Local address of Network</label>
                             <div class="col-md-8">
-                                <input name="hotspot_profile" class="form-control" value="{$hs_profile}">
+                                <input name="hotspot_local_address" id="hotspot_local_address" class="form-control" value="{$hs_local|escape}" placeholder="10.0.0.1/24">
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-4 control-label">DNS Name</label>
+                            <label class="col-md-4 control-label">Masquerade Network</label>
                             <div class="col-md-8">
-                                <input name="hotspot_dns_name" class="form-control" value="{$hs_dns}" placeholder="hotspot.monreseau.net">
+                                <label class="checkbox-inline" style="padding-top:7px;">
+                                    <input type="checkbox" name="hotspot_masquerade" id="hotspot_masquerade" value="1" {if $hs_masquerade eq '1'}checked{/if}>
+                                    Activer le masquerade (NAT srcnat)
+                                </label>
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-4 control-label">Méthodes de login</label>
+                            <label class="col-md-4 control-label">Address Pool of Network</label>
                             <div class="col-md-8">
-                                <label><input type="checkbox" name="hotspot_login_methods[]" value="chap" {if in_array('chap', $methods)}checked{/if}> HTTP CHAP</label><br>
-                                <label><input type="checkbox" name="hotspot_login_methods[]" value="pap" {if in_array('pap', $methods)}checked{/if}> HTTP PAP</label><br>
-                                <label><input type="checkbox" name="hotspot_login_methods[]" value="cookie" {if in_array('cookie', $methods)}checked{/if}> MAC Cookie</label>
+                                <input name="hotspot_address_pool" id="hotspot_address_pool" class="form-control" value="{if $hs_address_pool neq ''}{$hs_address_pool|escape}{else}{$hs_pool_range|escape}{/if}" placeholder="10.0.0.1-10.0.0.254">
+                                <input type="hidden" name="hotspot_pool_range" id="hotspot_pool_range" value="{$hs_pool_range|escape}">
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="col-md-4 control-label">Cookie Lifetime</label>
+                            <label class="col-md-4 control-label">Nom du pool</label>
                             <div class="col-md-8">
-                                <input name="hotspot_cookie_lifetime" class="form-control" value="{$hs_cookie}">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="col-md-4 control-label">Idle Timeout</label>
-                            <div class="col-md-8">
-                                <input name="hotspot_idle_timeout" class="form-control" value="{$hs_idle}">
-                            </div>
-                        </div>
-                        <hr>
-                        <h5><i class="fa fa-list"></i> Pool d'adresses IP</h5>
-                        <div class="form-group">
-                            <div class="col-md-12">
-                                <label><input type="radio" name="hotspot_pool_mode" value="new" {if $hs_pool_mode neq 'existing'}checked{/if}> Nouveau pool</label><br>
-                                <label><input type="radio" name="hotspot_pool_mode" value="existing" {if $hs_pool_mode eq 'existing'}checked{/if}> Pool existant</label>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="col-md-4 control-label">Nom du nouveau pool</label>
-                            <div class="col-md-8">
-                                <input name="hotspot_pool_name" class="form-control" value="{$hs_pool_name}">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="col-md-4 control-label">Plage d'adresses IP</label>
-                            <div class="col-md-8">
-                                <input name="hotspot_pool_range" class="form-control" value="{$hs_pool_range}">
-                            </div>
-                        </div>
-                        <h5><i class="fa fa-cog"></i> Paramètres avancés</h5>
-                        <div class="form-group">
-                            <label class="col-md-4 control-label">Keepalive Timeout</label>
-                            <div class="col-md-8">
-                                <input name="hotspot_keepalive_timeout" class="form-control" value="{$hs_keepalive}">
+                                <div class="hs-name-picker-row">
+                                    <select id="hotspot_pool_name_picker" class="form-control hs-name-picker" aria-label="Pools du routeur">
+                                        <option value="">— Synchronisez le routeur —</option>
+                                    </select>
+                                    <input name="hotspot_pool_name" id="hotspot_pool_name" class="form-control hs-name-input" value="{$hs_pool_name|escape}" placeholder="Nom du pool" autocomplete="off">
+                                </div>
+                                <p class="help-block">Liste issue du MikroTik (<code>/ip pool</code>) ou saisie manuelle pour un nouveau pool.</p>
                             </div>
                         </div>
                         <div class="form-group">
                             <label class="col-md-4 control-label">SMTP Server</label>
                             <div class="col-md-8">
-                                <input name="hotspot_smtp_server" class="form-control" value="{$hs_smtp}">
+                                <input name="hotspot_smtp_server" id="hotspot_smtp_server" class="form-control" value="{$hs_smtp|escape}">
                             </div>
                         </div>
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">DNS Server</label>
+                            <div class="col-md-8">
+                                <input name="hotspot_dns_server" id="hotspot_dns_server" class="form-control" value="{$hs_dns_server|escape}" placeholder="8.8.8.8">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">DNS Name</label>
+                            <div class="col-md-8">
+                                <input name="hotspot_dns_name" id="hotspot_dns_name" class="form-control" value="{$hs_dns|escape}" placeholder="Optionnel — ex. hotspot.monreseau.net">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-md-4 control-label">Nom de profil</label>
+                            <div class="col-md-8">
+                                <div class="hs-name-picker-row">
+                                    <select id="hotspot_profile_picker" class="form-control hs-name-picker" aria-label="Profils du routeur">
+                                        <option value="default">default</option>
+                                    </select>
+                                    <input name="hotspot_profile" id="hotspot_profile" class="form-control hs-name-input" value="{$hs_profile|escape}" placeholder="default" autocomplete="off">
+                                </div>
+                                <p class="help-block">Profils hotspot (<code>/ip hotspot profile</code>) : choisissez ou saisissez un nom.</p>
+                            </div>
+                        </div>
+
+                        <input type="hidden" name="hotspot_pool_mode" value="existing">
+                        <input type="hidden" name="hotspot_login_methods[]" value="chap">
+                        <input type="hidden" name="hotspot_cookie_lifetime" value="{$hs_cookie|escape}">
+                        <input type="hidden" name="hotspot_idle_timeout" value="{$hs_idle|escape}">
+                        <input type="hidden" name="hotspot_keepalive_timeout" value="{$hs_keepalive|escape}">
                     </div>
 
                     {* ——— Étape 3 : Résumé + actions ——— *}
@@ -368,8 +362,11 @@
     </div>
 </form>
 
-<script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.11"></script>
+<script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.20e"></script>
 <script>
+window.HS_FETCH_URL = '{$hs_fetch_url|escape:'javascript'}';
+window.HS_INITIAL_ROUTER = '{$hs_router|escape:'javascript'}';
+window.HS_INITIAL_STEP = '{$hs_wizard_step|escape:'javascript'}';
 document.addEventListener('DOMContentLoaded', function () {
     var titleInput = document.querySelector('input[name="hotspot_page_title"]');
     var preview = document.getElementById('hs-real-preview');

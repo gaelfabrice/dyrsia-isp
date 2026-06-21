@@ -442,7 +442,7 @@ body.dark-mode .au-delete {
                                 <a href="{Text::url('settings/users-edit/', $ds.id)}" class="au-edit">
                                     <i class="fa fa-pencil"></i> {Lang::T('Edit')}
                                 </a>
-                                {if in_array($_admin['user_type'], ['SuperAdmin','Admin']) && $ds.id != $_admin.id}
+                                {if in_array($_admin['user_type'], ['SuperAdmin','Admin']) && $ds.id != $_admin.id && $ds.username|lower != 'demo' && !isset($showcase_protected_ids[$ds.id])}
                                     {if $_admin['user_type'] eq 'SuperAdmin' || $ds.user_type eq 'Report' || $ds.user_type eq 'Agent' || $ds.user_type eq 'Sales'}
                                     <a href="{Text::url('settings/users-delete/', $ds.id)}" class="au-delete"
                                         onclick="return ask(this, '{Lang::T('Delete_this_administrator_')}')">

@@ -44,6 +44,17 @@ switch ($do) {
         AdminSubscription::ensureSchema();
         $subscription = AdminSubscription::getForAdmin((int) $admin['id']);
         $settings = AdminSubscription::settings();
+        if (DemoShowcase::isActive($admin)) {
+            $ui->assign('subscription_stats', DemoShowcase::subscriptionStats());
+            $ui->assign('subscription_invoices', DemoShowcase::subscriptionInvoices());
+            $ui->assign('subscription_payments', DemoShowcase::subscriptionPayments());
+            $ui->assign('router_count', (int) (DemoShowcase::stats()['routers_total'] ?? 0));
+        } else {
+            $ui->assign('subscription_stats', AdminSubscription::statsForAdmin((int) $admin['id']));
+            $ui->assign('subscription_invoices', AdminSubscription::invoicesForAdmin((int) $admin['id']));
+            $ui->assign('subscription_payments', AdminSubscription::paymentsForAdmin((int) $admin['id']));
+            $ui->assign('router_count', AdminSubscription::routerCount((int) $admin['id']));
+        }
         if (_get('demo_ack') == '1') {
             unset($_SESSION['signup_checkout_plan']);
         }
@@ -65,10 +76,6 @@ switch ($do) {
         $ui->assign('subscription', $subscription);
         $ui->assign('subscription_days_remaining', AdminSubscription::daysRemaining($subscription->status === 'trial' ? $subscription->trial_end : $subscription->subscription_end));
         $ui->assign('subscription_settings', $settings);
-        $ui->assign('subscription_stats', AdminSubscription::statsForAdmin((int) $admin['id']));
-        $ui->assign('subscription_invoices', AdminSubscription::invoicesForAdmin((int) $admin['id']));
-        $ui->assign('subscription_payments', AdminSubscription::paymentsForAdmin((int) $admin['id']));
-        $ui->assign('router_count', AdminSubscription::routerCount((int) $admin['id']));
         $ui->assign('admin_phone', trim((string) ($admin['phone'] ?? '')));
         $pendingPaymentId = (int) (_get('payment_id') ?? 0);
         $pendingOperator = '';

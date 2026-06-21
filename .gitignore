@@ -32,9 +32,13 @@ system/paymentgateway/**
 !system/plugin/hotspot_pg-mypvit.php
 !system/plugin/hotspot.php
 !system/plugin/hotspot_pay.php
+!system/plugin/pppoe.php
+!system/plugin/pppoe_pg-campay.php
+!system/plugin/backup.php
 !system/plugin/ui/
 system/plugin/ui/*
 !system/plugin/ui/index.html
+!system/plugin/ui/backup.tpl
 ui/ui_custom/**
 !ui/ui_custom/index.html
 !ui/ui_custom/README.md

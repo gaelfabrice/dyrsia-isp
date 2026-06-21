@@ -131,7 +131,7 @@ async function loadPlans(){
 async function poll(ref,max){
   const dl=Date.now()+max*1000;
   while(Date.now()<dl){
-    await new Promise(r=>setTimeout(r,3000));
+    await new Promise(r=>setTimeout(r,2000));
     try{const r=await api('hotspot_verify&reference='+encodeURIComponent(ref)+'&format=json',{headers:{Accept:'application/json'}});
     const d=await r.json();if(['paid','failed','cancelled'].includes(d.status))return d;}catch(e){}
   }
@@ -139,14 +139,14 @@ async function poll(ref,max){
 }
 
 function connecter(user,pass,nom){
-  Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion en cours…',showConfirmButton:false,timer:1800});
+  Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1200});
   setTimeout(()=>{
     const f=document.getElementById('loginForm');
     document.getElementById('user').value=user||'';
     document.getElementById('pass').value=pass||user||'';
     if(f&&typeof prepareMikrotikLogin==='function')prepareMikrotikLogin(f);
     if(f)f.submit();
-  },1500);
+  },600);
 }
 
 async function payer(nom,prix,currency,validite,planid,routername){

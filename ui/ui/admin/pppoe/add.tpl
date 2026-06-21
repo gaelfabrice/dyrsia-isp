@@ -140,9 +140,46 @@
                     <div class="form-group">
                         <label class="col-md-2 control-label"><a href="{Text::url('')}pool/add">{Lang::T('IP Pool')}</a></label>
                         <div class="col-md-6">
-                            <select id="pool_name" name="pool_name" required class="form-control select2">
-                                <option value=''>{Lang::T('Select Pool')}</option>
-                            </select>
+                            <div class="pppoe-pool-mode">
+                                <label class="pppoe-pool-mode-opt">
+                                    <input type="radio" name="pool_mode" value="existing" checked>
+                                    {Lang::T('Existing IP Pool')}
+                                </label>
+                                <label class="pppoe-pool-mode-opt">
+                                    <input type="radio" name="pool_mode" value="new">
+                                    {Lang::T('New IP Pool')}
+                                </label>
+                            </div>
+
+                            <div id="pool_section_existing" class="pppoe-pool-panel">
+                                <div class="pppoe-pool-row">
+                                    <select id="pool_picker" name="pool_existing" class="form-control pppoe-pool-picker" aria-label="Pools du routeur">
+                                        <option value="">— {Lang::T('Select Pool')} —</option>
+                                    </select>
+                                    <button type="button" id="pool_sync_btn" class="btn btn-default pppoe-pool-sync" title="{Lang::T('Sync')}">
+                                        <i class="fa fa-refresh"></i>
+                                    </button>
+                                </div>
+                                <p class="help-block">{Lang::T('Select an existing pool on the router — no new pool will be created on MikroTik')}.</p>
+                            </div>
+
+                            <div id="pool_section_new" class="pppoe-pool-panel" style="display:none;">
+                                <div class="form-group" style="margin-bottom:8px;">
+                                    <label class="control-label">{Lang::T('Pool Name')}</label>
+                                    <input type="text" id="pool_name_new" name="pool_name_new" class="form-control" placeholder="pppoe-clients" autocomplete="off">
+                                </div>
+                                <div class="form-group" style="margin-bottom:8px;">
+                                    <label class="control-label">{Lang::T('Range IP')}</label>
+                                    <input type="text" name="pool_range" id="pool_range" class="form-control" placeholder="10.10.10.2-10.10.10.254">
+                                </div>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label class="control-label">{Lang::T('Local IP')}</label>
+                                    <input type="text" name="pool_local_ip" id="pool_local_ip" class="form-control" placeholder="10.10.10.1">
+                                </div>
+                                <p class="help-block">{Lang::T('A new pool will be created on the MikroTik router when saving the plan')}.</p>
+                            </div>
+
+                            <p id="pool_sync_status" class="help-block text-muted" style="margin-top:8px;"></p>
                         </div>
                     </div>
                     <div class="form-group">
@@ -156,6 +193,20 @@
         </div>
     </div>
 </div>
+<style>
+{literal}
+.pppoe-pool-mode { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+.pppoe-pool-mode-opt { font-weight: 600; margin: 0; cursor: pointer; }
+.pppoe-pool-mode-opt input { margin-right: 6px; }
+.pppoe-pool-panel { padding: 12px; border-radius: 8px; background: rgba(0,0,0,.03); border: 1px solid rgba(0,0,0,.08); }
+.pppoe-pool-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.pppoe-pool-picker { flex: 1 1 200px; min-width: 0; }
+.pppoe-pool-sync { flex: 0 0 auto; min-width: 42px; }
+@media (max-width: 768px) {
+    .pppoe-pool-picker { flex: 1 1 100%; }
+}
+{/literal}
+</style>
 <script>
     var preOpt = `<option value="Mins">{Lang::T('Mins')}</option>
     <option value="Hrs">{Lang::T('Hrs')}</option>
@@ -173,7 +224,7 @@
         $("#expired_date").removeClass('hidden');
     }
     document.addEventListener("DOMContentLoaded", function(event) {
-        prePaid()
+        prePaid();
     })
 </script>
 {if $_c['radius_enable']}
@@ -183,20 +234,23 @@
                 if (cek.checked) {
                     document.getElementById("routers").required = false;
                     document.getElementById("routers").disabled = true;
-                    $.ajax({
-                        url: "{/literal}{Text::url('autoload/pool')}{literal}",
-                        data: "routers=radius",
-                        cache: false,
-                        success: function(msg) {
-                            $("#pool_name").html(msg);
-                        }
-                    });
+                    if (window.pppoePlanPoolLoadRadius) {
+                        window.pppoePlanPoolLoadRadius();
+                    }
                 } else {
                     document.getElementById("routers").required = true;
                     document.getElementById("routers").disabled = false;
+                    if (window.pppoePlanPoolLoadRouter) {
+                        window.pppoePlanPoolLoadRouter(document.getElementById("routers").value);
+                    }
                 }
             }
         </script>
     {/literal}
 {/if}
 {include file="sections/footer.tpl"}
+<script>
+window.PPPOE_POOL_FETCH_URL = '{$pppoe_pool_fetch_url|escape:'javascript'}';
+window.PPPOE_POOL_RADIUS_URL = '{Text::url('autoload/pool')|escape:'javascript'}';
+</script>
+<script src="{$app_url}/ui/ui/scripts/pppoe-plan-pool.js?2026.06.21d"></script>

@@ -32,8 +32,15 @@ if (!function_exists('wifizone_verify_csrf')) {
 if (!function_exists('csrf_field')) {
     $errors[] = 'Missing csrf_field()';
 }
-if (!function_exists('wifizone_ensure_kpi_widget')) {
-    $errors[] = 'Missing wifizone_ensure_kpi_widget()';
+if (!class_exists('WifiZoneOps')) {
+    $errors[] = 'Missing class WifiZoneOps';
+} else {
+    if (!method_exists('WifiZoneOps', 'ensureKpiWidget')) {
+        $errors[] = 'Missing WifiZoneOps::ensureKpiWidget()';
+    }
+    if (!method_exists('WifiZoneOps', 'ensureSetupWidget')) {
+        $errors[] = 'Missing WifiZoneOps::ensureSetupWidget()';
+    }
 }
 
 try {
@@ -46,11 +53,14 @@ try {
 }
 
 $files = [
-    'system/plugin/wifizone.php',
+    'system/plugin/WhatsappGateway.php',
     'system/widgets/wifizone_kpi.php',
+    'system/widgets/wifizone_setup.php',
+    'system/autoload/WifiZoneOps.php',
     'system/cron_wifizone.php',
     'system/wifizone_api.php',
     'health.php',
+    'healthz.php',
     'docker-compose.yml',
     'system/lan/french.json',
 ];

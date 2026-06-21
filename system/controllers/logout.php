@@ -11,7 +11,9 @@ header("Pragma: no-cache");
 
 run_hook('customer_logout'); #HOOK
 if (session_status() == PHP_SESSION_NONE) session_start();
-if (!empty($_SESSION['aid'])) {
+$wasAdmin = !empty($_SESSION['aid']);
+$wasCustomer = !empty($_SESSION['uid']);
+if ($wasAdmin) {
     $logoutAdmin = Admin::_info();
     if ($logoutAdmin) {
         $row = is_array($logoutAdmin) ? $logoutAdmin : $logoutAdmin->as_array();
@@ -21,4 +23,5 @@ if (!empty($_SESSION['aid'])) {
 Admin::removeCookie();
 User::removeCookie();
 session_destroy();
-_alert(Lang::T('Logout Successful'), 'info', "login");
+$logoutTarget = $wasAdmin ? 'admin' : ($wasCustomer ? 'login' : 'admin');
+_alert(Lang::T('Logout Successful'), 'info', $logoutTarget);

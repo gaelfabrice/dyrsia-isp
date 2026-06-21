@@ -137,6 +137,22 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
         return false;
     }
 
+    $expiration = ORM::for_table('tbl_user_recharges')
+        ->where('plan_id', $planid)
+        ->where('customer_id', $customer->id)
+        ->where('status', 'on')
+        ->find_one();
+
+    if ($expiration && function_exists('hotspot_scheduleCredentialsNotify')) {
+        $expired = $expiration->expiration . ' ' . date('h:i A', strtotime($expiration->time));
+        hotspot_scheduleCredentialsNotify(
+            $trx->phone_number,
+            $expiration->namebp,
+            $customer->username,
+            $expired
+        );
+    }
+
     $trx->transaction_status = 'paid';
     $trx->payment_method = 'MyPVit - ' . $operator;
     $trx->payment_date = date('Y-m-d H:i:s');

@@ -12,6 +12,16 @@ services:
       - wifizone_smarty_compiled:/var/www/html/ui/compiled
       - wifizone_smarty_cache:/var/www/html/ui/cache
 
+  cron:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: sh -c "while true; do php /var/www/html/system/cron_wifizone.php; sleep 300; done"
+    volumes:
+      - wifizone_uploads:/var/www/html/system/uploads
+      - wifizone_cache:/var/www/html/system/cache
+
 volumes:
   wifizone_uploads:
   wifizone_cache:

@@ -6,8 +6,8 @@
             <div class="panel-heading">
                 <div class="btn-group pull-right">
                     <a class="btn btn-primary btn-xs" title="save" href="{Text::url('')}services/sync/pppoe"
-                        onclick="return ask(this, '{Lang::T('This will sync/send PPPOE plan to Mikrotik')}?')"><span
-                            class="glyphicon glyphicon-refresh" aria-hidden="true"></span> sync</a>
+                        onclick="return ask(this, 'Synchroniser profils, clients PPPoE et supprimer les secrets orphelins sur MikroTik ?')"><span
+                            class="glyphicon glyphicon-refresh" aria-hidden="true"></span> sync complet</a>
                     <button type="button" class="btn btn-warning btn-xs" data-toggle="modal" data-target="#pppoeCaptiveModal">
                         <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Captive expiré
                     </button>
@@ -258,6 +258,7 @@ function nuxDeleteCheck() {
                             {/foreach}
                         </select>
                     </div>
+                    <p><small>Backend captive : <code>{$pppoe_captive_backend|escape|default:'— configurez Hotspot API URL'}</code></small></p>
                     <p><small>Portail client : <code>{$pppoe_portal_base|escape}NOM_ROUTEUR</code></small></p>
                 </div>
                 <div class="modal-footer">
