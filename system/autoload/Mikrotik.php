@@ -5516,6 +5516,11 @@ class Mikrotik
             }
             if ($prof['http_cookie_lifetime'] !== '') {
                 $snapshot['suggested']['hotspot_cookie_lifetime'] = $prof['http_cookie_lifetime'];
+            } elseif (self::hotspotLoginByIncludes($prof['login_by'] ?? '', 'mac-cookie')) {
+                $macCookieTimeout = self::readHotspotUserProfileMacCookieTimeout($client, 'default');
+                if ($macCookieTimeout !== '') {
+                    $snapshot['suggested']['hotspot_cookie_lifetime'] = $macCookieTimeout;
+                }
             }
             break;
         }
@@ -5642,9 +5647,12 @@ class Mikrotik
                 $idleTimeout,
                 $useRadius
             );
+            $cookieLabel = self::hotspotLoginByIncludes($loginMethodsForProfile, 'mac-cookie')
+                ? ('mac-cookie ' . $cookieLifetime)
+                : ('cookie ' . $cookieLifetime);
             $actions[] = 'profil « ' . $profileName . ' »'
                 . ($useRadius ? ' (use-radius=yes)' : '')
-                . ', cookie ' . $cookieLifetime;
+                . ', ' . $cookieLabel;
         } catch (Throwable $e) {
             $errors[] = 'profil: ' . $e->getMessage();
         } catch (Exception $e) {
@@ -6138,6 +6146,21 @@ class Mikrotik
         return $expectedSeconds === $actualSeconds;
     }
 
+    private static function hotspotLoginByIncludes($loginBy, $method)
+    {
+        $method = strtolower(trim((string) $method));
+        if ($method === '') {
+            return false;
+        }
+        foreach (preg_split('/\s*,\s*/', strtolower(trim((string) $loginBy))) as $part) {
+            if ($part === $method) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static function readHotspotProfileCookieLifetime($client, $profileName)
     {
         $profileName = trim((string) $profileName);
@@ -6146,6 +6169,20 @@ class Mikrotik
         }
 
         try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/profile/print'))
+                    ->setQuery(RouterOS\Query::where('name', $profileName))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+
+                $value = trim((string) $row->getProperty('http-cookie-lifetime'));
+                if ($value !== '') {
+                    return $value;
+                }
+            }
+
             foreach ($client->sendSync(
                 (new RouterOS\Request('/ip/hotspot/profile/print'))
                     ->setArgument('.proplist', 'http-cookie-lifetime')
@@ -6164,10 +6201,65 @@ class Mikrotik
         return '';
     }
 
+    private static function readHotspotUserProfileMacCookieTimeout($client, $profileName = 'default')
+    {
+        $profileName = trim((string) $profileName);
+        if ($profileName === '') {
+            $profileName = 'default';
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/user/profile/print'))
+                    ->setQuery(RouterOS\Query::where('name', $profileName))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+
+                return trim((string) $row->getProperty('mac-cookie-timeout'));
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    private static function ensureHotspotUserProfilesMacCookieTimeout($client, $cookieLifetime)
+    {
+        $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
+        if ($cookieLifetime === '') {
+            return;
+        }
+
+        foreach ($client->sendSync(
+            (new RouterOS\Request('/ip/hotspot/user/profile/print'))
+                ->setArgument('.proplist', '.id')
+        ) as $row) {
+            if ($row->getType() === 'trap') {
+                continue;
+            }
+            $profileId = $row->getProperty('.id');
+            if ($profileId === null || $profileId === '') {
+                continue;
+            }
+
+            $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/user/profile/set'))
+                    ->setArgument('numbers', $profileId)
+                    ->setArgument('mac-cookie-timeout', $cookieLifetime)
+                    ->setArgument('add-mac-cookie', 'yes')
+            );
+        }
+    }
+
     /**
-     * Applique http-cookie-lifetime (appel API dédié + repli script RouterOS).
+     * Applique la durée cookie selon login-by :
+     * - mac-cookie → mac-cookie-timeout sur /ip/hotspot/user/profile
+     * - cookie → http-cookie-lifetime sur /ip/hotspot/profile
      */
-    private static function ensureHotspotProfileCookieLifetime($client, $profileName, $cookieLifetime)
+    private static function ensureHotspotAuthCookieLifetime($client, $profileName, $cookieLifetime, $loginBy)
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
@@ -6176,7 +6268,40 @@ class Mikrotik
 
         $profileName = trim((string) $profileName);
         $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
-        if ($profileName === '' || $cookieLifetime === '') {
+        if ($cookieLifetime === '') {
+            return;
+        }
+
+        $usesCookie = self::hotspotLoginByIncludes($loginBy, 'cookie');
+        $usesMacCookie = self::hotspotLoginByIncludes($loginBy, 'mac-cookie');
+        if (!$usesCookie && !$usesMacCookie) {
+            return;
+        }
+
+        if ($usesMacCookie) {
+            self::ensureHotspotUserProfilesMacCookieTimeout($client, $cookieLifetime);
+
+            $current = self::readHotspotUserProfileMacCookieTimeout($client, 'default');
+            if (!self::hotspotCookieLifetimeMatches($cookieLifetime, $current)) {
+                self::runRouterOneShotScript(
+                    $client,
+                    'dyrsia_hs_maccookie',
+                    '/ip hotspot user profile set [find] mac-cookie-timeout=' . $cookieLifetime . ' add-mac-cookie=yes'
+                );
+
+                $current = self::readHotspotUserProfileMacCookieTimeout($client, 'default');
+                if (!self::hotspotCookieLifetimeMatches($cookieLifetime, $current)) {
+                    $detail = $current !== '' ? ('valeur routeur : ' . $current) : 'valeur routeur vide';
+                    throw new Exception('mac-cookie-timeout attendu « ' . $cookieLifetime . ' », ' . $detail);
+                }
+            }
+        }
+
+        if (!$usesCookie) {
+            return;
+        }
+
+        if ($profileName === '') {
             return;
         }
 
@@ -6197,19 +6322,15 @@ class Mikrotik
         }
 
         $escapedName = str_replace(['\\', '"'], '', $profileName);
-        $scriptOk = self::runRouterOneShotScript(
+        self::runRouterOneShotScript(
             $client,
             'dyrsia_hs_cookie',
             '/ip hotspot profile set [find name="' . $escapedName . '"] http-cookie-lifetime=' . $cookieLifetime
         );
 
         $current = self::readHotspotProfileCookieLifetime($client, $profileName);
-        if (!self::hotspotCookieLifetimeMatches($cookieLifetime, $current)) {
-            $detail = $current !== '' ? ('valeur routeur : ' . $current) : 'valeur routeur vide';
-            if ($scriptOk === false) {
-                throw new Exception('http-cookie-lifetime non appliqué sur « ' . $profileName . ' » (' . $detail . ')');
-            }
-            throw new Exception('http-cookie-lifetime attendu « ' . $cookieLifetime . ' », ' . $detail);
+        if ($current !== '' && !self::hotspotCookieLifetimeMatches($cookieLifetime, $current)) {
+            throw new Exception('http-cookie-lifetime attendu « ' . $cookieLifetime . ' », valeur routeur : ' . $current);
         }
     }
 
@@ -6266,7 +6387,7 @@ class Mikrotik
         }
         $client->sendSync($setRequest);
 
-        self::ensureHotspotProfileCookieLifetime($client, $profileName, $cookieLifetime);
+        self::ensureHotspotAuthCookieLifetime($client, $profileName, $cookieLifetime, $loginBy);
     }
 
     private static function ensureHotspotNetworkEntry($client, $localAddress, $profileName, $dnsServer)
