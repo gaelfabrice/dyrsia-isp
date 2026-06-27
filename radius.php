@@ -357,24 +357,22 @@ function process_radiust_rest($tur, $code)
     if (count($USRon) >= $plan['shared_users'] && $plan['type'] == 'Hotspot' && !in_array(_post('framedIPAddress'), $ips)) {
         show_radius_result(["control:Auth-Type" => "Accept", 'Reply-Message' => 'You are already logged in - access denied (' . $USRon . ')'], 401);
     }
-    if ($bw['rate_down_unit'] == 'Kbps') {
-        $unitdown = 'K';
-    } else {
-        $unitdown = 'M';
+    $ratos = Mikrotik::hotspotPlanRateLimit($bw);
+    if ($ratos === '') {
+        if ($bw['rate_down_unit'] == 'Kbps') {
+            $unitdown = 'K';
+        } else {
+            $unitdown = 'M';
+        }
+        if ($bw['rate_up_unit'] == 'Kbps') {
+            $unitup = 'K';
+        } else {
+            $unitup = 'M';
+        }
+        $ratos = $bw['rate_down'] . $unitdown . '/' . $bw['rate_up'] . $unitup;
     }
-    if ($bw['rate_up_unit'] == 'Kbps') {
-        $unitup = 'K';
-    } else {
-        $unitup = 'M';
-    }
-    $rate = $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup;
-    $rates = explode('/', $rate);
-
-    if (!empty(trim($bw['burst']))) {
-        $ratos = $rate . ' ' . $bw['burst'];
-    } else {
-        $ratos = $rates[0] . '/' . $rates[1];
-    }
+    $baseRate = trim(strtok($ratos, ' '));
+    $rates = explode('/', $baseRate);
 
     $attrs = [];
     $timeexp = strtotime($tur['expiration'] . ' ' . $tur['time']);

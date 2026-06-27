@@ -158,8 +158,8 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
     $trx->payment_date = date('Y-m-d H:i:s');
     $trx->voucher_code = $customer->username;
     $trx->save();
-    if (function_exists('hotspot_clear_overview_cache')) {
-        hotspot_clear_overview_cache();
+    if (function_exists('hotspot_invalidate_overview_cache')) {
+        hotspot_invalidate_overview_cache();
     }
     return true;
 }

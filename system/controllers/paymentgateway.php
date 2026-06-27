@@ -5,6 +5,21 @@
  *  by https://t.me/ibnux
  **/
 
+if (!class_exists('MobileMoneyGateway', false)) {
+    $mobileMoneyGatewayFile = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'autoload' . DIRECTORY_SEPARATOR . 'MobileMoneyGateway.php';
+    if (is_file($mobileMoneyGatewayFile)) {
+        require_once $mobileMoneyGatewayFile;
+    }
+}
+if (!class_exists('MobileMoneyGateway', false)) {
+    _alert(
+        'Fichier manquant : system/autoload/MobileMoneyGateway.php. Réuploadez-le depuis votre package DYRSIA puis rechargez cette page.',
+        'danger',
+        'dashboard'
+    );
+    exit;
+}
+
 _admin();
 $ui->assign('_system_menu', 'paymentgateway');
 

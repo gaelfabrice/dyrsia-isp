@@ -78,6 +78,26 @@ let CLIENT_MAC = '';
 
 function escHtml(s){return String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 
+const HOTSPOT_PHONE_LEN = 9;
+function cleanHotspotPhone(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, HOTSPOT_PHONE_LEN);
+}
+function validateHotspotPhoneLen(value) {
+  return cleanHotspotPhone(value).length === HOTSPOT_PHONE_LEN ? null : '9 chiffres obligatoires (ex: 677123456)';
+}
+function hotspotPhoneInputAttrs() {
+  return { maxlength: HOTSPOT_PHONE_LEN, minlength: HOTSPOT_PHONE_LEN, inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off' };
+}
+function bindHotspotPhoneField(el) {
+  if (!el) return;
+  const trim = () => { el.value = cleanHotspotPhone(el.value); };
+  el.addEventListener('input', trim);
+  el.addEventListener('paste', (e) => {
+    e.preventDefault();
+    el.value = cleanHotspotPhone((e.clipboardData || window.clipboardData).getData('text'));
+  });
+}
+
 async function api(route,opts){
   const base=(APP_URL||'').replace(/\/$/,'');
   const bases=[];
@@ -100,7 +120,7 @@ function renderPlans(plans){
   if(!plans||!plans.length){c.innerHTML='<div style="text-align:center;color:#f87171">Aucun forfait disponible</div>';return;}
   const rn=HOTSPOT_ROUTER_NAME;
   c.innerHTML=plans.map(p=>{
-    const id=p.planid||'';
+    const id=p.planid||p.planId||'';
     const link=p.paymentlink||(APP_URL+'/index.php?_route=plugin/hotspot_pay&routername='+encodeURIComponent(rn)+'&planid='+encodeURIComponent(id)+'&amount='+encodeURIComponent(p.price||''));
     return`<div class="plan" data-plan-name="${escHtml(p.planname||p.name||'')}" data-plan-price="${escHtml(p.price||'')}" data-plan-currency="${escHtml(p.currency||'Fcfa')}" data-plan-validity="${escHtml(p.validity||'')}" data-plan-id="${escHtml(id)}" data-router-name="${escHtml(rn)}"><div><div class="plan-name">⚡ ${escHtml(p.planname||p.name||'')}</div><div class="plan-detail">⏱️ ${escHtml(p.validity||'')}</div></div><div><span class="plan-price">${escHtml(p.price||'')} ${escHtml(p.currency||'Fcfa')}</span><span class="badge">ILLIMITÉ</span></div></div>`;
   }).join('');
@@ -168,13 +188,28 @@ function submitHotspotLogin() {
   f.submit();
 }
 
-function connecter(user,pass,nom){Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1200});setTimeout(()=>{const userEl=document.getElementById('user');const passEl=document.getElementById('pass');if(userEl)userEl.value=user||'';if(passEl){passEl.value=pass||user||'';delete passEl.dataset.chapDone;}submitHotspotLogin();},600);}
+function fillAndSubmitHotspotLogin(username, password) {
+  const form = document.getElementById('loginForm');
+  const userEl = document.getElementById('user') || document.getElementById('loginUsername');
+  const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
+  if (userEl) userEl.value = username || '';
+  if (passEl) {
+    passEl.value = password || username || '';
+    delete passEl.dataset.chapDone;
+  }
+  if (!form) return;
+  if (typeof Swal !== 'undefined' && Swal.close) Swal.close();
+  prepareMikrotikLogin(form);
+  form.submit();
+}
+
+function connecter(user,pass,nom){Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});setTimeout(function(){fillAndSubmitHotspotLogin(user,pass||'123456');},500);}
 
 async function payer(nom,prix,currency,validite,planid,routername){
-  const {value:phone}=await Swal.fire({title:`💰 ${nom} — ${prix} ${currency||'Fcfa'}`,text:'Numéro Mobile Money (9 chiffres)',input:'tel',inputPlaceholder:'677123456',inputAttributes:{maxlength:9,inputmode:'numeric',pattern:'[0-9]*',autocomplete:'off'},showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:()=>{const el=Swal.getInput();if(el)el.addEventListener('input',()=>{el.value=el.value.replace(/\D/g,'').slice(0,9);});},inputValidator:v=>{const c=(v||'').replace(/\D/g,'');return c.length!==9?'9 chiffres requis (ex: 677123456)':null;}});
+  const {value:phone}=await Swal.fire({title:`💰 ${nom} — ${prix} ${currency||'Fcfa'}`,text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:()=>bindHotspotPhoneField(Swal.getInput()),inputValidator:validateHotspotPhoneLen});
   if(!phone)return;
   try{
-    const msisdn='237'+phone.replace(/\D/g,'');
+    const msisdn='237'+cleanHotspotPhone(phone);
     const body=new URLSearchParams({pay:'1',type:'gateways',payment_gateway:HOTSPOT_PAYMENT_GATEWAY,routername:routername||HOTSPOT_ROUTER_NAME,planid,amount:prix,plan_name:nom,mac_address:CLIENT_MAC||'$(mac)',ip_address:'$(ip)',msisdn,phonenumber:msisdn,ajax:'1'});
     const r=await api('hotspot_pay',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},body:body.toString()});
     const d=await r.json();
@@ -200,10 +235,10 @@ async function utiliserVoucher(){
 }
 
 async function recupererForfait(){
-  const {value:phone}=await Swal.fire({title:'🔑 Récupérer mon forfait',input:'tel',inputPlaceholder:'677123456',inputAttributes:{maxlength:9,inputmode:'numeric',pattern:'[0-9]*',autocomplete:'off'},showCancelButton:true,confirmButtonText:'Rechercher',didOpen:()=>{const el=Swal.getInput();if(el)el.addEventListener('input',()=>{el.value=el.value.replace(/\D/g,'').slice(0,9);});},inputValidator:v=>(v||'').replace(/\D/g,'').length!==9?'9 chiffres requis':null});
+  const {value:phone}=await Swal.fire({title:'🔑 Récupérer mon forfait',text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Rechercher',didOpen:()=>bindHotspotPhoneField(Swal.getInput()),inputValidator:validateHotspotPhoneLen});
   if(!phone)return;
   try{
-    const r=await api('hotspot_recover_plan',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'phone='+encodeURIComponent(phone.replace(/\D/g,''))});
+    const r=await api('hotspot_recover_plan',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'phone='+encodeURIComponent(cleanHotspotPhone(phone))});
     const d=await r.json();
     if(d.success)connecter(d.username,d.password||d.username,'Forfait récupéré');
     else Swal.fire('Non trouvé',d.message||'Aucun forfait actif','error');

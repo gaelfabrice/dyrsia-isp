@@ -795,6 +795,45 @@ class Mikrotik
     }
 
     /**
+     * MikroTik burst suffix stored in tbl_bandwidth.burst (without base rate).
+     * Five parts: burst-limit burst-threshold burst-time priority limit-at.
+     * Example: 8M/8M 3M/3M 16/16 8 2M/2M
+     *
+     * Legacy rows may include an extra leading token copied from presets
+     * (six parts total); those are normalized to five parts.
+     */
+    public static function normalizeBandwidthBurst($burst)
+    {
+        $burst = trim((string) $burst);
+        if ($burst === '') {
+            return '';
+        }
+
+        $parts = preg_split('/\s+/', $burst);
+        $ratePair = '/^\d+(?:\.\d+)?[kKmMgG]?\/\d+(?:\.\d+)?[kKmMgG]?$/i';
+        $burstTime = '/^\d+\/\d+$/';
+
+        $validateFive = static function (array $five) use ($ratePair, $burstTime) {
+            return count($five) === 5
+                && preg_match($ratePair, $five[0])
+                && preg_match($ratePair, $five[1])
+                && preg_match($burstTime, $five[2])
+                && ctype_digit((string) $five[3])
+                && preg_match($ratePair, $five[4]);
+        };
+
+        if (count($parts) === 6 && $validateFive(array_slice($parts, 1))) {
+            return implode(' ', array_slice($parts, 1));
+        }
+
+        if ($validateFive($parts)) {
+            return implode(' ', $parts);
+        }
+
+        return '';
+    }
+
+    /**
      * Build MikroTik hotspot profile rate-limit from a tbl_bandwidth row.
      */
     public static function hotspotPlanRateLimit($bw)
@@ -823,8 +862,9 @@ class Mikrotik
 
         // MikroTik rate-limit: rx/tx (download/upload from the subscriber perspective).
         $rate = $bw['rate_down'] . $unitdown . '/' . $bw['rate_up'] . $unitup;
-        if (!empty(trim((string) ($bw['burst'] ?? '')))) {
-            $rate .= ' ' . trim((string) $bw['burst']);
+        $burstSuffix = self::normalizeBandwidthBurst($bw['burst'] ?? '');
+        if ($burstSuffix !== '') {
+            $rate .= ' ' . $burstSuffix;
         }
 
         return $rate;
@@ -5496,7 +5536,7 @@ class Mikrotik
      *
      * @return array{ok: bool, errors?: array<int, string>, actions?: array<int, string>, hotspot_name?: string}
      */
-    public static function applyHotspotSetupFromConfig($client, array $config)
+    public static function applyHotspotSetupFromConfig($client, array $config, $routerRow = null)
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
@@ -5521,12 +5561,9 @@ class Mikrotik
         $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
         $masquerade = !empty($config['hotspot_masquerade']) && (string) $config['hotspot_masquerade'] !== '0';
         $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-chap,mac-cookie'));
-        $cookieLifetime = trim((string) ($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00'));
+        $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
         $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
         $addressPerMac = trim((string) ($config['hotspot_address_per_mac'] ?? '1'));
-        if ($cookieLifetime === '') {
-            $cookieLifetime = '1d 00:00:00';
-        }
         if ($idleTimeout === '') {
             $idleTimeout = '00:10:00';
         }
@@ -5547,6 +5584,8 @@ class Mikrotik
                 $hotspotName = 'dyrsia-hotspot';
             }
         }
+
+        $profileName = self::resolveHotspotProfileNameForSync($client, $hotspotName, $profileName);
 
         $errors = [];
         $actions = [];
@@ -5571,6 +5610,26 @@ class Mikrotik
             }
         }
 
+        $useRadius = self::hotspotRadiusEnabled($config);
+        $loginMethodsForProfile = $useRadius
+            ? self::normalizeHotspotLoginByForRadius($loginMethods)
+            : self::normalizeHotspotLoginBy($loginMethods);
+        $radiusPrep = [];
+
+        if ($useRadius) {
+            $routerRow = is_array($routerRow) ? $routerRow : null;
+            $radiusPrep = self::applyHotspotRadiusSetup($client, $config, $routerRow);
+            if (empty($radiusPrep['ok'])) {
+                $errors = array_merge($errors, $radiusPrep['errors'] ?? ['RADIUS hotspot']);
+            } else {
+                $actions[] = 'RADIUS client → ' . ($radiusPrep['server_ip'] ?? '');
+                $actions[] = 'NAS « ' . ($radiusPrep['nas_ip'] ?? '') . ' »';
+                if (!empty($radiusPrep['flushed'])) {
+                    $actions[] = 'sessions/cookies hotspot purgés';
+                }
+            }
+        }
+
         try {
             self::ensureHotspotProfileConfigured(
                 $client,
@@ -5578,11 +5637,14 @@ class Mikrotik
                 $dnsName,
                 $smtpServer,
                 $dnsServer,
-                $loginMethods,
+                $loginMethodsForProfile,
                 $cookieLifetime,
-                $idleTimeout
+                $idleTimeout,
+                $useRadius
             );
-            $actions[] = 'profil « ' . $profileName . ' »';
+            $actions[] = 'profil « ' . $profileName . ' »'
+                . ($useRadius ? ' (use-radius=yes)' : '')
+                . ', cookie ' . $cookieLifetime;
         } catch (Throwable $e) {
             $errors[] = 'profil: ' . $e->getMessage();
         } catch (Exception $e) {
@@ -5625,6 +5687,7 @@ class Mikrotik
             'errors' => $errors,
             'actions' => $actions,
             'hotspot_name' => $hotspotName,
+            'radius_secret' => ($useRadius && !empty($radiusPrep['secret'])) ? $radiusPrep['secret'] : '',
         ];
     }
 
@@ -5719,6 +5782,437 @@ class Mikrotik
         return implode(',', $normalized);
     }
 
+    /**
+     * Hotspot auth via RADIUS : http-chap + mac-cookie uniquement (pas cookie/http-pap legacy).
+     */
+    private static function normalizeHotspotLoginByForRadius($loginMethods)
+    {
+        $methods = array_filter(explode(',', self::normalizeHotspotLoginBy($loginMethods)));
+        $allowed = ['http-chap', 'mac-cookie'];
+        $filtered = array_values(array_intersect($methods, $allowed));
+        if ($filtered === []) {
+            return 'http-chap,mac-cookie';
+        }
+
+        return implode(',', $filtered);
+    }
+
+    public static function hotspotRadiusEnabled(array $configLocal)
+    {
+        global $config;
+        $merged = is_array($config) ? array_merge($config, $configLocal) : $configLocal;
+        if (array_key_exists('hotspot_use_radius', $merged)) {
+            return (string) $merged['hotspot_use_radius'] === '1';
+        }
+
+        return true;
+    }
+
+    /**
+     * Entrée NAS FreeRADIUS + client /radius hotspot sur le MikroTik.
+     *
+     * @return array{ok: bool, errors?: array<int, string>, server_ip?: string, nas_ip?: string, secret?: string, flushed?: bool}
+     */
+    public static function applyHotspotRadiusSetup($client, array $config, $routerRow = null)
+    {
+        if (!self::hotspotRadiusEnabled($config)) {
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $apiUrl = trim((string) ($config['hotspot_api_url'] ?? (defined('APP_URL') ? APP_URL : '')));
+        $serverIp = self::resolveAppBackendIpv4($apiUrl);
+        if ($serverIp === null || $serverIp === '') {
+            return ['ok' => false, 'errors' => ['IP serveur RADIUS introuvable (Hotspot API URL doit être une IPv4 joignable, ex. http://10.0.0.2).']];
+        }
+
+        $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+        $routerIp = '';
+        if (is_array($routerRow)) {
+            $routerName = $routerName !== '' ? $routerName : trim((string) ($routerRow['name'] ?? ''));
+            $routerIp = self::parseEndpoint((string) ($routerRow['ip_address'] ?? ''))['host'];
+        }
+        if ($routerIp === '' && $routerName !== '') {
+            $row = self::info($routerName);
+            if ($row) {
+                $routerIp = self::parseEndpoint((string) ($row['ip_address'] ?? ''))['host'];
+            }
+        }
+        if ($routerIp === '') {
+            return ['ok' => false, 'errors' => ['Routeur hotspot introuvable pour l\'entrée NAS RADIUS.']];
+        }
+
+        $secret = trim((string) ($config['hotspot_radius_secret'] ?? ''));
+        $nasResult = self::ensureHotspotNasRecord($routerName, $routerIp, $secret);
+        if (empty($nasResult['ok'])) {
+            return $nasResult;
+        }
+        $secret = (string) ($nasResult['secret'] ?? '');
+
+        $errors = [];
+        try {
+            self::ensureHotspotRadiusClient($client, $serverIp, $secret);
+        } catch (Throwable $e) {
+            $errors[] = 'client RADIUS MikroTik : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'client RADIUS MikroTik : ' . $e->getMessage();
+        }
+
+        $flushed = false;
+        try {
+            self::flushHotspotAuthorizationState($client);
+            $flushed = true;
+        } catch (Throwable $e) {
+            $errors[] = 'purge sessions hotspot : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'purge sessions hotspot : ' . $e->getMessage();
+        }
+
+        return [
+            'ok' => empty($errors),
+            'errors' => $errors,
+            'server_ip' => $serverIp,
+            'nas_ip' => $routerIp,
+            'secret' => $secret,
+            'flushed' => $flushed,
+        ];
+    }
+
+    /**
+     * @return array{ok: bool, errors?: array<int, string>, secret?: string, nas_ip?: string}
+     */
+    public static function ensureHotspotNasRecord($routerName, $routerNasIp, $secret = '')
+    {
+        if (!function_exists('wifizone_ensure_radius_orm') || !wifizone_ensure_radius_orm()) {
+            return ['ok' => false, 'errors' => ['FreeRADIUS indisponible : vérifiez config.php (radius_host, radius_user) et import radius.sql.']];
+        }
+
+        $routerName = trim((string) $routerName);
+        $routerNasIp = trim((string) $routerNasIp);
+        if ($routerNasIp === '' || !filter_var($routerNasIp, FILTER_VALIDATE_IP)) {
+            return ['ok' => false, 'errors' => ['IP NAS routeur invalide : ' . $routerNasIp]];
+        }
+
+        $secret = trim((string) $secret);
+        $nas = null;
+        if ($routerName !== '') {
+            $nas = ORM::for_table('nas', 'radius')->where('routers', $routerName)->find_one();
+        }
+        if (!$nas) {
+            $nas = ORM::for_table('nas', 'radius')->where('nasname', $routerNasIp)->find_one();
+        }
+
+        if ($secret === '') {
+            if ($nas && trim((string) ($nas['secret'] ?? '')) !== '') {
+                $secret = trim((string) $nas['secret']);
+            } else {
+                try {
+                    $secret = bin2hex(random_bytes(16));
+                } catch (Throwable $e) {
+                    $secret = sha1($routerName . $routerNasIp . microtime(true));
+                }
+            }
+        }
+
+        if ($nas) {
+            $nas->nasname = $routerNasIp;
+            if ($routerName !== '') {
+                $nas->shortname = trim((string) ($nas['shortname'] ?? '')) !== '' ? $nas->shortname : $routerName;
+                $nas->routers = $routerName;
+            }
+            $nas->secret = $secret;
+            if (trim((string) ($nas['description'] ?? '')) === '') {
+                $nas->description = 'DYRSIA Hotspot Setup';
+            }
+            $nas->type = trim((string) ($nas['type'] ?? '')) !== '' ? $nas->type : 'other';
+            $nas->save();
+        } else {
+            $nas = ORM::for_table('nas', 'radius')->create();
+            $nas->nasname = $routerNasIp;
+            $nas->shortname = $routerName !== '' ? $routerName : $routerNasIp;
+            $nas->type = 'other';
+            $nas->ports = null;
+            $nas->secret = $secret;
+            $nas->server = null;
+            $nas->community = null;
+            $nas->description = 'DYRSIA Hotspot Setup';
+            $nas->routers = $routerName;
+            $nas->save();
+        }
+
+        return ['ok' => true, 'secret' => $secret, 'nas_ip' => $routerNasIp];
+    }
+
+    public static function ensureHotspotRadiusClient($client, $serverIp, $secret)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return;
+        }
+
+        $serverIp = trim((string) $serverIp);
+        $secret = trim((string) $secret);
+        if ($serverIp === '' || $secret === '') {
+            throw new Exception('Serveur RADIUS ou secret manquant');
+        }
+
+        $existingId = null;
+        $existingSecret = '';
+        foreach ($client->sendSync(
+            (new RouterOS\Request('/radius/print'))
+                ->setArgument('.proplist', '.id,service,address,secret')
+        ) as $row) {
+            if ($row->getType() === 'trap') {
+                continue;
+            }
+            if ((string) $row->getProperty('address') !== $serverIp) {
+                continue;
+            }
+            $services = array_map('trim', explode(',', strtolower((string) $row->getProperty('service'))));
+            if (!in_array('hotspot', $services, true) && (string) $row->getProperty('service') !== '') {
+                continue;
+            }
+            $existingId = (string) $row->getProperty('.id');
+            $existingSecret = (string) $row->getProperty('secret');
+            break;
+        }
+
+        if ($existingId !== null && $existingId !== '' && $existingSecret === $secret) {
+            return;
+        }
+
+        $request = ($existingId !== null && $existingId !== '')
+            ? (new RouterOS\Request('/radius/set'))->setArgument('numbers', $existingId)
+            : new RouterOS\Request('/radius/add');
+
+        $client->sendSync(
+            $request
+                ->setArgument('service', 'hotspot')
+                ->setArgument('address', $serverIp)
+                ->setArgument('secret', $secret)
+                ->setArgument('timeout', '3000ms')
+                ->setArgument('comment', 'DYRSIA Hotspot Setup')
+        );
+    }
+
+    public static function flushHotspotAuthorizationState($client)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return;
+        }
+
+        self::runRouterOneShotScript(
+            $client,
+            'dyrsia_flush_hs_auth',
+            "/ip hotspot active remove [find]\n/ip hotspot cookie remove [find]"
+        );
+    }
+
+    /**
+     * Profil réellement utilisé par le serveur hotspot sur le routeur (ex. Dyrsia-hotspot).
+     */
+    public static function getHotspotServerProfileName($client, $hotspotName)
+    {
+        $hotspotName = trim((string) $hotspotName);
+        if ($hotspotName === '') {
+            return '';
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', 'name,profile')
+                    ->setQuery(RouterOS\Query::where('name', $hotspotName))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $profile = trim((string) $row->getProperty('profile'));
+                if ($profile !== '') {
+                    return $profile;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    /**
+     * Cible le profil du serveur hotspot existant plutôt que « default » si mal configuré dans DYRSIA.
+     */
+    private static function resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile)
+    {
+        $configuredProfile = trim((string) $configuredProfile);
+        if ($configuredProfile === '') {
+            $configuredProfile = 'default';
+        }
+
+        $liveProfile = self::getHotspotServerProfileName($client, $hotspotName);
+        if ($liveProfile !== '') {
+            return $liveProfile;
+        }
+
+        return $configuredProfile;
+    }
+
+    /**
+     * Normalise la durée cookie MikroTik (ex. 4:00:00 → 4h, 1d 00:00:00 → 1d).
+     */
+    public static function normalizeHotspotCookieLifetime($value)
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return '1d';
+        }
+
+        if (preg_match('/^(\d+)d(?:\s+\d{1,2}:\d{1,2}:\d{1,2})?$/i', $value, $dayMatch)) {
+            return strtolower($dayMatch[1] . 'd');
+        }
+
+        if (preg_match('/^(\d+)h$/i', $value)) {
+            return strtolower($value);
+        }
+
+        if (preg_match('/^(\d+)m$/i', $value)) {
+            return strtolower($value);
+        }
+
+        if (preg_match('/^(\d+):(\d{1,2}):(\d{1,2})$/', $value, $match)) {
+            $hours = (int) $match[1];
+            $minutes = (int) $match[2];
+            $seconds = (int) $match[3];
+            if ($hours > 0 && $minutes === 0 && $seconds === 0) {
+                return $hours . 'h';
+            }
+            if ($hours === 0 && $minutes > 0 && $seconds === 0) {
+                return $minutes . 'm';
+            }
+            if ($hours === 0 && $minutes === 0 && $seconds > 0) {
+                return $seconds . 's';
+            }
+
+            return sprintf('%02d:%02d:%02d', $hours, $minutes, $seconds);
+        }
+
+        return $value;
+    }
+
+    private static function parseHotspotCookieLifetimeSeconds($value)
+    {
+        $value = trim(strtolower((string) $value));
+        if ($value === '') {
+            return null;
+        }
+        if (preg_match('/^(\d+)w$/', $value, $match)) {
+            return (int) $match[1] * 604800;
+        }
+        if (preg_match('/^(\d+)d$/', $value, $match)) {
+            return (int) $match[1] * 86400;
+        }
+        if (preg_match('/^(\d+)h$/', $value, $match)) {
+            return (int) $match[1] * 3600;
+        }
+        if (preg_match('/^(\d+)m$/', $value, $match)) {
+            return (int) $match[1] * 60;
+        }
+        if (preg_match('/^(\d+)s$/', $value, $match)) {
+            return (int) $match[1];
+        }
+        if (preg_match('/^(\d+):(\d{1,2}):(\d{1,2})$/', $value, $match)) {
+            return ((int) $match[1] * 3600) + ((int) $match[2] * 60) + (int) $match[3];
+        }
+
+        return null;
+    }
+
+    private static function hotspotCookieLifetimeMatches($expected, $actual)
+    {
+        $expectedSeconds = self::parseHotspotCookieLifetimeSeconds(self::normalizeHotspotCookieLifetime($expected));
+        $actualSeconds = self::parseHotspotCookieLifetimeSeconds($actual);
+        if ($expectedSeconds === null || $actualSeconds === null) {
+            return trim((string) $expected) !== '' && strcasecmp(trim((string) $expected), trim((string) $actual)) === 0;
+        }
+
+        return $expectedSeconds === $actualSeconds;
+    }
+
+    private static function readHotspotProfileCookieLifetime($client, $profileName)
+    {
+        $profileName = trim((string) $profileName);
+        if ($profileName === '') {
+            return '';
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/profile/print'))
+                    ->setArgument('.proplist', 'http-cookie-lifetime')
+                    ->setQuery(RouterOS\Query::where('name', $profileName))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+
+                return trim((string) $row->getProperty('http-cookie-lifetime'));
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    /**
+     * Applique http-cookie-lifetime (appel API dédié + repli script RouterOS).
+     */
+    private static function ensureHotspotProfileCookieLifetime($client, $profileName, $cookieLifetime)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return;
+        }
+
+        $profileName = trim((string) $profileName);
+        $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
+        if ($profileName === '' || $cookieLifetime === '') {
+            return;
+        }
+
+        $profileId = self::routerEntityId($client, '/ip/hotspot/profile', 'name', $profileName);
+        if ($profileId === null) {
+            throw new Exception('Profil hotspot introuvable pour cookie : ' . $profileName);
+        }
+
+        $client->sendSync(
+            (new RouterOS\Request('/ip/hotspot/profile/set'))
+                ->setArgument('numbers', $profileId)
+                ->setArgument('http-cookie-lifetime', $cookieLifetime)
+        );
+
+        $current = self::readHotspotProfileCookieLifetime($client, $profileName);
+        if (self::hotspotCookieLifetimeMatches($cookieLifetime, $current)) {
+            return;
+        }
+
+        $escapedName = str_replace(['\\', '"'], '', $profileName);
+        $scriptOk = self::runRouterOneShotScript(
+            $client,
+            'dyrsia_hs_cookie',
+            '/ip hotspot profile set [find name="' . $escapedName . '"] http-cookie-lifetime=' . $cookieLifetime
+        );
+
+        $current = self::readHotspotProfileCookieLifetime($client, $profileName);
+        if (!self::hotspotCookieLifetimeMatches($cookieLifetime, $current)) {
+            $detail = $current !== '' ? ('valeur routeur : ' . $current) : 'valeur routeur vide';
+            if ($scriptOk === false) {
+                throw new Exception('http-cookie-lifetime non appliqué sur « ' . $profileName . ' » (' . $detail . ')');
+            }
+            throw new Exception('http-cookie-lifetime attendu « ' . $cookieLifetime . ' », ' . $detail);
+        }
+    }
+
     private static function ensureHotspotProfileConfigured(
         $client,
         $profileName,
@@ -5727,7 +6221,8 @@ class Mikrotik
         $dnsServer,
         $loginMethods,
         $cookieLifetime = '1d 00:00:00',
-        $idleTimeout = '00:10:00'
+        $idleTimeout = '00:10:00',
+        $useRadius = false
     )
     {
         $profileName = trim((string) $profileName);
@@ -5744,15 +6239,24 @@ class Mikrotik
             $profileId = self::routerEntityId($client, '/ip/hotspot/profile', 'name', $profileName);
         }
 
+        $loginBy = trim((string) $loginMethods);
+        if ($loginBy === '') {
+            $loginBy = $useRadius ? 'http-chap,mac-cookie' : self::normalizeHotspotLoginBy('http-chap,mac-cookie');
+        }
+
+        $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
+
         $setRequest = (new RouterOS\Request('/ip/hotspot/profile/set'))
             ->setArgument('numbers', $profileId)
             ->setArgument('html-directory', 'hotspot')
-            ->setArgument('login-by', self::normalizeHotspotLoginBy($loginMethods))
+            ->setArgument('login-by', $loginBy)
             ->setArgument('smtp-server', $smtpServer !== '' ? $smtpServer : '0.0.0.0')
             ->setArgument('dns-server', $dnsServer !== '' ? $dnsServer : '8.8.8.8')
-            ->setArgument('use-radius', 'no');
-        if ($cookieLifetime !== '') {
-            $setRequest->setArgument('http-cookie-lifetime', $cookieLifetime);
+            ->setArgument('use-radius', $useRadius ? 'yes' : 'no');
+        if ($useRadius) {
+            $setRequest->setArgument('radius-accounting', 'yes');
+        } else {
+            $setRequest->setArgument('radius-accounting', 'no');
         }
         if ($idleTimeout !== '') {
             $setRequest->setArgument('idle-timeout', $idleTimeout);
@@ -5761,6 +6265,8 @@ class Mikrotik
             $setRequest->setArgument('dns-name', $dnsName);
         }
         $client->sendSync($setRequest);
+
+        self::ensureHotspotProfileCookieLifetime($client, $profileName, $cookieLifetime);
     }
 
     private static function ensureHotspotNetworkEntry($client, $localAddress, $profileName, $dnsServer)

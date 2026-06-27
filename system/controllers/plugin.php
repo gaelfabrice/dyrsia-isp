@@ -228,36 +228,47 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             echo json_encode(['success' => false, 'message' => 'Le numéro doit contenir 9 chiffres']);
             exit;
         }
-        // Hotspot accounts often store the phone as the username (phonenumber field empty),
-        // so look the customer up by phonenumber AND by username.
-        $customer = ORM::for_table('tbl_customers')->where('phonenumber', $phone)->find_one();
-        if (!$customer) {
-            $customer = ORM::for_table('tbl_customers')->where('username', $phone)->find_one();
-        }
-        if (!$customer) {
-            $customer = ORM::for_table('tbl_customers')->where_like('phonenumber', '%' . $phone)->find_one();
-        }
+
+        $routerName = trim((string) (_post('routername') ?: _get('routername')));
+        $customer = HotspotCustomer::findByPhone($phone);
 
         $recharge = null;
         if ($customer) {
-            $recharge = ORM::for_table('tbl_user_recharges')
-                ->where('customer_id', $customer['id'])
-                ->where('status', 'on')
-                ->order_by_desc('id')
-                ->find_one();
+            $recharge = hotspot_customer_has_active_recharge($customer->id, $routerName);
         }
-        // Fall back to matching the recharge directly by username (= phone).
+
+        if (!$recharge && function_exists('hotspot_find_paid_payment_by_phone')) {
+            $paidTrx = hotspot_find_paid_payment_by_phone($phone, $routerName);
+            if ($paidTrx && function_exists('hotspot_retry_activate_payment')) {
+                hotspot_retry_activate_payment($paidTrx);
+                if (!$customer) {
+                    $customer = HotspotCustomer::findByPhone($phone);
+                }
+                if ($customer) {
+                    $recharge = hotspot_customer_has_active_recharge($customer->id, $routerName);
+                }
+            }
+        }
+
         if (!$recharge) {
             $recharge = ORM::for_table('tbl_user_recharges')
                 ->where('username', $phone)
                 ->where('status', 'on')
+                ->where('type', 'Hotspot')
                 ->order_by_desc('id')
                 ->find_one();
+            if ($recharge && !Package::isRechargeActive($recharge)) {
+                $recharge = null;
+            }
         }
+
         $plan = $recharge ? ORM::for_table('tbl_plans')->where('id', $recharge['plan_id'])->find_one() : null;
         if (!$recharge || !$plan) {
             echo json_encode(['success' => false, 'message' => 'Aucun forfait actif trouvé pour ce numéro']);
             exit;
+        }
+        if (!$customer) {
+            $customer = ORM::for_table('tbl_customers')->where('id', $recharge['customer_id'])->find_one();
         }
         echo json_encode([
             'success' => true,
@@ -305,6 +316,14 @@ if ($pluginFn === 'hotspot_verify') {
             ->find_one();
         if ($pendingMypvit && function_exists('hotspot_pg_mypvit_sync_transaction')) {
             hotspot_pg_mypvit_sync_transaction($pendingMypvit);
+        }
+        $existingTrx = ORM::for_table('tbl_hotspot_payments')
+            ->where('transaction_ref', $reference)
+            ->find_one();
+        if ($existingTrx
+            && (string) $existingTrx->transaction_status === 'paid'
+            && function_exists('hotspot_retry_activate_payment')) {
+            hotspot_retry_activate_payment($existingTrx);
         }
     }
 }

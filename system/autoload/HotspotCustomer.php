@@ -93,21 +93,44 @@ class HotspotCustomer
         return $fixed;
     }
 
-    public static function findOrCreate($phone, $fullname = 'Client Hotspot', $address = 'Hotspot')
+    /**
+     * Match a 9-digit local number against tbl_customers (handles +237 / 237 prefixes).
+     */
+    public static function findByPhone($phone)
     {
-        $formattedPhone = Lang::phoneFormat($phone);
+        $digits = preg_replace('/\D/', '', (string) $phone);
+        if (strlen($digits) === 9) {
+            $local = $digits;
+        } elseif (strlen($digits) > 9) {
+            $local = substr($digits, -9);
+        } else {
+            return null;
+        }
+
+        $formattedPhone = Lang::phoneFormat($local);
         $customer = null;
         if ($formattedPhone !== '') {
             $customer = ORM::for_table('tbl_customers')->where('phonenumber', $formattedPhone)->find_one();
-            if (!$customer) {
-                $digits = preg_replace('/\D/', '', (string) $phone);
-                if (strlen($digits) >= 9) {
-                    $customer = ORM::for_table('tbl_customers')
-                        ->where_like('phonenumber', '%' . substr($digits, -9))
-                        ->find_one();
-                }
-            }
         }
+        if (!$customer) {
+            $customer = ORM::for_table('tbl_customers')->where('phonenumber', $local)->find_one();
+        }
+        if (!$customer) {
+            $customer = ORM::for_table('tbl_customers')->where('username', $local)->find_one();
+        }
+        if (!$customer) {
+            $customer = ORM::for_table('tbl_customers')
+                ->where_like('phonenumber', '%' . $local)
+                ->find_one();
+        }
+
+        return $customer ?: null;
+    }
+
+    public static function findOrCreate($phone, $fullname = 'Client Hotspot', $address = 'Hotspot')
+    {
+        $formattedPhone = Lang::phoneFormat($phone);
+        $customer = self::findByPhone($phone);
 
         if (!$customer) {
             $customer = ORM::for_table('tbl_customers')->create();
@@ -149,17 +172,9 @@ class HotspotCustomer
             return $code;
         }
         $phone = Lang::phoneFormat($trx->phone_number ?? '');
-        if ($phone === '') {
-            return '';
-        }
-        $customer = ORM::for_table('tbl_customers')->where('phonenumber', $phone)->find_one();
-        if (!$customer) {
-            $digits = preg_replace('/\D/', '', (string) ($trx->phone_number ?? ''));
-            if (strlen($digits) >= 9) {
-                $customer = ORM::for_table('tbl_customers')
-                    ->where_like('phonenumber', '%' . substr($digits, -9))
-                    ->find_one();
-            }
+        $customer = self::findByPhone($trx->phone_number ?? '');
+        if (!$customer && $phone !== '') {
+            $customer = ORM::for_table('tbl_customers')->where('phonenumber', $phone)->find_one();
         }
         if ($customer) {
             $customer = self::ensureValidUsername($customer);

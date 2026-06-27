@@ -144,7 +144,7 @@ class WifiZoneCore
                 'rate_down_unit' => 'Kbps',
                 'rate_up' => 256,
                 'rate_up_unit' => 'Kbps',
-                'burst' => '128k/128k',
+                'burst' => '',
             ],
         ];
     }

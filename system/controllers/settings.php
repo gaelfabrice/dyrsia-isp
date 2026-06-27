@@ -1361,16 +1361,43 @@ switch ($action) {
                     ];
                 }
 
+                $dbPlanCount = (int) ORM::for_table('tbl_plans')
+                    ->where('type', 'Hotspot')
+                    ->where('enabled', 1)
+                    ->where('routers', $routerName)
+                    ->count();
+                $upserted = (int) ($result['upserted'] ?? 0);
+                $removed = (int) ($result['removed'] ?? 0);
+
+                if ($dbPlanCount === 0) {
+                    return [
+                        'ok' => false,
+                        'message' => 'Aucun forfait Hotspot actif pour « '
+                            . $routerName
+                            . ' ». Créez ou activez des forfaits dans Services → Hotspot Plans.',
+                    ];
+                }
+
+                $message = 'Forfaits synchronisés sur « '
+                    . $routerName
+                    . ' » : '
+                    . $dbPlanCount
+                    . ' forfait(s) actif(s)';
+                if ($upserted > 0 || $removed > 0) {
+                    $message .= ', '
+                        . $upserted
+                        . ' profil(s) MikroTik mis à jour, '
+                        . $removed
+                        . ' ancien(s) supprimé(s)';
+                } else {
+                    $message .= ' — profils MikroTik déjà à jour';
+                }
+
                 return [
                     'ok' => true,
-                    'message' => 'Forfaits synchronisés sur « '
-                        . $routerName
-                        . ' » : '
-                        . (int) ($result['upserted'] ?? 0)
-                        . ' actif(s), '
-                        . (int) ($result['removed'] ?? 0)
-                        . ' ancien(s) supprimé(s).',
+                    'message' => $message,
                     'result' => $result,
+                    'db_plan_count' => $dbPlanCount,
                 ];
             } catch (Throwable $e) {
                 return [
@@ -1417,6 +1444,8 @@ switch ($action) {
             'hotspot_keepalive_timeout',
             'hotspot_address_per_mac',
             'hotspot_smtp_server',
+            'hotspot_use_radius',
+            'hotspot_radius_secret',
         ];
 
         $buildHotspotLoginHtml = function () use ($UPLOAD_PATH, &$config) {
@@ -1814,11 +1843,14 @@ HTML;
                 $_POST['hotspot_pool_range'] = $_POST['hotspot_address_pool'];
             }
             $_POST['hotspot_masquerade'] = !empty($_POST['hotspot_masquerade']) ? '1' : '0';
+            $_POST['hotspot_use_radius'] = !empty($_POST['hotspot_use_radius']) ? '1' : '0';
             if (empty($_POST['hotspot_login_methods'])) {
                 $_POST['hotspot_login_methods'] = ['http-chap', 'mac-cookie'];
             }
             if (trim((string) ($_POST['hotspot_cookie_lifetime'] ?? '')) === '') {
                 $_POST['hotspot_cookie_lifetime'] = '1d 00:00:00';
+            } else {
+                $_POST['hotspot_cookie_lifetime'] = Mikrotik::normalizeHotspotCookieLifetime($_POST['hotspot_cookie_lifetime']);
             }
             if (trim((string) ($_POST['hotspot_idle_timeout'] ?? '')) === '') {
                 $_POST['hotspot_idle_timeout'] = '00:10:00';
@@ -1833,6 +1865,10 @@ HTML;
                 if ($key === 'hotspot_login_router' && trim((string) $value) === '') {
                     continue;
                 }
+                // Secret RADIUS : ne pas effacer si le champ est laissé vide à l'enregistrement.
+                if ($key === 'hotspot_radius_secret' && trim((string) $value) === '') {
+                    continue;
+                }
                 $d = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
                 if ($d) {
                     $d->value = $value;
@@ -1844,6 +1880,20 @@ HTML;
                     $d->save();
                 }
                 $config[$key] = $value;
+            }
+
+            if ($_POST['hotspot_use_radius'] === '1') {
+                $radiusEnableRow = ORM::for_table('tbl_appconfig')->where('setting', 'radius_enable')->find_one();
+                if ($radiusEnableRow) {
+                    $radiusEnableRow->value = '1';
+                    $radiusEnableRow->save();
+                } else {
+                    $radiusEnableRow = ORM::for_table('tbl_appconfig')->create();
+                    $radiusEnableRow->setting = 'radius_enable';
+                    $radiusEnableRow->value = '1';
+                    $radiusEnableRow->save();
+                }
+                $config['radius_enable'] = '1';
             }
         };
 
@@ -1914,6 +1964,18 @@ HTML;
             $saveHotspotSettings();
             $routerName = $resolveHotspotRouterName();
             $planPush = $pushHotspotPlansToMikrotik($routerName);
+            if (!empty($planPush['ok'])) {
+                if ($writeHotspotLoginHtml()) {
+                    foreach (glob('system/cache/hotspot_plan_*.json') ?: [] as $cacheFile) {
+                        @unlink($cacheFile);
+                    }
+                    $planPush['message'] .= ' Page captive (login.html) régénérée avec '
+                        . (int) ($planPush['db_plan_count'] ?? 0)
+                        . ' forfait(s).';
+                } else {
+                    $planPush['message'] .= ' Attention : impossible de régénérer login.html.';
+                }
+            }
             r2(
                 $hotspotSettingsUrl(),
                 !empty($planPush['ok']) ? 's' : 'e',
@@ -2012,7 +2074,7 @@ HTML;
                 }
                 $hotspotServerName = trim((string) ($config['hotspot_name'] ?? ''));
                 $hotspotSetupNote = '';
-                $hotspotSetup = Mikrotik::applyHotspotSetupFromConfig($client, $config);
+                $hotspotSetup = Mikrotik::applyHotspotSetupFromConfig($client, $config, is_array($mikrotik) ? $mikrotik : (method_exists($mikrotik, 'as_array') ? $mikrotik->as_array() : null));
                 if (empty($hotspotSetup['ok'])) {
                     r2(
                         $hotspotSettingsUrl(),
@@ -2020,6 +2082,19 @@ HTML;
                         'Configuration hotspot MikroTik échouée : '
                         . implode(' | ', $hotspotSetup['errors'] ?? ['erreur inconnue'])
                     );
+                }
+                if (!empty($hotspotSetup['radius_secret']) && trim((string) ($config['hotspot_radius_secret'] ?? '')) === '') {
+                    $secretRow = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_radius_secret')->find_one();
+                    if ($secretRow) {
+                        $secretRow->value = $hotspotSetup['radius_secret'];
+                        $secretRow->save();
+                    } else {
+                        $secretRow = ORM::for_table('tbl_appconfig')->create();
+                        $secretRow->setting = 'hotspot_radius_secret';
+                        $secretRow->value = $hotspotSetup['radius_secret'];
+                        $secretRow->save();
+                    }
+                    $config['hotspot_radius_secret'] = $hotspotSetup['radius_secret'];
                 }
                 if (!empty($hotspotSetup['hotspot_name'])) {
                     $config['hotspot_name'] = $hotspotSetup['hotspot_name'];
@@ -2259,6 +2334,8 @@ HTML;
 
         $routers = settings_scoped_router_query($admin)->order_by_asc('name')->find_many();
         MobileMoneyGateway::syncHotspotCaptivePaymentUi();
+        $loginPreviewFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+        $ui->assign('hs_login_preview_ts', is_file($loginPreviewFile) ? filemtime($loginPreviewFile) : time());
         $ui->assign('_title', Lang::T('Hotspot_Setup'));
         $ui->assign('hs_fetch_url', getUrl('settings/hotspot&fetch_router_setup=1'));
         $ui->assign('routers', $routers);

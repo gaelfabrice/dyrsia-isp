@@ -158,10 +158,14 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     $trx->expired_date = date('Y-m-d H:i:s', strtotime($expired));
     $trx->save();
 
+    if (function_exists('hotspot_invalidate_overview_cache')) {
+        hotspot_invalidate_overview_cache();
+    }
+
     return true;
 }
 
-function hotspot_pg_campay_sync_transaction($trx)
+function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
 {
     if (!$trx || empty($trx->transaction_id)) {
         return $trx;
@@ -176,6 +180,8 @@ function hotspot_pg_campay_sync_transaction($trx)
         return $trx;
     }
 
+    $curlTimeout = max(5, min(30, (int) $curlTimeout));
+
     $ch = curl_init();
     curl_setopt_array($ch, [
         CURLOPT_URL => hotspot_pg_campay_api_base() . '/transaction/' . urlencode($trx->transaction_id) . '/',
@@ -184,7 +190,8 @@ function hotspot_pg_campay_sync_transaction($trx)
             'Content-Type: application/json',
             'Authorization: Token ' . $token,
         ],
-        CURLOPT_TIMEOUT => 30,
+        CURLOPT_TIMEOUT => $curlTimeout,
+        CURLOPT_CONNECTTIMEOUT => min(5, $curlTimeout),
         CURLOPT_SSL_VERIFYPEER => true,
     ]);
 
@@ -203,8 +210,9 @@ function hotspot_pg_campay_sync_transaction($trx)
     $trx->gateway_response = json_encode($result);
 
     if ($status === 'SUCCESSFUL') {
-        if (!hotspot_pg_campay_activate_user($trx, $operator)) {
-            $trx->transaction_status = 'paid';
+        hotspot_pg_campay_activate_user($trx, $operator);
+        if ((string) $trx->transaction_status === 'pending') {
+            // CamPay confirmed payment but local activation failed — keep pending for retry.
             $trx->save();
         }
     } elseif ($status === 'FAILED') {
@@ -335,6 +343,10 @@ function hotspot_processPayment_campay($data)
         'customer_address' => $_POST['address'] ?? 'Hotspot',
     ]);
     $trx->save();
+
+    if (function_exists('hotspot_invalidate_overview_cache')) {
+        hotspot_invalidate_overview_cache();
+    }
 
     hotspot_pg_campay_respond_success($txref, $result);
 }

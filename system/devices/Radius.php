@@ -156,15 +156,13 @@ class Radius
         } else {
             $unitup = 'M';
         }
-        $rate = $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup;
-        $rates = explode('/', $rate);
-
-        // cek jika punya burst
-        if (!empty(trim($bw['burst']))) {
-            $ratos = $rate . ' ' . $bw['burst'];
-        } else {
-            $ratos = $rates[0] . '/' . $rates[1];
+        $ratos = Mikrotik::hotspotPlanRateLimit($bw ? $bw->as_array() : null);
+        if ($ratos === '') {
+            $rate = $bw['rate_down'] . $unitdown . '/' . $bw['rate_up'] . $unitup;
+            $ratos = $rate;
         }
+        $baseRate = trim(strtok($ratos, ' '));
+        $rates = explode('/', $baseRate);
 
         $this->upsertPackage($plan['id'], 'Ascend-Data-Rate', $this->stringToInteger($rates[0]), ':=');
         $this->upsertPackage($plan['id'], 'Ascend-Xmit-Rate', $this->stringToInteger($rates[1]), ':=');
@@ -513,21 +511,11 @@ class Radius
 
         // TODO Burst mode [ 2M/1M 256K/128K 128K/64K 1s 1 64K/32K]
 
-        if (!empty(trim($bw['burst']))) {
-            // burst format: 2M/1M 256K/128K 128K/64K 1s 1 64K/32K
-            $pattern = '/(\d+[KM])\/(\d+[KM]) (\d+[KM])\/(\d+[KM]) (\d+) (\d+) (\d+[KM])\/(\d+[KM])/';
-            preg_match($pattern, $bw['burst'], $matches);
-            if (count($matches) == 9) {
-
-                $burst = $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup . ' ' . $matches[1] . '/' . $matches[2] . ' ' . $matches[3] . '/' . $matches[4] . ' ' . $matches[5] . ' ' . $matches[6] . ' ' . $matches[7] . '/' . $matches[8];
-                $this->upsertCustomer($customer['username'], 'Mikrotik-Rate-Limit', $burst);
-            } else {
-                _log("Unexpected burst format for customer " . $customer['username']);
-            }
-        } else {
-            //$this->upsertCustomer($customer['username'], 'Ascend-Data-Rate', $this->stringToInteger($bw['rate_up'] . $unitup) . "/" . $this->stringToInteger($bw['rate_down'] . $unitdown));
-            $this->upsertCustomer($customer['username'], 'Mikrotik-Rate-Limit', $bw['rate_down'] . $unitdown . "/" . $bw['rate_up'] . $unitup);
+        $rateLimit = Mikrotik::hotspotPlanRateLimit($bw ? $bw->as_array() : null);
+        if ($rateLimit === '') {
+            $rateLimit = $bw['rate_down'] . $unitdown . '/' . $bw['rate_up'] . $unitup;
         }
+        $this->upsertCustomer($customer['username'], 'Mikrotik-Rate-Limit', $rateLimit);
 
         return true;
     }

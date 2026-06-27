@@ -1,5 +1,4 @@
 {include file="sections/header.tpl"}
-<link rel="stylesheet" href="https://cdn.datatables.net/1.11.3/css/jquery.dataTables.min.css">
 
 <style>
 {literal}
@@ -184,7 +183,7 @@ body.theme-light .ho-stat-icon { background: #f1f5f9; }
     border: 1px solid var(--ho-line);
     border-radius: 18px;
     box-shadow: var(--ho-shadow);
-    overflow: hidden;
+    overflow: visible;
 }
 .ho-table-head {
     display: flex;
@@ -201,86 +200,71 @@ body.theme-light .ho-stat-icon { background: #f1f5f9; }
     font-weight: 700;
     color: var(--ho-heading);
 }
-.ho-table-body { padding: 0 12px 12px; overflow-x: auto; }
+.ho-table-body { padding: 0 12px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.ho-table-body table.ho-history-table { min-width: 960px; width: 100%; }
 
-.ho-page table.dataTable {
-    width: 100% !important;
-    border-collapse: separate !important;
+.ho-page table.ho-history-table {
+    width: 100%;
+    border-collapse: collapse;
     border-spacing: 0;
-    color: var(--ho-text) !important;
-    background: transparent !important;
+    color: var(--ho-text);
+    background: transparent;
 }
-.ho-page table.dataTable thead th {
-    background: rgba(255, 255, 255, 0.04) !important;
-    color: var(--ho-muted) !important;
-    border-bottom: 1px solid var(--ho-line) !important;
+.ho-page table.ho-history-table thead th {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ho-muted);
+    border-bottom: 1px solid var(--ho-line);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 12px 10px !important;
+    padding: 12px 10px;
     white-space: nowrap;
+    text-align: left;
 }
-body.theme-light .ho-page table.dataTable thead th {
-    background: #f8fafc !important;
-    color: #475569 !important;
+body.theme-light .ho-page table.ho-history-table thead th {
+    background: #f8fafc;
+    color: #475569;
 }
-.ho-page table.dataTable tbody td {
-    border-bottom: 1px solid var(--ho-line) !important;
-    padding: 10px !important;
-    vertical-align: middle !important;
+.ho-page table.ho-history-table tbody td {
+    border-bottom: 1px solid var(--ho-line);
+    padding: 10px;
+    vertical-align: middle;
     font-size: 13px;
-    color: var(--ho-text) !important;
+    color: var(--ho-text);
     background: transparent !important;
     white-space: normal;
     word-break: break-word;
 }
-.ho-page table.dataTable tbody td.ho-td-id,
-.ho-page table.dataTable tbody td.ho-td-ref {
-    color: var(--ho-heading) !important;
+.ho-page table.ho-history-table thead th.ho-col-ref,
+.ho-page table.ho-history-table tbody td.ho-td-ref {
+    min-width: 160px;
+    background: transparent !important;
+}
+.ho-page table.ho-history-table thead th.ho-col-check,
+.ho-page table.ho-history-table tbody td.ho-col-check {
+    width: 42px;
+    max-width: 42px;
+    text-align: center;
+    background: transparent !important;
+}
+.ho-page table.ho-history-table tbody td.ho-td-ref {
+    white-space: nowrap;
+    color: #f87171 !important;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 12px;
-    line-height: 1.35;
-    max-width: 160px;
+    font-weight: 700;
 }
-body.theme-light .ho-page table.dataTable tbody td.ho-td-id,
-body.theme-light .ho-page table.dataTable tbody td.ho-td-ref {
-    color: #0f172a !important;
+body.theme-light .ho-page table.ho-history-table tbody td.ho-td-ref {
+    color: #dc2626 !important;
 }
-.ho-page table.dataTable tbody tr:nth-child(odd) td {
+.ho-page table.ho-history-table tbody tr:nth-child(odd) td {
     background: rgba(255, 255, 255, 0.02) !important;
 }
-body.theme-light .ho-page table.dataTable tbody tr:nth-child(odd) td {
+body.theme-light .ho-page table.ho-history-table tbody tr:nth-child(odd) td {
     background: #f8fafc !important;
 }
-.ho-page table.dataTable tbody tr:hover td {
+.ho-page table.ho-history-table tbody tr:hover td {
     background: rgba(37, 99, 235, 0.08) !important;
-}
-.ho-page .dataTables_wrapper .dataTables_length,
-.ho-page .dataTables_wrapper .dataTables_filter,
-.ho-page .dataTables_wrapper .dataTables_info,
-.ho-page .dataTables_wrapper .dataTables_paginate {
-    color: var(--ho-muted) !important;
-    padding: 10px 6px;
-}
-.ho-page .dataTables_wrapper .dataTables_filter input,
-.ho-page .dataTables_wrapper .dataTables_length select {
-    background: var(--ho-input-bg) !important;
-    border: 1px solid var(--ho-line) !important;
-    color: var(--ho-text) !important;
-    border-radius: 8px;
-    padding: 6px 10px;
-}
-.ho-page .dataTables_wrapper .paginate_button {
-    color: var(--ho-text) !important;
-    border: 1px solid var(--ho-line) !important;
-    background: var(--ho-input-bg) !important;
-    border-radius: 8px !important;
-    margin: 0 2px;
-}
-.ho-page .dataTables_wrapper .paginate_button.current {
-    background: #2563eb !important;
-    color: #fff !important;
-    border-color: #2563eb !important;
 }
 
 .ho-badge {
@@ -346,7 +330,7 @@ body.theme-light .ho-page code { color: #2563eb; }
             <p>Paiements, ventes et historique des transactions hotspot</p>
         </div>
         <div class="ho-hero-actions">
-            <a href="{Text::url('plugin/hotspot_overview')}&refresh=1" class="ho-btn ho-btn-primary">
+            <a href="{Text::url('plugin/hotspot_overview')}{Text::isQA()}refresh=1" class="ho-btn ho-btn-primary">
                 <i class="fa fa-refresh"></i> {Lang::T('Refresh')}
             </a>
         </div>
@@ -450,12 +434,11 @@ body.theme-light .ho-page code { color: #2563eb; }
             </div>
         </div>
         <div class="ho-table-body">
-            <table id="historyTable" style="width:100%">
+            <table id="historyTable" class="ho-history-table">
                 <thead>
                     <tr>
-                        {if $can_delete_hotspot_history}<th><input type="checkbox" id="selectAll"></th>{/if}
-                        <th>{Lang::T('Trx ID')}</th>
-                        <th>{Lang::T('Ref')}</th>
+                        {if $can_delete_hotspot_history}<th class="ho-col-check"><input type="checkbox" id="selectAll"></th>{/if}
+                        <th class="ho-col-ref">{Lang::T('Ref')}</th>
                         <th>{Lang::T('Router')}</th>
                         <th>{Lang::T('Plan')}</th>
                         <th>{Lang::T('Voucher')}</th>
@@ -465,14 +448,12 @@ body.theme-light .ho-page code { color: #2563eb; }
                         <th>{Lang::T('Status')}</th>
                         <th>{Lang::T('Gateway')}</th>
                         <th>{Lang::T('Date')}</th>
-                        <th>{Lang::T('Action')}</th>
                     </tr>
                 </thead>
                 <tbody>
                     {foreach $payments as $payment}
-                    <tr>
-                        {if $can_delete_hotspot_history}<td><input type="checkbox" class="row-check" value="{$payment.id}"></td>{/if}
-                        <td class="ho-td-id">{$payment.transaction_id|default:$payment.transaction_ref|escape}</td>
+                    <tr data-status="{$payment.transaction_status|escape}">
+                        {if $can_delete_hotspot_history}<td class="ho-col-check"><input type="checkbox" class="row-check" value="{$payment.id}"></td>{/if}
                         <td class="ho-td-ref">{$payment.transaction_ref|escape}</td>
                         <td>{$payment.router_name|escape}</td>
                         <td>{$payment.plan_name|escape}</td>
@@ -492,19 +473,10 @@ body.theme-light .ho-page code { color: #2563eb; }
                             {/if}
                         </td>
                         <td>{$payment.payment_gateway|escape}</td>
-                        <td>{$payment.payment_date|escape}</td>
-                        <td>
-                            <div class="btn-group">
-                                <button type="button" class="ho-btn btn-xs dropdown-toggle" data-toggle="dropdown">···</button>
-                                <ul class="dropdown-menu dropdown-menu-right">
-                                    <li><a href="{$_url}plugin/hotspot_block_mac&block&mac={$payment.mac_address|escape:'url'}">Block MAC</a></li>
-                                    <li><a href="{$_url}plugin/hotspot_block_mac&unblock&mac={$payment.mac_address|escape:'url'}">Unblock</a></li>
-                                </ul>
-                            </div>
-                        </td>
+                        <td>{if $payment.payment_date}{$payment.payment_date|escape}{else}{$payment.created_date|escape}{/if}</td>
                     </tr>
                     {foreachelse}
-                    <tr><td colspan="{if $can_delete_hotspot_history}13{else}12{/if}" class="text-center" style="padding:24px;color:var(--ho-muted)">{Lang::T('No Data')}</td></tr>
+                    <tr><td colspan="{if $can_delete_hotspot_history}11{else}10{/if}" class="text-center" style="padding:24px;color:var(--ho-muted)">{Lang::T('No Data')}</td></tr>
                     {/foreach}
                 </tbody>
             </table>
@@ -513,7 +485,6 @@ body.theme-light .ho-page code { color: #2563eb; }
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.datatables.net/1.11.3/js/jquery.dataTables.min.js"></script>
 <script>
 (function () {
     var chartText = '#94a3b8';
@@ -613,39 +584,32 @@ body.theme-light .ho-page code { color: #2563eb; }
     });
 
     jQuery(function ($) {
-        var statusCol = {if $can_delete_hotspot_history}9{else}8{/if};
-        var dateCol = {if $can_delete_hotspot_history}11{else}10{/if};
         var selectedIds = [];
-        var table = $('#historyTable').DataTable({
-            pagingType: 'full_numbers',
-            order: [[dateCol, 'desc']],
-            pageLength: 25,
-            language: { emptyTable: '{Lang::T('No Data')}' }
-        });
+
+        function syncSelectedIds() {
+            selectedIds = [];
+            $('#historyTable tbody tr:visible .row-check:checked').each(function () {
+                selectedIds.push($(this).val());
+            });
+        }
 
         {if $can_delete_hotspot_history}
         $('#selectAll').on('click', function () {
-            var rows = table.rows({ search: 'applied' }).nodes();
-            $('input.row-check', rows).prop('checked', this.checked);
-            selectedIds = [];
-            if (this.checked) {
-                $('input.row-check:checked').each(function () { selectedIds.push($(this).val()); });
-            }
+            $('#historyTable tbody tr:visible .row-check').prop('checked', this.checked);
+            syncSelectedIds();
         });
 
-        $('#historyTable tbody').on('change', '.row-check', function () {
-            var id = $(this).val();
-            if ($(this).is(':checked')) {
-                if (selectedIds.indexOf(id) === -1) selectedIds.push(id);
-            } else {
-                selectedIds = selectedIds.filter(function (v) { return v !== id; });
-            }
-        });
+        $('#historyTable tbody').on('change', '.row-check', syncSelectedIds);
         {/if}
 
         $('#statusFilterMenu a').on('click', function (e) {
             e.preventDefault();
-            table.column(statusCol).search($(this).data('status') || '').draw();
+            var status = String($(this).data('status') || '');
+            $('#historyTable tbody tr').each(function () {
+                var rowStatus = String($(this).data('status') || '');
+                $(this).toggle(!status || rowStatus === status);
+            });
+            syncSelectedIds();
         });
 
         {if $can_delete_hotspot_history}
@@ -675,6 +639,23 @@ body.theme-light .ho-page code { color: #2563eb; }
             });
         });
         {/if}
+
+        var hoSnapshot = {
+            pending: {$pendingPayments|default:0},
+            paid: {$successfulPayments|default:0},
+            latestId: {$hotspot_latest_payment_id|default:0}
+        };
+        setInterval(function () {
+            if (document.hidden) return;
+            $.getJSON('{Text::url('plugin/hotspot_overview_ping')}', function (data) {
+                if (!data) return;
+                if (data.pending !== hoSnapshot.pending
+                    || data.paid !== hoSnapshot.paid
+                    || data.latest_id !== hoSnapshot.latestId) {
+                    window.location.reload();
+                }
+            });
+        }, 30000);
     });
 })();
 </script>

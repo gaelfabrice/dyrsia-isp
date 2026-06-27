@@ -222,7 +222,9 @@
             if (prof.dns_server) setVal('hotspot_dns_server', prof.dns_server);
             if (prof.dns_name && !val('hotspot_dns_name')) setVal('hotspot_dns_name', prof.dns_name);
             if (prof.login_by) setLoginMethodsFromRouter(prof.login_by);
-            if (prof.http_cookie_lifetime) setVal('hotspot_cookie_lifetime', prof.http_cookie_lifetime);
+            if (prof.http_cookie_lifetime && !val('hotspot_cookie_lifetime')) {
+                setVal('hotspot_cookie_lifetime', prof.http_cookie_lifetime);
+            }
             if (prof.idle_timeout) setVal('hotspot_idle_timeout', prof.idle_timeout);
         });
     }
@@ -420,7 +422,14 @@
             ['Login', loginMethodsSummary()],
             ['HTTP Cookie Lifetime', val('hotspot_cookie_lifetime')],
             ['Idle Timeout', val('hotspot_idle_timeout')],
-            ['Address Per Mac', val('hotspot_address_per_mac')]
+            ['Address Per Mac', val('hotspot_address_per_mac')],
+            ['Auth RADIUS', $('hotspot_use_radius') && $('hotspot_use_radius').checked ? 'Oui (use-radius=yes)' : 'Non'],
+            ['Serveur RADIUS', (function () {
+                var api = val('hotspot_api_url') || '';
+                var m = api.match(/^https?:\/\/([^\/:]+)/i);
+                return m ? m[1] : '(IP Hotspot API URL)';
+            })()],
+            ['Secret RADIUS', val('hotspot_radius_secret') ? '•••• (défini)' : 'Auto (NAS)']
         ];
         var box = $('hs-summary');
         if (!box) return;
@@ -521,6 +530,19 @@
         });
     }
 
+    function bindRadiusToggle() {
+        var cb = $('hotspot_use_radius');
+        var secretGroup = $('hs-radius-secret-group');
+        if (!cb || !secretGroup) {
+            return;
+        }
+        var sync = function () {
+            secretGroup.style.display = cb.checked ? '' : 'none';
+        };
+        cb.addEventListener('change', sync);
+        sync();
+    }
+
     function init() {
         var prevBtn = $('hs-btn-preview');
         var nextBtn = $('hs-btn-next');
@@ -543,6 +565,7 @@
         bindPreviewInputs();
         bindRouterSync();
         bindSetupFields();
+        bindRadiusToggle();
         var initialStep = parseInt(window.HS_INITIAL_STEP || '1', 10);
         if (initialStep >= 1 && initialStep <= TOTAL_STEPS) {
             currentStep = initialStep;

@@ -285,7 +285,7 @@ if (function_exists('wifizone_ensure_setup_widget')) {
     wifizone_ensure_setup_widget();
 }
 
-if ((!empty($radius_user) && $config['radius_enable']) || _post('radius_enable')) {
+if ((!empty($radius_user) && $config['radius_enable']) || _post('radius_enable') || _post('hotspot_use_radius')) {
     if (!empty($radius_password)) {
         // compability for old version
         $radius_pass = $radius_password;
@@ -295,6 +295,34 @@ if ((!empty($radius_user) && $config['radius_enable']) || _post('radius_enable')
     ORM::configure('password', $radius_pass, 'radius');
     ORM::configure('driver_options', array(PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES utf8'), 'radius');
     ORM::configure('return_result_sets', true, 'radius');
+}
+
+/**
+ * Connexion ORM FreeRADIUS (NAS sync hotspot) même si radius_enable venait d'être activé dans la même requête.
+ */
+function wifizone_ensure_radius_orm()
+{
+    global $radius_host, $radius_user, $radius_pass, $radius_name, $radius_password;
+    if (empty($radius_user) || empty($radius_host) || empty($radius_name)) {
+        return false;
+    }
+    if (!empty($radius_password)) {
+        $radius_pass = $radius_password;
+    }
+    try {
+        ORM::configure("mysql:host=$radius_host;dbname=$radius_name", null, 'radius');
+        ORM::configure('username', $radius_user, 'radius');
+        ORM::configure('password', $radius_pass, 'radius');
+        ORM::configure('driver_options', [PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES utf8'], 'radius');
+        ORM::configure('return_result_sets', true, 'radius');
+        ORM::for_table('nas', 'radius')->limit(1)->find_one();
+
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    } catch (Exception $e) {
+        return false;
+    }
 }
 
 
@@ -1090,13 +1118,22 @@ function r2($to, $ntype = 'e', $msg = '')
             $msg
         );
     }
-    if ($msg == '') {
-        header("location: $to");
+    if ($msg != '') {
+        $_SESSION['ntype'] = $ntype;
+        $_SESSION['notify'] = $msg;
+    }
+    if (!headers_sent()) {
+        header('Location: ' . $to);
         exit;
     }
-    $_SESSION['ntype'] = $ntype;
-    $_SESSION['notify'] = $msg;
-    header("location: $to");
+    $safeUrl = htmlspecialchars($to, ENT_QUOTES, 'UTF-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url='
+        . $safeUrl
+        . '"></head><body><script>location.replace('
+        . json_encode($to)
+        . ');</script><a href="'
+        . $safeUrl
+        . '">Continue</a></body></html>';
     exit;
 }
 
