@@ -356,6 +356,8 @@ class WifiZoneCore
             'hotspot_message' => '1',
             'hotspot_message_via' => 'both',
             'hotspot_help_whatsapp' => '33761951914',
+            'hotspot_contact' => 'Assistance',
+            'hotspot_contact_phone' => '',
             'wifizone_withdraw_commission_hotspot' => '15',
             'wifizone_withdraw_commission_pppoe' => '10',
             'wifizone_withdraw_commission_default' => '10',

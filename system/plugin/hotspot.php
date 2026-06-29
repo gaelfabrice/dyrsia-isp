@@ -1256,6 +1256,14 @@
                 echo json_encode(['status' => 'not_found', 'message' => Lang::T('Transaction not found.')]);
                 exit;
             }
+            if ((string) $check->transaction_status === 'pending') {
+                $gateway = strtolower(trim((string) ($check->payment_gateway ?? '')));
+                if ($gateway === 'campay' && function_exists('hotspot_pg_campay_sync_transaction')) {
+                    $check = hotspot_pg_campay_sync_transaction($check);
+                } elseif ($gateway === 'mypvit' && function_exists('hotspot_pg_mypvit_sync_transaction')) {
+                    $check = hotspot_pg_mypvit_sync_transaction($check);
+                }
+            }
             $status = (string) $check->transaction_status;
             $payload = [
                 'status' => $status,
@@ -1263,20 +1271,12 @@
                 'message' => $message,
             ];
             if ($status === 'paid') {
-                $password = HotspotCustomer::defaultPassword();
-                $username = HotspotCustomer::loginUsernameFromPayment($check);
-                if ($username === '') {
-                    $username = (string) ($check->voucher_code ?? '');
+                $credentials = HotspotCustomer::credentialsFromPayment($check);
+                if ($credentials['username'] !== '') {
+                    $payload['username'] = $credentials['username'];
+                    $payload['voucher_code'] = $credentials['username'];
                 }
-                if ($username !== '' && $username !== '**********') {
-                    $customer = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
-                    if ($customer && (string) $customer->password !== '') {
-                        $password = (string) $customer->password;
-                    }
-                    $payload['username'] = $username;
-                    $payload['voucher_code'] = $username;
-                }
-                $payload['password'] = $password;
+                $payload['password'] = $credentials['password'];
                 $payload['auto_login'] = true;
             }
             echo json_encode($payload);

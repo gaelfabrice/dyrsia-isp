@@ -204,10 +204,6 @@ class MobileMoneyGateway
                     'length' => 'Entrez 9 chiffres (ex: 677123456)',
                     'format' => 'Numéro incorrect (doit commencer par 6 ou 2)',
                 ],
-                'operators' => [
-                    ['img' => 'MTN.png', 'alt' => 'MoMo MTN', 'class' => 'mtn'],
-                    ['img' => 'orange.png', 'alt' => 'Orange Money', 'class' => 'orange'],
-                ],
                 'detect' => [
                     ['pattern' => '^(67|68)', 'name' => 'MTN', 'ussd' => '*126#'],
                     ['pattern' => '^(69|65[5-9])', 'name' => 'Orange', 'ussd' => '#150*50#'],
@@ -361,14 +357,6 @@ class MobileMoneyGateway
             }
             return { name: 'Mobile Money', ussd: '' };
         }
-        function buildPaymentOperatorsHtml() {
-            return (HOTSPOT_PAYMENT_PROFILE.operators || []).map(function (op) {
-                if (op.img) {
-                    return '<span class="campay-op ' + escapeHtml(op.class || '') + '"><img src="' + hotspotAssetUrl(op.img) + '" alt="' + escapeHtml(op.alt || '') + '" /></span>';
-                }
-                return '<span class="campay-op-text" style="display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(16,185,129,.12);color:#a7f3d0;font-size:11px;font-weight:700">' + escapeHtml(op.label || '') + '</span>';
-            }).join('');
-        }
         function buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency) {
             return '<div style="text-align:center;padding:6px 2px"><div style="width:58px;height:58px;margin:0 auto 18px;border:4px solid rgba(16,185,129,.18);border-top-color:#10b981;border-radius:50%;animation:campaySpin 1s linear infinite"></div><style>@keyframes campaySpin{to{transform:rotate(360deg)}}</style><p style="font-size:16px;line-height:1.5;margin:0 0 10px"><strong>Validez la transaction sur votre téléphone</strong></p><p style="font-size:14px;color:#94a3b8;margin:0 0 8px">' + escapeHtml(planName) + ' — <strong>' + escapeHtml(String(price)) + ' ' + escapeHtml(currency || 'Fcfa') + '</strong></p><p style="font-size:14px;margin:0 0 12px">Numéro: <strong>' + escapeHtml(formatDisplayPhone(phone)) + '</strong> (' + escapeHtml(operator.name) + ')</p><div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:16px;padding:14px;margin:12px 0;text-align:left"><p style="margin:0 0 8px;font-size:14px">📲 Une notification USSD va s\'afficher.<br>Confirmez avec votre <strong>code PIN</strong>.</p><p style="margin:0;font-size:14px">Sinon composez: <strong style="color:#10b981;font-size:20px">' + escapeHtml(operator.ussd) + '</strong></p></div><p id="campayCountdown" style="font-size:13px;color:#64748b;margin:14px 0 0">Temps restant: ' + secondsLeft + ' secondes…</p><p style="font-size:12px;color:#64748b;margin:8px 0 0">Ne fermez pas cette page pendant la validation.</p></div>';
         }
@@ -448,34 +436,13 @@ class MobileMoneyGateway
                 throw new Error('Réponse serveur invalide');
             }
         }
-        function hotspotAssetUrl(filename) {
-            if (!filename) return '';
-            if (filename.indexOf('/') >= 0 || String(filename).indexOf('http') === 0) return filename;
-            var origin = window.location.origin || '';
-            try {
-                var host = new URL(origin).hostname;
-                if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) {
-                    return 'hotspot/' + filename;
-                }
-            } catch (e) {}
-            try {
-                if (typeof APP_URL === 'string' && APP_URL) {
-                    var pageHost = window.location.hostname;
-                    var apiHost = new URL(APP_URL).hostname;
-                    if (pageHost !== apiHost) {
-                        return APP_URL.replace(/\/$/, '') + '/system/uploads/mikrotik_hotspot/' + filename;
-                    }
-                }
-            } catch (e) {}
-            return 'hotspot/' + filename;
-        }
         function buildPaymentModalHtml(planName, price, currency, validity) {
             const p = HOTSPOT_PAYMENT_PROFILE;
             const phoneLen = p.localLength || 9;
             const prefixLabel = String(p.prefixDisplay || '').trim();
             const prefixHtml = prefixLabel ? '<span class="campay-phone-prefix">' + escapeHtml(prefixLabel) + '</span>' : '';
             const phoneHint = escapeHtml((p.errors && p.errors.length) ? p.errors.length : ('Entrez exactement ' + phoneLen + ' chiffres (ex: 677123456)'));
-            return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro Mobile Money (' + phoneLen + ' chiffres)</label><div class="campay-phone-wrap">' + prefixHtml + '<input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + phoneLen + '" minlength="' + phoneLen + '" /></div><p class="campay-pay-hint" style="margin:8px 0 0;font-size:12px;color:#94a3b8">' + phoneHint + '</p><div class="campay-operators">' + buildPaymentOperatorsHtml() + '</div></div></div>';
+            return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro Mobile Money (' + phoneLen + ' chiffres)</label><div class="campay-phone-wrap">' + prefixHtml + '<input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + phoneLen + '" minlength="' + phoneLen + '" /></div><p class="campay-pay-hint" style="margin:8px 0 0;font-size:12px;color:#94a3b8">' + phoneHint + '</p></div></div>';
         }
         function bindPaymentPhoneInput() {
             bindHotspotPhoneField(document.getElementById('campayPhoneInput'));
@@ -490,8 +457,15 @@ class MobileMoneyGateway
                 '<p class="hotspot-pay-success-sub">Connexion automatique en cours…</p>' +
                 '<div class="hotspot-pay-success-bar"><span></span></div></div>';
         }
+        function normalizeHotspotLoginPassword(password) {
+            password = String(password || '').trim();
+            if (!password || password.indexOf('$2y$') === 0 || password.indexOf('$2a$') === 0 || password.indexOf('$2b$') === 0) {
+                return '123456';
+            }
+            return password;
+        }
         function connectAfterPayment(code, password, planName, validity) {
-            const loginPassword = password || '123456';
+            const loginPassword = normalizeHotspotLoginPassword(password);
             Swal.fire({
                 html: buildPaymentSuccessHtml(planName, validity),
                 showConfirmButton: false,
@@ -522,7 +496,7 @@ class MobileMoneyGateway
                             if (pwdField) pwdField.value = loginPassword;
                             if (form && typeof prepareMikrotikLogin === 'function' && prepareMikrotikLogin(form)) form.submit();
                         }
-                    }, 800);
+                    }, 1200);
                 },
                 timer: 2500,
                 timerProgressBar: false

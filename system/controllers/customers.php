@@ -5,6 +5,93 @@
  *  by https://t.me/ibnux
  **/
 
+function customersRowForUi($customer)
+{
+    if (!$customer) {
+        return $customer;
+    }
+    $row = is_array($customer) ? $customer : (method_exists($customer, 'as_array') ? $customer->as_array() : (array) $customer);
+    $row['network_password'] = Password::networkCleartext($row);
+
+    return $row;
+}
+
+function customersFindScoped($id, $admin)
+{
+    $id = (int) $id;
+    if ($id <= 0) {
+        return null;
+    }
+    if (($admin['user_type'] ?? '') === 'SuperAdmin') {
+        return ORM::for_table('tbl_customers')->find_one($id);
+    }
+
+    return ORM::for_table('tbl_customers')
+        ->where('id', $id)
+        ->where('created_by', $admin['id'])
+        ->find_one();
+}
+
+/** @return true|string true on success, error message otherwise */
+function customersDeleteOne($id, $admin)
+{
+    global $_app_stage;
+
+    if (!in_array($admin['user_type'] ?? '', ['SuperAdmin', 'Admin'], true)) {
+        return Lang::T('You do not have permission to access this page');
+    }
+
+    $c = customersFindScoped($id, $admin);
+    if (!$c) {
+        return Lang::T('Data Not Found');
+    }
+
+    run_hook('delete_customer');
+
+    ORM::for_table('tbl_customers_fields')->where('customer_id', $id)->delete_many();
+
+    $turs = ORM::for_table('tbl_user_recharges')
+        ->where('customer_id', $id)
+        ->find_many();
+    if (count($turs) === 0) {
+        $turs = ORM::for_table('tbl_user_recharges')
+            ->where('username', $c['username'])
+            ->find_many();
+    }
+
+    foreach ($turs as $tur) {
+        $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
+        if ($p && $_app_stage != 'demo') {
+            $dvc = Package::getDevice($p);
+            if (file_exists($dvc)) {
+                require_once $dvc;
+                try {
+                    $planRow = is_array($p) ? $p : $p->as_array();
+                    $planRow['plan_expired'] = 0;
+                    (new $planRow['device'])->remove_customer($c->as_array(), $planRow);
+                } catch (Throwable $e) {
+                    _log('[Customer Delete] Router remove u' . $c['username'] . ': ' . $e->getMessage(), 'Error');
+                }
+            }
+        }
+        try {
+            $tur->delete();
+        } catch (Throwable $e) {
+            _log('[Customer Delete] recharge row: ' . $e->getMessage(), 'Error');
+        }
+    }
+
+    try {
+        $c->delete();
+
+        return true;
+    } catch (Throwable $e) {
+        _log('[Customer Delete] ID ' . $id . ': ' . $e->getMessage(), 'Error');
+
+        return Lang::T('Failed to delete customer') . ': ' . $e->getMessage();
+    }
+}
+
 _admin();
 $ui->assign('_title', Lang::T('Customer'));
 $ui->assign('_system_menu', 'customers');
@@ -525,7 +612,7 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
             }
             $ui->assign('packages', User::_billing($customer['id']));
             $ui->assign('v', $v);
-            $ui->assign('d', $customer);
+            $ui->assign('d', customersRowForUi($customer));
             $ui->assign('customFields', $customFields);
             $ui->assign('xheader', $leafletpickerHeader);
             $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
@@ -574,7 +661,7 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
                     $ui->assign('notify', 'No photo found to delete');
                 }
             }
-            $ui->assign('d', $d);
+            $ui->assign('d', customersRowForUi($d));
             $ui->assign('statuses', ORM::for_table('tbl_customers')->getEnum("status"));
             $ui->assign('customFields', $customFields);
             $ui->assign('xheader', $leafletpickerHeader);
@@ -585,88 +672,83 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
         }
         break;
         case 'delete-selected':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 'error', 'message' => Lang::T('You do not have permission to access this page')]);
+            exit;
+        }
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 'error', 'message' => Lang::T('Invalid request method')]);
+            exit;
+        }
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 'error', 'message' => Lang::T('Invalid or Expired CSRF Token') . '.']);
+            exit;
+        }
 
-    _admin();
-    $ids = $_POST['customer_ids'] ?? [];
+        $ids = $_POST['customer_ids'] ?? [];
+        if (!is_array($ids)) {
+            $ids = [$ids];
+        }
+        $ids = array_values(array_filter(array_map('intval', $ids)));
 
-    if (empty($ids)) {
-        r2(U . 'customers/list', 'e', 'No customer selected');
-    }
+        if ($ids === []) {
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 'error', 'message' => Lang::T('No customer selected')]);
+            exit;
+        }
 
-    foreach ($ids as $id) {
-        if ($admin['user_type'] == 'SuperAdmin') {
+        $deleted = 0;
+        $errors = [];
+        foreach ($ids as $customerId) {
+            $result = customersDeleteOne($customerId, $admin);
+            if ($result === true) {
+                $deleted++;
+            } else {
+                $errors[] = '#' . $customerId . ': ' . $result;
+            }
+        }
 
-    $customer = ORM::for_table('tbl_customers')
-        ->find_one($id);
+        header('Content-Type: application/json');
+        if ($deleted === 0) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => $errors ? implode(' | ', $errors) : Lang::T('Failed to delete customer'),
+            ]);
+            exit;
+        }
 
-} else {
-
-    $customer = ORM::for_table('tbl_customers')
-        ->where('id', $id)
-        ->where('created_by', $admin['id'])
-        ->find_one();
-}
-
-if ($customer) {
-    $customer->delete();
-}
-    }
-
-    echo json_encode(['status' => 'success']);
-    exit;
+        echo json_encode([
+            'status' => 'success',
+            'message' => Lang::T('User deleted Successfully') . ' (' . $deleted . ')',
+            'errors' => $errors,
+        ]);
+        exit;
 
     case 'delete':
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
-        $id = $routes['2'];
-        $csrf_token = _req('token');
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            r2(getUrl('customers/list'), 'e', Lang::T('Invalid request method'));
+        }
+        $id = (int) ($routes['2'] ?? 0);
+        $csrf_token = _post('csrf_token');
+        if ($csrf_token === '') {
+            $csrf_token = _req('token');
+        }
         if (!Csrf::check($csrf_token)) {
             r2(getUrl('customers/view/') . $id, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
         }
-        run_hook('delete_customer'); #HOOK
-        if ($admin['user_type'] == 'SuperAdmin') {
 
-    $c = ORM::for_table('tbl_customers')
-        ->find_one($id);
-
-} else {
-
-    $c = ORM::for_table('tbl_customers')
-        ->where('id', $id)
-        ->where('created_by', $admin['id'])
-        ->find_one();
-}
-        if ($c) {
-            // Delete the associated Customers Attributes records from tbl_customer_custom_fields table
-            ORM::for_table('tbl_customers_fields')->where('customer_id', $id)->delete_many();
-            //Delete active package
-            $turs = ORM::for_table('tbl_user_recharges')->where('username', $c['username'])->find_many();
-            foreach ($turs as $tur) {
-                $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
-                if ($p) {
-                    $dvc = Package::getDevice($p);
-                    if ($_app_stage != 'demo') {
-                        if (file_exists($dvc)) {
-                            require_once $dvc;
-                            $p['plan_expired'] = 0;
-                            (new $p['device'])->remove_customer($c, $p);
-                        } else {
-                            throw new Exception(Lang::T("Devices Not Found"));
-                        }
-                    }
-                }
-                try {
-                    $tur->delete();
-                } catch (Exception $e) {
-                }
-            }
-            try {
-                $c->delete();
-            } catch (Exception $e) {
-            }
+        $result = customersDeleteOne($id, $admin);
+        if ($result === true) {
             r2(getUrl('customers/list'), 's', Lang::T('User deleted Successfully'));
         }
+        r2(getUrl('customers/view/') . $id, 'e', $result);
         break;
 
     case 'add-post':
@@ -715,9 +797,8 @@ if ($customer) {
         if ($msg == '') {
             $d = ORM::for_table('tbl_customers')->create();
             $d->username = $username;
-            $d->password = Password::_crypt($password);
+            Password::assignCustomerCredentials($d, $password, $pppoe_password);
             $d->pppoe_username = $pppoe_username;
-            $d->pppoe_password = $pppoe_password;
             $d->pppoe_ip = $pppoe_ip;
             $d->email = $email;
             $d->account_type = $account_type;
@@ -881,6 +962,7 @@ if ($customer) {
         $oldPppoePassword = $c['pppoe_password'];
         $oldPppoeIp = $c['pppoe_ip'];
         $oldPassPassword = $c['password'];
+        $currentNetworkPassword = Password::networkCleartext($c);
         $userDiff = false;
         $pppoeDiff = false;
         $passDiff = false;
@@ -909,7 +991,10 @@ if ($customer) {
         if ($oldPppoeIp != $pppoe_ip) {
             $pppoeIpDiff = true;
         }
-        if ($password != '' && $oldPassPassword != $password) {
+        if ($password != '' && !Password::isStoredHash($password) && $password !== $currentNetworkPassword) {
+            $passDiff = true;
+        }
+        if ($pppoe_password !== '' && $pppoe_password !== $oldPppoePassword) {
             $passDiff = true;
         }
 
@@ -965,11 +1050,12 @@ if ($customer) {
             if ($userDiff) {
                 $c->username = $username;
             }
-            if ($password != '') {
-                $c->password = Password::_crypt($password);
+            if ($password != '' && !Password::isStoredHash($password)) {
+                Password::assignCustomerCredentials($c, $password, $pppoe_password);
+            } elseif ($pppoe_password !== '') {
+                $c->pppoe_password = $pppoe_password;
             }
             $c->pppoe_username = $pppoe_username;
-            $c->pppoe_password = $pppoe_password;
             $c->pppoe_ip = $pppoe_ip;
             $c->fullname = $fullname;
             $c->email = $email;

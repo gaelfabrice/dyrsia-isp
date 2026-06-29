@@ -133,6 +133,15 @@
                                     <a href="{Text::url('plan/recharge/', $ds['id'], '&token=', $csrf_token)}"
                                         id="{$ds['id']}" style="margin: 0px;"
                                         class="btn btn-primary btn-xs">{Lang::T('Recharge')}</a>
+                                    {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
+                                    <form method="post" action="{Text::url('customers/delete/', $ds['id'])}" style="display:inline;margin:0;padding:0"
+                                        onsubmit="return confirm('{Lang::T('Delete')}?');">
+                                        <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                                        <button type="submit" class="btn btn-danger btn-xs" title="{Lang::T('Delete')}">
+                                            <i class="glyphicon glyphicon-trash"></i>
+                                        </button>
+                                    </form>
+                                    {/if}
                                 </td>
                             </tr>
                             {/foreach}
@@ -141,12 +150,12 @@
                     <div class="row" style="padding: 5px">
                         <div class="col-lg-3 col-lg-offset-9">
                             <div class="btn-group btn-group-justified" role="group">
-                                <!-- <div class="btn-group" role="group">
+                                <div class="btn-group" role="group">
                                     {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
-                                    <button id="deleteSelectedTokens" class="btn btn-danger">{Lang::T('Delete
+                                    <button id="deleteSelectedCustomers" type="button" class="btn btn-danger">{Lang::T('Delete
                                         Selected')}</button>
                                     {/if}
-                                </div> -->
+                                </div>
                                 <div class="btn-group" role="group">
                                     <button id="sendMessageToSelected" class="btn btn-success">{Lang::T('Send
                                         Message')}</button>
@@ -298,5 +307,75 @@
             // $('#button').focus();
         });
     });
+
+    var deleteSelectedBtn = document.getElementById('deleteSelectedCustomers');
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.addEventListener('click', function () {
+            var selectedCustomerIds = [];
+            document.querySelectorAll('input[name="customer_ids[]"]:checked').forEach(function (checkbox) {
+                selectedCustomerIds.push(checkbox.value);
+            });
+
+            if (selectedCustomerIds.length === 0) {
+                Swal.fire({
+                    title: 'Error!',
+                    text: "{Lang::T('Please select at least one customer.')}",
+                    icon: 'error',
+                    confirmButtonText: 'OK'
+                });
+                return;
+            }
+
+            Swal.fire({
+                title: '{Lang::T('Are you sure?')}',
+                text: '{Lang::T('Delete')}?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: '{Lang::T('Delete')}',
+                cancelButtonText: '{Lang::T('Cancel')}'
+            }).then(function (result) {
+                if (!result.isConfirmed) {
+                    return;
+                }
+
+                $.ajax({
+                    url: '{Text::url('customers/delete-selected')}',
+                    method: 'POST',
+                    data: {
+                        csrf_token: (typeof CSRF_TOKEN !== 'undefined') ? CSRF_TOKEN : '',
+                        customer_ids: selectedCustomerIds
+                    },
+                    dataType: 'json',
+                    success: function (response) {
+                        if (response.status === 'success') {
+                            Swal.fire({
+                                title: 'Success!',
+                                text: response.message,
+                                icon: 'success',
+                                confirmButtonText: 'OK'
+                            }).then(function () {
+                                location.reload();
+                            });
+                        } else {
+                            Swal.fire({
+                                title: 'Error!',
+                                text: response.message || '{Lang::T('Failed to delete customer')}',
+                                icon: 'error',
+                                confirmButtonText: 'OK'
+                            });
+                        }
+                    },
+                    error: function () {
+                        Swal.fire({
+                            title: 'Error!',
+                            text: '{Lang::T('Failed to delete customer')}',
+                            icon: 'error',
+                            confirmButtonText: 'OK'
+                        });
+                    }
+                });
+            });
+        });
+    }
 </script>
 {include file = "sections/footer.tpl" }

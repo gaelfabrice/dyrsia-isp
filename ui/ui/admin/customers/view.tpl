@@ -31,7 +31,7 @@
                     </li>
                     {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
                         <li class="list-group-item">
-                            <b>{Lang::T('Password')}</b> <input type="password" value="{$d['password']}"
+                            <b>{Lang::T('Password')}</b> <input type="password" value="{$d['network_password']|default:''}"
                                 style=" border: 0px; text-align: right;" class="pull-right"
                                 onmouseleave="this.type = 'password'" onmouseenter="this.type = 'text'"
                                 onclick="this.select()">
@@ -105,9 +105,13 @@
                 </ul>
                 <div class="row">
                     <div class="col-xs-4">
-                        <a href="{Text::url('customers/delete/', $d['id'], '&token=', $csrf_token)}" id="{$d['id']}"
-                            class="btn btn-danger btn-block btn-sm"
-                            onclick="return ask(this, '{Lang::T('Delete')}?')"><span class="fa fa-trash"></span></a>
+                        <form method="post" action="{Text::url('customers/delete/', $d['id'])}" style="display:inline;margin:0;padding:0"
+                            onsubmit="return confirm('{Lang::T('Delete')}?');">
+                            <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                            <button type="submit" class="btn btn-danger btn-block btn-sm" title="{Lang::T('Delete')}">
+                                <span class="fa fa-trash"></span>
+                            </button>
+                        </form>
                     </div>
                     <div class="col-xs-8">
                         <a href="{Text::url('customers/edit/', $d['id'], '&token=', $csrf_token)}"

@@ -9,6 +9,9 @@
 
 class Package
 {
+    /** Dernière erreur sync MikroTik/RADIUS lors d'un rechargeUser (réinitialisée à chaque appel). */
+    public static $lastDeviceSyncError = '';
+
     /**
      * When extending an active plan, never stack time from a past expiry.
      */
@@ -158,6 +161,13 @@ class Package
             } catch (Exception $e) {
                 _log('[PPPoE expire reinforce] ' . $e->getMessage());
             }
+            try {
+                Mikrotik::reinforceExpiredHotspotOnAllRouters();
+            } catch (Throwable $e) {
+                _log('[Hotspot expire reinforce] ' . $e->getMessage());
+            } catch (Exception $e) {
+                _log('[Hotspot expire reinforce] ' . $e->getMessage());
+            }
         }
 
         return $processed;
@@ -175,6 +185,7 @@ class Package
     public static function rechargeUser($id_customer, $router_name, $plan_id, $gateway, $channel, $note = '')
     {
         global $config, $admin, $c, $p, $b, $t, $d, $zero, $trx, $_app_stage, $isChangePlan;
+        self::$lastDeviceSyncError = '';
         $date_only = date("Y-m-d");
         $time_only = date("H:i:s");
         $time = date("H:i:s");
@@ -391,6 +402,7 @@ class Package
                         throw new Exception(Lang::T("Devices Not Found"));
                     }
                 } catch (Throwable $e) {
+                    self::$lastDeviceSyncError = $e->getMessage();
                     Message::sendTelegram(
                         "System Error. When activate Package. You need to sync manually\n" .
                             "Router: $router_name\n" .
@@ -399,6 +411,7 @@ class Package
                             WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 } catch (Exception $e) {
+                    self::$lastDeviceSyncError = $e->getMessage();
                     Message::sendTelegram(
                         "System Error. When activate Package. You need to sync manually\n" .
                             "Router: $router_name\n" .
@@ -505,6 +518,7 @@ class Package
                         throw new Exception(Lang::T("Devices Not Found"));
                     }
                 } catch (Throwable $e) {
+                    self::$lastDeviceSyncError = $e->getMessage();
                     Message::sendTelegram(
                         "System Error. When activate Package. You need to sync manually\n" .
                             "Router: $router_name\n" .
@@ -513,6 +527,7 @@ class Package
                             WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 } catch (Exception $e) {
+                    self::$lastDeviceSyncError = $e->getMessage();
                     Message::sendTelegram(
                         "System Error. When activate Package. You need to sync manually\n" .
                             "Router: $router_name\n" .
@@ -669,7 +684,7 @@ class Package
         $textInvoice = str_replace('[[plan_price]]', Lang::moneyFormat($plan['price']), $textInvoice);
         $textInvoice = str_replace('[[name]]', $customer['fullname'], $textInvoice);
         $textInvoice = str_replace('[[user_name]]', $customer['username'], $textInvoice);
-        $textInvoice = str_replace('[[user_password]]', $customer['password'], $textInvoice);
+        $textInvoice = str_replace('[[user_password]]', Password::networkCleartext($customer), $textInvoice);
         $textInvoice = str_replace('[[footer]]', $config['note'], $textInvoice);
         $textInvoice = str_replace('[[balance_before]]', Lang::moneyFormat($balance_before), $textInvoice);
         $textInvoice = str_replace('[[balance]]', Lang::moneyFormat($balance), $textInvoice);
@@ -735,7 +750,7 @@ class Package
         $textInvoice = str_replace('[[plan_price]]', Lang::moneyFormat($plan['price']), $textInvoice);
         $textInvoice = str_replace('[[name]]', $customer['fullname'], $textInvoice);
         $textInvoice = str_replace('[[user_name]]', $customer['username'], $textInvoice);
-        $textInvoice = str_replace('[[user_password]]', $customer['password'], $textInvoice);
+        $textInvoice = str_replace('[[user_password]]', Password::networkCleartext($customer), $textInvoice);
         $textInvoice = str_replace('[[footer]]', $config['note'], $textInvoice);
         $textInvoice = str_replace('[[balance_before]]', Lang::moneyFormat($balance_before), $textInvoice);
         $textInvoice = str_replace('[[balance]]', Lang::moneyFormat($balance), $textInvoice);

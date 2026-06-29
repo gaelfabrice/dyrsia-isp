@@ -72,14 +72,6 @@ if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')
                     @mkdir($loginDir, 0755, true);
                 }
                 @copy($templateFile, $file);
-                $templateAssetDir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
-                foreach (['MTN.png', 'orange.png'] as $assetName) {
-                    $src = $templateAssetDir . DIRECTORY_SEPARATOR . $assetName;
-                    $dst = $loginDir . DIRECTORY_SEPARATOR . $assetName;
-                    if (is_file($src) && !is_file($dst)) {
-                        @copy($src, $dst);
-                    }
-                }
             }
         }
         if (!is_file($file) || !is_readable($file)) {
@@ -274,7 +266,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             'success' => true,
             'message' => 'Forfait retrouvé',
             'username' => $recharge['username'] ?: ($customer['username'] ?? ''),
-            'password' => ($customer['password'] ?? '') ?: HotspotCustomer::defaultPassword(),
+            'password' => Password::networkCleartext($customer) ?: HotspotCustomer::defaultPassword(),
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',

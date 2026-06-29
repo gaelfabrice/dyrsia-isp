@@ -59,7 +59,7 @@
                         <div class="col-md-9">
                             <input type="password" autocomplete="off" class="form-control" id="password" name="password"
                                 onmouseleave="this.type = 'password'" onmouseenter="this.type = 'text'"
-                                value="{$d['password']}">
+                                value="{$d['network_password']|default:''}">
                             <span class="help-block">{Lang::T('Keep Blank to do not change Password')}</span>
                         </div>
                     </div>

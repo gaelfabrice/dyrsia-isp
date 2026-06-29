@@ -50,10 +50,9 @@ class MikrotikPppoe
         } else {
             $setRequest = new RouterOS\Request('/ppp/secret/set');
             $setRequest->setArgument('numbers', $cid);
-            if (!empty($customer['pppoe_password'])) {
-                $setRequest->setArgument('password', $customer['pppoe_password']);
-            } else {
-                $setRequest->setArgument('password', $customer['password']);
+            $networkPass = Password::networkCleartext($customer);
+            if ($networkPass !== '') {
+                $setRequest->setArgument('password', $networkPass);
             }
             if (!empty($customer['pppoe_username'])) {
                 $setRequest->setArgument('name', $customer['pppoe_username']);
@@ -571,10 +570,9 @@ class MikrotikPppoe
         $setRequest->setArgument('service', 'pppoe');
         $setRequest->setArgument('profile', $plan['name_plan']);
         $setRequest->setArgument('comment', $customer['fullname'] . ' | ' . $customer['email'] . ' | ' . implode(', ', User::getBillNames($customer['id'])));
-        if (!empty($customer['pppoe_password'])) {
-            $setRequest->setArgument('password', $customer['pppoe_password']);
-        } else {
-            $setRequest->setArgument('password', $customer['password']);
+        $networkPass = Password::networkCleartext($customer);
+        if ($networkPass !== '') {
+            $setRequest->setArgument('password', $networkPass);
         }
         if (!empty($customer['pppoe_username'])) {
             $setRequest->setArgument('name', $customer['pppoe_username']);

@@ -14,7 +14,8 @@ body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;padding:2
 .logo{text-align:center;margin-bottom:20px}
 .logo h1{font-size:26px;background:linear-gradient(135deg,#34d399,#10b981);-webkit-background-clip:text;background-clip:text;color:transparent}
 .logo p{font-size:12px;color:#6b7280;margin-top:4px}
-.plans{display:flex;flex-direction:column;gap:8px;margin:16px 0}
+.plans-section-title{font-size:15px;font-weight:700;color:#facc15;margin:16px 0 10px;text-align:center;letter-spacing:.02em}
+.plans{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
 .plan{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:all .2s}
 .plan:hover{background:rgba(16,185,129,.1);border-color:#10b981}
 .plan-name{font-weight:700;color:#facc15}
@@ -28,8 +29,9 @@ body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;padding:2
 .btn-secondary{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#a7f3d0;margin-bottom:12px}
 .divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:#4b5563;font-size:11px}
 .divider-line{flex:1;height:1px;background:rgba(255,255,255,.1)}
-.wa{display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.3);border-radius:40px;padding:10px;margin-top:16px;text-decoration:none;color:#bbf7d0;font-size:13px;font-weight:600}
-.wa svg{width:18px;fill:currentColor}
+.contact{display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:40px;padding:10px;margin:12px 0 4px;text-decoration:none;color:#e5e7eb;font-size:13px;font-weight:600}
+.contact svg{width:18px;height:18px;fill:currentColor;flex-shrink:0}
+.contact:hover{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.35);color:#a7f3d0}
 .footer{text-align:center;margin-top:20px;font-size:10px;color:#4b5563}
 .error{color:#f87171;font-size:12px;margin-top:8px;display:none}
 </style>
@@ -41,11 +43,12 @@ body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;padding:2
 <p data-hotspot-tagline>Haut débit • Illimité</p>
 </div>
 
-<a href="https://wa.me/33761951914" target="_blank" class="wa">
-<svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
-<span>WhatsApp Assistance</span>
+<a href="tel:+237677000000" class="contact" data-hotspot-contact>
+<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
+<span data-hotspot-contact-label>Assistance</span>
 </a>
 
+<h2 class="plans-section-title" data-hotspot-plans-title>Forfaits Wifi</h2>
 <div class="plans" id="plansList">
 <div style="text-align:center;padding:12px;color:#6b7280">⏳ Chargement...</div>
 </div>
@@ -203,7 +206,12 @@ function fillAndSubmitHotspotLogin(username, password) {
   form.submit();
 }
 
-function connecter(user,pass,nom){Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});setTimeout(function(){fillAndSubmitHotspotLogin(user,pass||'123456');},500);}
+function normalizeHotspotLoginPassword(p){
+  p=String(p||'').trim();
+  if(!p||p.indexOf('$2y$')===0||p.indexOf('$2a$')===0||p.indexOf('$2b$')===0)return '123456';
+  return p;
+}
+function connecter(user,pass,nom){const loginPass=normalizeHotspotLoginPassword(pass||'123456');Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});setTimeout(function(){fillAndSubmitHotspotLogin(user,loginPass);},800);}
 
 async function payer(nom,prix,currency,validite,planid,routername){
   const {value:phone}=await Swal.fire({title:`💰 ${nom} — ${prix} ${currency||'Fcfa'}`,text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:()=>bindHotspotPhoneField(Swal.getInput()),inputValidator:validateHotspotPhoneLen});
@@ -277,6 +285,27 @@ const errorParam='$(error)';
 if(errorParam&&errorParam.indexOf('$(')<0&&errorParam.trim()){const e=document.getElementById('errorMsg');e.innerText=errorParam;e.style.display='block';}
 
 document.getElementById('year').innerText=new Date().getFullYear();
+(function applyHotspotPreviewQuery(){
+  try{
+    var p=new URLSearchParams(window.location.search);
+    var title=p.get('title');
+    if(title){var t=document.querySelector('[data-hotspot-title]');if(t)t.textContent=title;}
+    var tagline=p.get('tagline');
+    if(tagline!==null){var tg=document.querySelector('[data-hotspot-tagline]');if(tg){tg.textContent=tagline;tg.style.display=tagline?'':'none';}}
+    var contact=p.get('contact');
+    var phone=p.get('contact_phone');
+    if(contact!==null||phone!==null){
+      var link=document.querySelector('[data-hotspot-contact]');
+      var label=document.querySelector('[data-hotspot-contact-label]');
+      if(contact&&label)label.textContent=contact;
+      var digits=String(phone||'').replace(/\D/g,'');
+      if(link){
+        if(!digits){link.style.display='none';}
+        else{link.href='tel:+'+digits;link.style.display='';}
+      }
+    }
+  }catch(e){}
+})();
 loadPlans();
 
 /*

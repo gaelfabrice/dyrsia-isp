@@ -10,6 +10,31 @@ class HotspotCustomer
         return '123456';
     }
 
+    /** Mot de passe à utiliser sur le portail captive / MikroTik (pas le hash portail). */
+    public static function loginPassword($customer)
+    {
+        $plain = Password::networkCleartext($customer);
+        return $plain !== '' ? $plain : self::defaultPassword();
+    }
+
+    /** Identifiants après paiement hotspot (username + mot de passe réseau). */
+    public static function credentialsFromPayment($trx)
+    {
+        $username = self::loginUsernameFromPayment($trx);
+        if ($username === '') {
+            $username = trim((string) ($trx->voucher_code ?? ''));
+        }
+        if ($username === '' || $username === '**********') {
+            return ['username' => '', 'password' => self::defaultPassword()];
+        }
+        $customer = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
+
+        return [
+            'username' => $username,
+            'password' => self::loginPassword($customer),
+        ];
+    }
+
     public static function isMacUsername($username)
     {
         $username = trim((string) $username);
@@ -44,7 +69,9 @@ class HotspotCustomer
         $oldUsername = (string) $customer->username;
         $customer->username = self::generateUsername(10);
         if ($customer->password === $oldUsername || self::isMacUsername((string) $customer->password)) {
-            $customer->password = self::defaultPassword();
+            $plain = self::defaultPassword();
+            $customer->password = Password::_crypt($plain);
+            $customer->pppoe_password = $plain;
         }
         $customer->save();
 
@@ -135,7 +162,9 @@ class HotspotCustomer
         if (!$customer) {
             $customer = ORM::for_table('tbl_customers')->create();
             $customer->username = self::generateUsername(10);
-            $customer->password = self::defaultPassword();
+            $plain = self::defaultPassword();
+            $customer->password = Password::_crypt($plain);
+            $customer->pppoe_password = $plain;
             $customer->fullname = $fullname !== '' ? $fullname : 'Client Hotspot';
             $customer->address = $address !== '' ? $address : 'Hotspot';
             $customer->phonenumber = $formattedPhone;

@@ -407,6 +407,8 @@
         var rows = [
             ['Titre', val('hotspot_page_title')],
             ['Description', val('hotspot_page_tagline')],
+            ['Contact', val('hotspot_contact')],
+            ['Numéro contact', val('hotspot_contact_phone')],
             ['Routeur', labelForSelect('hotspot_login_router')],
             ['Affichage cartes', labelForSelect('hotspot_card_display')],
             ['Nom Hotspot', val('hotspot_name')],
@@ -522,7 +524,7 @@
     }
 
     function bindPreviewInputs() {
-        ['hotspot_page_title', 'hotspot_page_tagline', 'hotspot_login_router', 'hotspot_card_display'].forEach(function (name) {
+        ['hotspot_page_title', 'hotspot_page_tagline', 'hotspot_contact', 'hotspot_contact_phone', 'hotspot_login_router', 'hotspot_card_display'].forEach(function (name) {
             var el = document.querySelector('[name="' + name + '"]');
             if (!el) return;
             el.addEventListener('input', updatePreview);

@@ -60,6 +60,50 @@ class Password
         return self::_crypt($plainPassword);
     }
 
+    /**
+     * Mot de passe en clair pour MikroTik / FreeRADIUS (Cleartext-Password).
+     * Le champ password en base est hashé (bcrypt) ; pppoe_password conserve le secret réseau.
+     */
+    public static function networkCleartext($customer)
+    {
+        if (is_object($customer)) {
+            $customer = method_exists($customer, 'as_array') ? $customer->as_array() : (array) $customer;
+        }
+        if (!is_array($customer)) {
+            return '';
+        }
+        $network = trim((string) ($customer['pppoe_password'] ?? ''));
+        if ($network !== '') {
+            return $network;
+        }
+        $stored = (string) ($customer['password'] ?? '');
+        if ($stored === '' || self::isModernHash($stored)) {
+            return '';
+        }
+        if (strlen($stored) === 40 && ctype_xdigit($stored)) {
+            return '';
+        }
+
+        return $stored;
+    }
+
+    /**
+     * Enregistre password (hash portail) + pppoe_password (clair MikroTik/RADIUS).
+     */
+    public static function assignCustomerCredentials($customer, $plainPassword, $networkPassword = '')
+    {
+        $plain = trim((string) $plainPassword);
+        $network = trim((string) $networkPassword);
+        $customer->password = self::_crypt($plain);
+        $customer->pppoe_password = $network !== '' ? $network : $plain;
+    }
+
+    /** True si la valeur ressemble à un hash bcrypt (pas un mot de passe saisi). */
+    public static function isStoredHash($value)
+    {
+        return self::isModernHash((string) $value);
+    }
+
     private static function isModernHash($hash)
     {
         if (!is_string($hash) || strlen($hash) < 4) {

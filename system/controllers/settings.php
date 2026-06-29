@@ -1424,6 +1424,8 @@ switch ($action) {
             'hotspot_banner_text',
             'hotspot_help_title',
             'hotspot_help_text',
+            'hotspot_contact',
+            'hotspot_contact_phone',
             'hotspot_help_whatsapp',
             'hotspot_help_whatsapp_label',
             'hotspot_chat_service',
@@ -1452,22 +1454,12 @@ switch ($action) {
             $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
             $defaultLoginFile = $loginDir . DIRECTORY_SEPARATOR . 'login.html';
             $templateLoginFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik-hotspot-login.html';
-            $templateAssetDir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
 
             if (!is_file($defaultLoginFile) && is_file($templateLoginFile)) {
                 if (!is_dir($loginDir)) {
                     @mkdir($loginDir, 0755, true);
                 }
                 @copy($templateLoginFile, $defaultLoginFile);
-                if (is_dir($templateAssetDir)) {
-                    foreach (['MTN.png', 'orange.png'] as $assetName) {
-                        $src = $templateAssetDir . DIRECTORY_SEPARATOR . $assetName;
-                        $dst = $loginDir . DIRECTORY_SEPARATOR . $assetName;
-                        if (is_file($src) && !is_file($dst)) {
-                            @copy($src, $dst);
-                        }
-                    }
-                }
             }
 
             if (file_exists($defaultLoginFile) || is_file($templateLoginFile)) {
@@ -1527,8 +1519,8 @@ switch ($action) {
                     $html = Mikrotik::patchHotspotLoginHelpSection($html, [
                         'title' => $config['hotspot_help_title'] ?? '',
                         'text' => $config['hotspot_help_text'] ?? '',
-                        'whatsapp' => $config['hotspot_help_whatsapp'] ?? '',
-                        'whatsapp_label' => $config['hotspot_help_whatsapp_label'] ?? '',
+                        'contact' => $config['hotspot_contact'] ?? ($config['hotspot_help_whatsapp_label'] ?? ''),
+                        'contact_phone' => $config['hotspot_contact_phone'] ?? ($config['hotspot_help_whatsapp'] ?? ''),
                     ]);
                     $html = MobileMoneyGateway::patchModernHotspotChapLogin($html);
                     $html = MobileMoneyGateway::repairHotspotLoginHtml($html);
@@ -1551,13 +1543,20 @@ switch ($action) {
                 };
 
                 $isModernHotspotLogin = strpos($html, 'window.HOTSPOT_INLINE_MD5') !== false
-                    && strpos($html, 'function fetchHotspotEndpoint') !== false;
+                    && (
+                        strpos($html, 'function fetchHotspotEndpoint') !== false
+                        || strpos($html, 'data-hotspot-contact') !== false
+                        || strpos($html, 'id="plansList"') !== false
+                        || strpos($html, 'async function api') !== false
+                    );
 
                 if ($isModernHotspotLogin) {
                     $html = preg_replace('/<title>.*?<\/title>/is', '<title>' . $safeTitle . ' | Portail Haut Débit</title>', $html, 1);
                     $html = preg_replace('/<span data-hotspot-title>.*?<\/span>/is', '<span data-hotspot-title>' . $safeTitle . '</span>', $html, 1);
                     if ($safeTagline !== '') {
                         $html = preg_replace('/<p\s+data-hotspot-tagline>[^<]*<\/p>/is', '<p data-hotspot-tagline>' . $safeTagline . '</p>', $html, 1);
+                    } else {
+                        $html = preg_replace('/<p\s+data-hotspot-tagline>[^<]*<\/p>\s*/is', '', $html, 1);
                     }
                     $taglineHtml = $safeTagline !== '' ? "\n        " . '<p>' . $safeTagline . '</p>' : '';
                     $html = preg_replace('/<div class="hero">\s*<h1>(.*?)<\/h1>\s*(?:<p>.*?<\/p>)?/is', '<div class="hero">' . "\n        " . '<h1>$1</h1>' . $taglineHtml, $html, 1);
@@ -1583,6 +1582,11 @@ switch ($action) {
                     }
                 }
                 $html = preg_replace('/<span data-hotspot-title>.*?<\/span>/is', '<span data-hotspot-title>' . $safeTitle . '</span>', $html, 1);
+                if ($safeTagline !== '') {
+                    $html = preg_replace('/<p\s+data-hotspot-tagline>[^<]*<\/p>/is', '<p data-hotspot-tagline>' . $safeTagline . '</p>', $html, 1);
+                } else {
+                    $html = preg_replace('/<p\s+data-hotspot-tagline>[^<]*<\/p>\s*/is', '', $html, 1);
+                }
                 $taglineHtml = $safeTagline !== '' ? "\n        " . '<p>' . $safeTagline . '</p>' : '';
                 $html = preg_replace('/<div class="hero">\s*<h1>(.*?)<\/h1>\s*(?:<p>.*?<\/p>)?/is', '<div class="hero">' . "\n        " . '<h1>$1</h1>' . $taglineHtml, $html, 1);
                 $html = preg_replace('/const APP_URL = .*?;/s', 'const APP_URL = ' . json_encode(rtrim($apiUrl, '/')) . ';', $html, 1);
@@ -1858,6 +1862,12 @@ HTML;
             if (trim((string) ($_POST['hotspot_address_per_mac'] ?? '')) === '') {
                 $_POST['hotspot_address_per_mac'] = '1';
             }
+            $contactPhone = preg_replace('/\D/', '', (string) ($_POST['hotspot_contact_phone'] ?? ''));
+            if ($contactPhone !== '' && strlen($contactPhone) === 9 && str_starts_with($contactPhone, '6')) {
+                $contactPhone = '237' . $contactPhone;
+            }
+            $_POST['hotspot_contact_phone'] = $contactPhone;
+            $_POST['hotspot_contact'] = trim((string) ($_POST['hotspot_contact'] ?? ''));
 
             foreach ($hotspotKeys as $key) {
                 $value = $key == 'hotspot_login_methods' ? implode(',', $_POST[$key] ?? []) : ($_POST[$key] ?? '');
@@ -1918,6 +1928,8 @@ HTML;
         };
 
         if (_post('save') == 'save') {
+            @set_time_limit(120);
+            @ini_set('max_execution_time', '120');
             $saveHotspotSettings();
             $selectedRouter = trim((string) ($config['hotspot_login_router'] ?? ''));
             $syncedPlans = 0;
@@ -2073,6 +2085,86 @@ HTML;
                     );
                 }
                 $hotspotServerName = trim((string) ($config['hotspot_name'] ?? ''));
+                $sendFullDeploy = (_post('send_full') === '1');
+                $fetchTs = time();
+                $apiUrlForFetch = Mikrotik::normalizeHotspotBackendApiUrl(trim((string) ($config['hotspot_api_url'] ?? '')));
+                if ($apiUrlForFetch === '') {
+                    r2($hotspotSettingsUrl(), 'e', 'Hotspot API URL requise (ex. https://wifizones.org).');
+                }
+                $hotspotListenIp = $hotspotServerName !== ''
+                    ? Mikrotik::getHotspotServerAddress($client, $hotspotServerName)
+                    : '';
+                $useLightSend = !$sendFullDeploy && $hotspotListenIp !== '';
+
+                if (!$sendFullDeploy && $hotspotListenIp === '') {
+                    r2(
+                        $hotspotSettingsUrl(),
+                        'w',
+                        'Hotspot non détecté sur le routeur. Utilisez « Send complet » pour la première installation (pool, profils, login.html).'
+                    );
+                }
+
+                if ($useLightSend) {
+                    $captiveApiUrl = rtrim($apiUrlForFetch, '/');
+                    $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
+                    $apiHostForDns = parse_url($apiUrlForFetch, PHP_URL_HOST);
+                    $apiPort = (int) (parse_url($apiUrlForFetch, PHP_URL_PORT) ?: ((parse_url($apiUrlForFetch, PHP_URL_SCHEME) === 'https') ? 443 : 80));
+                    if ($apiHostForDns && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
+                        $natResult = Mikrotik::ensureHotspotApiNatProxy($client, $hotspotListenIp, $apiHostForDns, $apiPort);
+                        if (!empty($natResult['ok']) && !empty($natResult['captive_url'])) {
+                            $captiveApiUrl = $natResult['captive_url'];
+                        }
+                    }
+                    try {
+                        $renderedLoginHtml = Mikrotik::patchHotspotLoginCaptiveApi($renderedLoginHtml, $captiveApiUrl, $dnsName, APP_URL);
+                        $uploadId = 'DYRSIA_UPLOAD_' . date('YmdHis', $fetchTs);
+                        $renderedLoginHtml = preg_replace('/<!--\s*DYRSIA_UPLOAD_[^>]*-->\s*/', '', $renderedLoginHtml) ?? $renderedLoginHtml;
+                        $renderedLoginHtml = preg_replace('/<meta\s+name=["\']dyrsia-generated-at["\'][^>]*>\s*/i', '', $renderedLoginHtml) ?? $renderedLoginHtml;
+                        $renderedLoginHtml = str_replace(
+                            '</head>',
+                            '<meta name="dyrsia-generated-at" content="' . date('c', $fetchTs) . '">' . "\n"
+                            . '<!-- ' . $uploadId . ' -->' . "\n"
+                            . '</head>',
+                            $renderedLoginHtml
+                        );
+                        file_put_contents($loginDir . DIRECTORY_SEPARATOR . 'login.html', $renderedLoginHtml);
+                    } catch (Throwable $e) {
+                        r2($hotspotSettingsUrl(), 'e', 'Erreur traitement HTML: ' . $e->getMessage());
+                    }
+
+                    $deployResult = Mikrotik::deployHotspotLoginHtml($client, $renderedLoginHtml, []);
+                    if (empty($deployResult['ok'])) {
+                        r2(
+                            $hotspotSettingsUrl(),
+                            'e',
+                            'Échec envoi login.html : ' . implode(' | ', $deployResult['errors'] ?? ['échec inconnu'])
+                        );
+                    }
+                    $sentPath = (string) ($deployResult['path'] ?? 'hotspot/login.html');
+                    $deployMethod = (string) ($deployResult['method'] ?? 'api');
+                    $routerLoginSize = Mikrotik::getRouterFileSize($client, $sentPath);
+                    if ($routerLoginSize <= 0) {
+                        r2(
+                            $hotspotSettingsUrl(),
+                            'e',
+                            'login.html absent sur le routeur après envoi. Essayez « Send complet » ou vérifiez /file print.'
+                        );
+                    }
+                    r2(
+                        $hotspotSettingsUrl(),
+                        's',
+                        'login.html envoyé vers « '
+                        . $routerName
+                        . ' » ('
+                        . $deployMethod
+                        . ', '
+                        . $routerLoginSize
+                        . ' octets). ID: '
+                        . $uploadId
+                        . '.'
+                    );
+                }
+
                 $hotspotSetupNote = '';
                 $hotspotSetup = Mikrotik::applyHotspotSetupFromConfig($client, $config, is_array($mikrotik) ? $mikrotik : (method_exists($mikrotik, 'as_array') ? $mikrotik->as_array() : null));
                 if (empty($hotspotSetup['ok'])) {
@@ -2217,7 +2309,7 @@ HTML;
                 }
                 $fetchPreflight = $isLocalHotspotDev
                     ? true
-                    : Mikrotik::verifyHotspotFetchUrls($loginFetchUrls, 4);
+                    : Mikrotik::verifyHotspotFetchUrls($loginFetchUrls, 2);
                 if (!$isLocalHotspotDev && $fetchPreflight !== true) {
                     $loginFilePath = $loginDir . DIRECTORY_SEPARATOR . 'login.html';
                     if (is_file($loginFilePath) && filesize($loginFilePath) > 4000) {
@@ -2243,23 +2335,6 @@ HTML;
                         'e',
                         'Échec de l\'envoi vers MikroTik : ' . $fetchPreflight . $preflightHint
                     );
-                }
-                $fetchBases = array_values(array_unique(array_filter([
-                    rtrim($captiveApiUrl, '/'),
-                    rtrim($apiUrlForFetch, '/'),
-                    rtrim(APP_URL, '/'),
-                ], function ($fetchBase) {
-                    return Mikrotik::isRouterFetchableUrl($fetchBase);
-                })));
-                $assetFetchUrlsByName = [];
-                $assetFetchBase = $fetchBases[0] ?? '';
-                if ($assetFetchBase !== '') {
-                    foreach (['MTN.png', 'orange.png'] as $assetName) {
-                        $assetUrl = $assetFetchBase . '/system/uploads/mikrotik_hotspot/' . rawurlencode($assetName) . '?ts=' . $fetchTs;
-                        if (Mikrotik::isRouterFetchableUrl($assetUrl)) {
-                            $assetFetchUrlsByName[$assetName] = [$assetUrl];
-                        }
-                    }
                 }
 
                 $deployResult = Mikrotik::deployHotspotLoginHtml($client, $renderedLoginHtml, $loginFetchUrls);
@@ -2289,23 +2364,6 @@ HTML;
                     );
                 }
 
-                $hotspotAssetDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
-                foreach (['MTN.png', 'orange.png'] as $assetName) {
-                    try {
-                        $assetSource = $hotspotAssetDir . DIRECTORY_SEPARATOR . $assetName;
-                        if (!is_file($assetSource)) {
-                            continue;
-                        }
-                        $assetBinary = file_get_contents($assetSource);
-                        if ($assetBinary === false) {
-                            continue;
-                        }
-                        $assetFetchUrls = $assetFetchUrlsByName[$assetName] ?? [];
-                        Mikrotik::deployHotspotAssetFile($client, $assetName, $assetBinary, $assetFetchUrls);
-                    } catch (Throwable $e) {
-                        // Ignore asset deployment errors - login.html is the critical file
-                    }
-                }
                 $dnsNote = '';
                 if ($dnsName !== '' && !empty($apiHostForDns) && filter_var($apiHostForDns, FILTER_VALIDATE_IP)) {
                     $dnsNote = ' DNS ' . $dnsName . ' → ' . $apiHostForDns . '.';
@@ -2334,6 +2392,19 @@ HTML;
 
         $routers = settings_scoped_router_query($admin)->order_by_asc('name')->find_many();
         MobileMoneyGateway::syncHotspotCaptivePaymentUi();
+        $hsContact = trim((string) ($config['hotspot_contact'] ?? ''));
+        if ($hsContact === '') {
+            $hsContact = trim((string) ($config['hotspot_help_whatsapp_label'] ?? ''));
+        }
+        if ($hsContact === '') {
+            $hsContact = 'Assistance';
+        }
+        $hsContactPhone = trim((string) ($config['hotspot_contact_phone'] ?? ''));
+        if ($hsContactPhone === '') {
+            $hsContactPhone = trim((string) ($config['hotspot_help_whatsapp'] ?? ''));
+        }
+        $ui->assign('hs_contact', $hsContact);
+        $ui->assign('hs_contact_phone', $hsContactPhone);
         $loginPreviewFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
         $ui->assign('hs_login_preview_ts', is_file($loginPreviewFile) ? filemtime($loginPreviewFile) : time());
         $ui->assign('_title', Lang::T('Hotspot_Setup'));

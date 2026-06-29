@@ -121,8 +121,15 @@ class Radius
                 $this->customerAddPlan($customer, $p);
             }
         } else {
-        $this->customerDeactivate($customer['username'], true);
-		}
+            $this->customerDeactivate($customer['username'], true);
+        }
+
+        if (class_exists('Mikrotik') && strtolower(trim((string) ($plan['type'] ?? ''))) === 'hotspot') {
+            Mikrotik::disconnectHotspotUserOnRouter(
+                trim((string) ($plan['routers'] ?? '')),
+                trim((string) ($customer['username'] ?? ''))
+            );
+        }
     }
 
     public function change_username($plan, $from, $to)
@@ -203,7 +210,26 @@ class Radius
 
     function disconnect_customer($customer, $router_name)
     {
-        $this->disconnectCustomer($customer['username']);
+        $username = trim((string) ($customer['username'] ?? ''));
+        $extraIps = [];
+        if ($username !== '' && function_exists('wifizone_ensure_radius_orm') && wifizone_ensure_radius_orm()) {
+            $act = ORM::for_table('radacct', 'radius')
+                ->where_raw('acctstoptime IS NULL')
+                ->where('username', $username)
+                ->find_one();
+            if ($act && !empty($act['framedipaddress'])) {
+                $ip = trim((string) $act['framedipaddress']);
+                if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP)) {
+                    $extraIps[] = $ip;
+                }
+            }
+        }
+
+        $this->disconnectCustomer($username);
+
+        if ($username !== '' && class_exists('Mikrotik')) {
+            Mikrotik::disconnectHotspotUserOnRouter($router_name, $username, $extraIps);
+        }
     }
 
     public function getTableNas()
@@ -412,11 +438,8 @@ class Radius
 
     public function customerUpsert($customer, $plan) //Update or Insert customer plan
     {
-        if ($plan['type'] == 'PPPOE') {
-            $this->upsertCustomer($customer['username'], 'Cleartext-Password', (empty($customer['pppoe_password'])) ? $customer['password'] : $customer['pppoe_password']);
-        } else {
-            $this->upsertCustomer($customer['username'], 'Cleartext-Password',  $customer['password']);
-        }
+        $networkPassword = Password::networkCleartext($customer);
+        $this->upsertCustomer($customer['username'], 'Cleartext-Password', $networkPassword);
         $this->upsertCustomer($customer['username'], 'Simultaneous-Use', ($plan['type'] == 'PPPOE') ? 1 : $plan['shared_users']);
         // Mikrotik Spesific
         $this->upsertCustomer($customer['username'], 'Port-Limit', ($plan['type'] == 'PPPOE') ? 1 : $plan['shared_users']);

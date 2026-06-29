@@ -5,6 +5,8 @@
 
     {assign var=hs_title value=$_c['hotspot_page_title']|default:'yoyo'}
     {assign var=hs_tagline value=$_c['hotspot_page_tagline']|default:''}
+    {assign var=hs_contact value=$hs_contact|default:'Assistance'}
+    {assign var=hs_contact_phone value=$hs_contact_phone|default:''}
     {assign var=hs_api_url value=$_c['hotspot_api_url']|default:'https://wifizones.org'}
     {assign var=hs_router value=$_c['hotspot_login_router']|default:''}
     {assign var=hs_display value=$_c['hotspot_card_display']|default:'auto'}
@@ -151,6 +153,7 @@
 
     <form method="post" action="{Text::url('settings/hotspot')}" id="hs-wizard-form" class="form-horizontal">
         <input type="hidden" name="send_mikrotik" id="hs-send-mikrotik-field" value="">
+        <input type="hidden" name="send_full" id="hs-send-full-field" value="">
         <input type="hidden" name="sync_hotspot_plans" id="hs-sync-plans-field" value="">
         <input type="hidden" name="hs_wizard_step" id="hs_wizard_step" value="{$hs_wizard_step|escape}">
         <div class="hs-wizard-wrap">
@@ -173,12 +176,6 @@
                                 <label class="col-md-3 control-label">{Lang::T('Hotspot Page Title')}</label>
                                 <div class="col-md-9">
                                     <input type="text" name="hotspot_page_title" class="form-control" value="{$hs_title}" placeholder="Hotspot Page Title">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label class="col-md-3 control-label">{Lang::T('Description / Tagline')}</label>
-                                <div class="col-md-9">
-                                    <input type="text" name="hotspot_page_tagline" class="form-control" value="{$hs_tagline}" placeholder="Laisser vide pour ne rien afficher">
                                 </div>
                             </div>
                             <div class="form-group">
@@ -226,6 +223,28 @@
                             <h4><i class="fa fa-wrench"></i> {Lang::T('Hotspot_Setup')}</h4>
                             <p class="text-muted">Les champs se synchronisent automatiquement depuis le routeur sélectionné à l'étape 1.</p>
                             <div id="hs-sync-status" class="hs-sync-status"></div>
+
+                            <div class="form-group">
+                                <label class="col-md-4 control-label">{Lang::T('Description / Tagline')}</label>
+                                <div class="col-md-8">
+                                    <input type="text" name="hotspot_page_tagline" class="form-control" value="{$hs_tagline|escape}" placeholder="Ex. Haut débit • Illimité — laisser vide pour masquer">
+                                    <p class="help-block">Sous-titre affiché sous le titre sur la page captive.</p>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="col-md-4 control-label">Contact</label>
+                                <div class="col-md-8">
+                                    <input type="text" name="hotspot_contact" class="form-control" value="{$hs_contact|escape}" placeholder="Ex. Assistance, Support technique">
+                                    <p class="help-block">Libellé affiché à côté de l'icône téléphone sur le portail (remplace « WhatsApp Assistance »).</p>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="col-md-4 control-label">Numéro de contact</label>
+                                <div class="col-md-8">
+                                    <input type="tel" name="hotspot_contact_phone" class="form-control" value="{$hs_contact_phone|escape}" placeholder="Ex. 677123456 ou +237677123456">
+                                    <p class="help-block">Numéro cliquable pour lancer un appel (<code>tel:</code>). Laisser vide pour masquer le bouton contact.</p>
+                                </div>
+                            </div>
 
                             <div class="form-group">
                                 <label class="col-md-4 control-label">Nom du Hotspot</label>
@@ -407,8 +426,11 @@
                                     <a href="{Text::url('settings/hotspot&download_login=1')}" class="btn btn-info">
                                         <i class="fa fa-download"></i> Download Login.html
                                     </a>
-                                    <button type="submit" value="1" id="hs-send-mikrotik-btn" class="btn btn-warning">
-                                        <i class="fa fa-cloud-upload"></i> Send to Mikrotik
+                                    <button type="submit" value="1" id="hs-send-mikrotik-btn" class="btn btn-warning" title="Envoi rapide de login.html (pool et forfaits : boutons Save / Sync forfaits)">
+                                        <i class="fa fa-cloud-upload"></i> Send login.html
+                                    </button>
+                                    <button type="submit" value="1" id="hs-send-full-btn" class="btn btn-default" title="Pool, profils, forfaits, walled-garden — plus long">
+                                        <i class="fa fa-cogs"></i> Send complet
                                     </button>
                                 </div>
                             </div>
@@ -429,7 +451,7 @@
         </div>
     </form>
 
-    <script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.27b"></script>
+    <script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.06.27c"></script>
     <script>
     window.HS_FETCH_URL = '{$hs_fetch_url|escape:'javascript'}';
     window.HS_INITIAL_ROUTER = '{$hs_router|escape:'javascript'}';
@@ -445,6 +467,18 @@
         var previewTs = '{$hs_login_preview_ts|default:0|escape:'javascript'}';
         function updatePreviewUrl() {
             var qs = '?title=' + encodeURIComponent(titleInput.value || '');
+            var taglineInput = document.querySelector('input[name="hotspot_page_tagline"]');
+            if (taglineInput && taglineInput.value) {
+                qs += '&tagline=' + encodeURIComponent(taglineInput.value);
+            }
+            var contactInput = document.querySelector('input[name="hotspot_contact"]');
+            if (contactInput && contactInput.value) {
+                qs += '&contact=' + encodeURIComponent(contactInput.value);
+            }
+            var contactPhoneInput = document.querySelector('input[name="hotspot_contact_phone"]');
+            if (contactPhoneInput && contactPhoneInput.value) {
+                qs += '&contact_phone=' + encodeURIComponent(contactPhoneInput.value);
+            }
             if (previewRouter) {
                 qs += '&routername=' + encodeURIComponent(previewRouter);
             }
@@ -454,6 +488,13 @@
             preview.src = basePreviewUrl + qs;
         }
         titleInput.addEventListener('input', updatePreviewUrl);
+        ['hotspot_page_tagline', 'hotspot_contact', 'hotspot_contact_phone'].forEach(function (name) {
+            var el = document.querySelector('[name="' + name + '"]');
+            if (el) {
+                el.addEventListener('input', updatePreviewUrl);
+                el.addEventListener('change', updatePreviewUrl);
+            }
+        });
         var routerSelect = document.querySelector('select[name="hotspot_login_router"]');
         if (routerSelect) {
             routerSelect.addEventListener('change', function () {
@@ -464,6 +505,8 @@
 
         var wizardForm = document.getElementById('hs-wizard-form');
         var sendBtn = document.getElementById('hs-send-mikrotik-btn');
+        var sendFullBtn = document.getElementById('hs-send-full-btn');
+        var sendFullField = document.getElementById('hs-send-full-field');
         var sendField = document.getElementById('hs-send-mikrotik-field');
         var syncPlansBtn = document.getElementById('hs-sync-plans-btn');
         var syncPlansField = document.getElementById('hs-sync-plans-field');
@@ -504,17 +547,39 @@
                 if (sendField) {
                     sendField.value = '1';
                 }
+                if (sendFullField) {
+                    sendFullField.value = '';
+                }
                 if (syncPlansField) {
                     syncPlansField.value = '';
                 }
             });
+        }
+        if (wizardForm && sendFullBtn) {
+            sendFullBtn.addEventListener('click', function () {
+                if (sendField) {
+                    sendField.value = '1';
+                }
+                if (sendFullField) {
+                    sendFullField.value = '1';
+                }
+                if (syncPlansField) {
+                    syncPlansField.value = '';
+                }
+            });
+        }
+        if (wizardForm && (sendBtn || sendFullBtn)) {
             wizardForm.addEventListener('submit', function (event) {
                 var submitter = event.submitter;
-                var isSendMikrotik = (sendField && sendField.value === '1') || (submitter && submitter.id === 'hs-send-mikrotik-btn');
+                var isSendMikrotik = (sendField && sendField.value === '1') || (submitter && (submitter.id === 'hs-send-mikrotik-btn' || submitter.id === 'hs-send-full-btn'));
+                var isSendFull = (sendFullField && sendFullField.value === '1') || (submitter && submitter.id === 'hs-send-full-btn');
                 var isSyncPlans = (syncPlansField && syncPlansField.value === '1') || (submitter && submitter.id === 'hs-sync-plans-btn');
                 if (!isSendMikrotik) {
                     if (sendField) {
                         sendField.value = '';
+                    }
+                    if (sendFullField) {
+                        sendFullField.value = '';
                     }
                 }
                 if (!isSyncPlans && syncPlansField) {
@@ -541,10 +606,15 @@
                 if (!isSendMikrotik) {
                     return;
                 }
-                if (!confirm('Envoyer la configuration (pool + paramètres) vers le routeur sélectionné ?')) {
+                if (!confirm(isSendFull
+                    ? 'Envoi complet vers le routeur (pool, forfaits, walled-garden, login.html) ? Cela peut prendre 1 à 2 minutes.'
+                    : 'Envoyer login.html vers le routeur ? (envoi rapide, quelques secondes)')) {
                     event.preventDefault();
                     if (sendField) {
                         sendField.value = '';
+                    }
+                    if (sendFullField) {
+                        sendFullField.value = '';
                     }
                     return;
                 }
@@ -552,10 +622,19 @@
                     if (sendField) {
                         sendField.value = '';
                     }
+                    if (sendFullField) {
+                        sendFullField.value = '';
+                    }
                     return;
                 }
-                sendBtn.disabled = true;
-                sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi vers MikroTik…';
+                if (sendBtn) {
+                    sendBtn.disabled = true;
+                    sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi login.html…';
+                }
+                if (sendFullBtn) {
+                    sendFullBtn.disabled = true;
+                    sendFullBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi complet…';
+                }
             });
 
             // A required field hidden in a previous wizard step blocks submission silently.

@@ -71,12 +71,14 @@ class MikrotikHotspot
             $p = ORM::for_table("tbl_plans")->find_one($plan['plan_expired']);
             if($p){
                 $this->add_customer($customer, $p);
-                $this->removeHotspotActiveUser($client, $customer['username']);
+                Mikrotik::disconnectHotspotUser($client, $customer['username']);
+                Mikrotik::sweepOrphanHotspotSessions($client);
                 return;
             }
         }
         $this->removeHotspotUser($client, $customer['username']);
-        $this->removeHotspotActiveUser($client, $customer['username']);
+        Mikrotik::disconnectHotspotUser($client, $customer['username']);
+        Mikrotik::sweepOrphanHotspotSessions($client);
     }
 
     // customer change username
@@ -129,7 +131,7 @@ class MikrotikHotspot
         $client->sendSync(
             $addRequest
                 ->setArgument('user', $customer['username'])
-                ->setArgument('password', $customer['password'])
+                ->setArgument('password', Password::networkCleartext($customer))
                 ->setArgument('ip', $ip)
                 ->setArgument('mac-address', $mac_address)
         );
@@ -137,17 +139,7 @@ class MikrotikHotspot
 
     function disconnect_customer($customer, $router_name)
     {
-        $client = $this->routerClient($router_name);
-        $printRequest = new RouterOS\Request(
-            '/ip hotspot active print',
-            RouterOS\Query::where('user', $customer['username'])
-        );
-        $id = $client->sendSync($printRequest)->getProperty('.id');
-        $removeRequest = new RouterOS\Request('/ip/hotspot/active/remove');
-        $client->sendSync(
-            $removeRequest
-                ->setArgument('numbers', $id)
-        );
+        Mikrotik::disconnectHotspotUserOnRouter($router_name, $customer['username']);
     }
 
 
@@ -244,6 +236,11 @@ class MikrotikHotspot
             return null;
         }
 
+        $networkPass = Password::networkCleartext($customer);
+        if ($networkPass === '') {
+            throw new Exception('Mot de passe réseau manquant pour ' . ($customer['username'] ?? ''));
+        }
+
         // ===============================
         // CUSTOM COMMENT SYSTEM (Updated)
         // ===============================
@@ -310,7 +307,7 @@ class MikrotikHotspot
             $setRequest->setArgument('numbers', $existingUserID);
             $setRequest->setArgument('profile', $plan['name_plan']);
             $setRequest->setArgument('comment', $targetComment);
-            $setRequest->setArgument('password', $customer['password']);
+            $setRequest->setArgument('password', Password::networkCleartext($customer));
             if (isset($customer['mac']) && $customer['mac'] != '') {
                 $setRequest->setArgument('mac-address', $customer['mac']);
             }
@@ -325,7 +322,7 @@ class MikrotikHotspot
         $addRequest
             ->setArgument('name', $customer['username'])
             ->setArgument('profile', $plan['name_plan'])
-            ->setArgument('password', $customer['password'])
+            ->setArgument('password', Password::networkCleartext($customer))
             ->setArgument('comment', $targetComment);
 
         if (isset($customer['email']) && $customer['email'] != '') {
