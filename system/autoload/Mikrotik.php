@@ -5708,6 +5708,20 @@ class Mikrotik
             }
         }
 
+        // IMPORTANT: Assurer use-ip-firewall=yes AVANT la création du serveur hotspot
+        // pour que MikroTik génère les règles firewall correctement
+        try {
+            $bridgeFwResult = self::ensureHotspotBridgeFirewall($client, $interface);
+            foreach ($bridgeFwResult['actions'] ?? [] as $action) {
+                $actions[] = $action;
+            }
+            $errors = array_merge($errors, $bridgeFwResult['errors'] ?? []);
+        } catch (Throwable $e) {
+            $errors[] = 'configuration bridge firewall: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'configuration bridge firewall: ' . $e->getMessage();
+        }
+
         try {
             self::ensureHotspotServerEntry($client, $hotspotName, $interface, $profileName, $poolName, $addressPerMac);
             $actions[] = 'serveur « ' . $hotspotName . ' »';
@@ -7759,7 +7773,7 @@ class Mikrotik
             'interface' => $interface,
             'profile' => $profileName,
             'address-pool' => $poolName,
-            'address-per-mac' => $addressPerMac,
+            'addresses-per-mac' => $addressPerMac,
             'disabled' => 'no',
         ];
 
