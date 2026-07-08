@@ -148,4 +148,118 @@ class File
     {
         return str_replace("/", DIRECTORY_SEPARATOR, $path);
     }
+
+    /**
+     * Handle an uploaded profile photo (field name "photo") for a user/customer/admin record.
+     *
+     * Stores the resized image and thumbnail under {UPLOAD_PATH}/photos/{hash-prefix}/,
+     * removes the record's previous photo (unless it is a default), and assigns the new
+     * relative path to $record->{photoField}. When PHP GD is unavailable the caller is
+     * redirected via r2() (same behaviour as the inline code this replaces).
+     *
+     * @param object $record       ORM record exposing the photo field via array access and magic setter
+     * @param string $UPLOAD_PATH  absolute uploads directory
+     * @param string $photoField   record field to update (default "photo")
+     * @return bool  true when a photo was processed, false when there was nothing to do
+     */
+    public static function handleUserPhotoUpload($record, $UPLOAD_PATH, $photoField = 'photo')
+    {
+        if (empty($_FILES['photo']['name']) || !file_exists($_FILES['photo']['tmp_name'])) {
+            return false;
+        }
+        if (!function_exists('imagecreatetruecolor')) {
+            r2(getUrl('settings/app'), 'e', 'PHP GD is not installed');
+            return false;
+        }
+        $hash = md5_file($_FILES['photo']['tmp_name']);
+        $subfolder = substr($hash, 0, 2);
+        $folder = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'photos' . DIRECTORY_SEPARATOR;
+        if (!file_exists($folder)) {
+            mkdir($folder);
+        }
+        $folder = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'photos' . DIRECTORY_SEPARATOR . $subfolder . DIRECTORY_SEPARATOR;
+        if (!file_exists($folder)) {
+            mkdir($folder);
+        }
+        $imgPath = $folder . $hash . '.jpg';
+        if (!file_exists($imgPath)) {
+            File::resizeCropImage($_FILES['photo']['tmp_name'], $imgPath, 1600, 1600, 100);
+        }
+        if (!file_exists($imgPath . '.thumb.jpg')) {
+            if (_post('faceDetect') == 'yes') {
+                try {
+                    $detector = new \svay\FaceDetector();
+                    $detector->setTimeout(5000);
+                    $detector->faceDetect($imgPath);
+                    $detector->cropFaceToJpeg($imgPath . '.thumb.jpg', false);
+                } catch (Exception $e) {
+                    File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
+                } catch (Throwable $e) {
+                    File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
+                }
+            } else {
+                File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
+            }
+        }
+        if (file_exists($imgPath)) {
+            if ($record[$photoField] != '' && strpos($record[$photoField], 'default') === false) {
+                if (file_exists($UPLOAD_PATH . $record[$photoField])) {
+                    unlink($UPLOAD_PATH . $record[$photoField]);
+                    if (file_exists($UPLOAD_PATH . $record[$photoField] . '.thumb.jpg')) {
+                        unlink($UPLOAD_PATH . $record[$photoField] . '.thumb.jpg');
+                    }
+                }
+            }
+            $record->$photoField = '/photos/' . $subfolder . '/' . $hash . '.jpg';
+        }
+        if (file_exists($_FILES['photo']['tmp_name'])) {
+            unlink($_FILES['photo']['tmp_name']);
+        }
+        return true;
+    }
+
+    /**
+     * Download a GitHub repository archive (master branch) into $CACHE_PATH and extract it.
+     *
+     * Applies the configured GitHub credentials to the URL when present, then returns the
+     * extracted top-level folder (handling both "-main" and "-master" naming), or false when
+     * no extracted folder can be found.
+     *
+     * @param string $githubUrl   base GitHub repository URL
+     * @param array  $config       app config (uses github_token / github_username)
+     * @param string $CACHE_PATH   absolute cache directory to extract into
+     * @param string $zipFile      absolute path to write the downloaded zip to
+     * @param string $pluginId     plugin/repo id used to locate the extracted folder
+     * @return string|false        extracted folder path, or false when not found
+     */
+    public static function downloadGithubPluginZip($githubUrl, $config, $CACHE_PATH, $zipFile, $pluginId)
+    {
+        if (!empty($config['github_token']) && !empty($config['github_username'])) {
+            $githubUrl = str_replace('https://github.com', 'https://' . $config['github_username'] . ':' . $config['github_token'] . '@github.com', $githubUrl);
+        }
+        $fp = fopen($zipFile, 'w+');
+        $ch = curl_init($githubUrl . '/archive/refs/heads/master.zip');
+        curl_setopt($ch, CURLOPT_POST, 0);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_FILE, $fp);
+        curl_exec($ch);
+        curl_close($ch);
+        fclose($fp);
+
+        $zip = new ZipArchive();
+        $zip->open($zipFile);
+        $zip->extractTo($CACHE_PATH);
+        $zip->close();
+        $folder = $CACHE_PATH . File::pathFixer('/' . $pluginId . '-main/');
+        if (!file_exists($folder)) {
+            $folder = $CACHE_PATH . File::pathFixer('/' . $pluginId . '-master/');
+        }
+        if (!file_exists($folder)) {
+            return false;
+        }
+        return $folder;
+    }
 }

@@ -27,52 +27,14 @@ $month_n = date('n');
 switch ($action) {
 
     case 'print-by-date':
-        $mdate = date('Y-m-d');
-        $types = ORM::for_table('tbl_transactions')->getEnum('type');
-        $methods = array_column(ORM::for_table('tbl_transactions')->rawQuery("SELECT DISTINCT SUBSTRING_INDEX(`method`, ' - ', 1) as method FROM tbl_transactions;")->findArray(), 'method');
-        $routers = array_column(ORM::for_table('tbl_transactions')->select('routers')->distinct('routers')->find_array(), 'routers');
-        $plans = array_column(ORM::for_table('tbl_transactions')->select('plan_name')->distinct('plan_name')->find_array(), 'plan_name');
-        $reset_day = $config['reset_day'];
-        if (empty($reset_day)) {
-            $reset_day = 1;
-        }
-        //first day of month
-        if (date("d") >= $reset_day) {
-            $start_date = date('Y-m-' . $reset_day);
-        } else {
-            $start_date = date('Y-m-' . $reset_day, strtotime("-1 MONTH"));
-        }
-        $tps = !empty($_GET['tps']) ? $_GET['tps'] : $types;
-        $mts = !empty($_GET['mts']) ? $_GET['mts'] : $methods;
-        $rts = !empty($_GET['rts']) ? $_GET['rts'] : $routers;
-        $plns = !empty($_GET['plns']) ? $_GET['plns'] : $plans;
-        $sd = _req('sd', $start_date);
-        $ed = _req('ed', $mdate);
-        $ts = _req('ts', '00:00:00');
-        $te = _req('te', '23:59:59');
-
-        $query = ORM::for_table('tbl_transactions')
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) >= " . strtotime("$sd $ts"))
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) <= " . strtotime("$ed $te"))
-            ->order_by_desc('id');
-        if (count($tps) > 0) {
-            $query->where_in('type', $tps);
-        }
-        if (count($mts) > 0) {
-            if (count($mts) != count($methods)) {
-                foreach ($mts as $mt) {
-                    $query->where_like('method', "$mt - %");
-                }
-            }
-        }
-        if (count($rts) > 0) {
-            $query->where_in('routers', $rts);
-        }
-        if (count($plns) > 0) {
-            $query->where_in('plan_name', $plns);
-        }
-        $x =  $query->find_array();
-        $xy =  $query->sum('price');
+        $report = Report::filterTransactionsByDate($config);
+        $mdate = $report['mdate'];
+        $sd = $report['sd'];
+        $ed = $report['ed'];
+        $ts = $report['ts'];
+        $te = $report['te'];
+        $x = $report['rows'];
+        $xy = $report['total'];
 
         $ui->assign('sd', $sd);
         $ui->assign('ed', $ed);
@@ -87,52 +49,14 @@ switch ($action) {
         break;
 
     case 'pdf-by-date':
-        $mdate = date('Y-m-d');
-        $types = ORM::for_table('tbl_transactions')->getEnum('type');
-        $methods = array_column(ORM::for_table('tbl_transactions')->rawQuery("SELECT DISTINCT SUBSTRING_INDEX(`method`, ' - ', 1) as method FROM tbl_transactions;")->findArray(), 'method');
-        $routers = array_column(ORM::for_table('tbl_transactions')->select('routers')->distinct('routers')->find_array(), 'routers');
-        $plans = array_column(ORM::for_table('tbl_transactions')->select('plan_name')->distinct('plan_name')->find_array(), 'plan_name');
-        $reset_day = $config['reset_day'];
-        if (empty($reset_day)) {
-            $reset_day = 1;
-        }
-        //first day of month
-        if (date("d") >= $reset_day) {
-            $start_date = date('Y-m-' . $reset_day);
-        } else {
-            $start_date = date('Y-m-' . $reset_day, strtotime("-1 MONTH"));
-        }
-        $tps = !empty($_GET['tps']) ? $_GET['tps'] : $types;
-        $mts = !empty($_GET['mts']) ? $_GET['mts'] : $methods;
-        $rts = !empty($_GET['rts']) ? $_GET['rts'] : $routers;
-        $plns = !empty($_GET['plns']) ? $_GET['plns'] : $plans;
-        $sd = _req('sd', $start_date);
-        $ed = _req('ed', $mdate);
-        $ts = _req('ts', '00:00:00');
-        $te = _req('te', '23:59:59');
-
-        $query = ORM::for_table('tbl_transactions')
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) >= " . strtotime("$sd $ts"))
-            ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) <= " . strtotime("$ed $te"))
-            ->order_by_desc('id');
-        if (count($tps) > 0) {
-            $query->where_in('type', $tps);
-        }
-        if (count($mts) > 0) {
-            if (count($mts) != count($methods)) {
-                foreach ($mts as $mt) {
-                    $query->where_like('method', "$mt - %");
-                }
-            }
-        }
-        if (count($rts) > 0) {
-            $query->where_in('routers', $rts);
-        }
-        if (count($plns) > 0) {
-            $query->where_in('plan_name', $plns);
-        }
-        $x =  $query->find_array();
-        $xy =  $query->sum('price');
+        $report = Report::filterTransactionsByDate($config);
+        $mdate = $report['mdate'];
+        $sd = $report['sd'];
+        $ed = $report['ed'];
+        $ts = $report['ts'];
+        $te = $report['te'];
+        $x = $report['rows'];
+        $xy = $report['total'];
 
         $title = ' Reports [' . $mdate . ']';
         $title = str_replace('-', ' ', $title);
@@ -205,40 +129,7 @@ switch ($action) {
             $mpdf->watermarkTextAlpha = 0.1;
             $mpdf->SetDisplayMode('fullpage');
 
-            $style = '<style>
-			#page-wrap { width: 100%; margin: 0 auto; }
-			#header { text-align: center; position: relative; color: black; font: bold 15px Helvetica, Sans-Serif; margin-top: 10px; margin-bottom: 10px;}
-
-			#address { width: 300px; float: left; }
-			#logo { text-align: right; float: right; position: relative; margin-top: 15px; border: 5px solid #fff; overflow: hidden; }
-
-			#customers
-			{
-			font-family: Helvetica, sans-serif;
-			width:100%;
-			border-collapse:collapse;
-			}
-			#customers td, #customers th
-			{
-			font-size:0.8em;
-			border:1px solid #98bf21;
-			padding:3px 5px 2px 5px;
-			}
-			#customers th
-			{
-			font-size:0.8em;
-			text-align:left;
-			padding-top:5px;
-			padding-bottom:4px;
-			background-color:#A7C942;
-			color:#fff;
-			}
-			#customers tr.alt td
-			{
-			color:#000;
-			background-color:#EAF2D3;
-			}
-			</style>';
+            $style = Report::pdfStyle();
 
             $nhtml = <<<EOF
 $style
@@ -379,40 +270,7 @@ EOF;
             $mpdf->watermarkTextAlpha = 0.1;
             $mpdf->SetDisplayMode('fullpage');
 
-            $style = '<style>
-			#page-wrap { width: 100%; margin: 0 auto; }
-			#header { text-align: center; position: relative; color: black; font: bold 15px Helvetica, Sans-Serif;  margin-top: 10px; margin-bottom: 10px;}
-
-			#address { width: 300px; float: left; }
-			#logo { text-align: right; float: right; position: relative; margin-top: 15px; border: 5px solid #fff; overflow: hidden; }
-
-			#customers
-			{
-			font-family: Helvetica, sans-serif;
-			width:100%;
-			border-collapse:collapse;
-			}
-			#customers td, #customers th
-			{
-			font-size:0.8em;
-			border:1px solid #98bf21;
-			padding:3px 5px 2px 5px;
-			}
-			#customers th
-			{
-			font-size:0.8em;
-			text-align:left;
-			padding-top:5px;
-			padding-bottom:4px;
-			background-color:#A7C942;
-			color:#fff;
-			}
-			#customers tr.alt td
-			{
-			color:#000;
-			background-color:#EAF2D3;
-			}
-			</style>';
+            $style = Report::pdfStyle();
 
             $nhtml = <<<EOF
 $style

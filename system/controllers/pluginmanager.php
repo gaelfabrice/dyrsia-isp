@@ -183,30 +183,8 @@ switch ($action) {
         if ($tipe == 'plugin') {
             foreach ($json['plugins'] as $plg) {
                 if ($plg['id'] == $plugin) {
-                    if (!empty($config['github_token']) && !empty($config['github_username'])) {
-                        $plg['github'] = str_replace('https://github.com', 'https://' . $config['github_username'] . ':' . $config['github_token'] . '@github.com', $plg['github']);
-                    }
-                    $fp = fopen($file, 'w+');
-                    $ch = curl_init($plg['github'] . '/archive/refs/heads/master.zip');
-                    curl_setopt($ch, CURLOPT_POST, 0);
-                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                    curl_setopt($ch, CURLOPT_FILE, $fp);
-                    curl_exec($ch);
-                    curl_close($ch);
-                    fclose($fp);
-
-                    $zip = new ZipArchive();
-                    $zip->open($file);
-                    $zip->extractTo($CACHE_PATH);
-                    $zip->close();
-                    $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-main/');
-                    if (!file_exists($folder)) {
-                        $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-master/');
-                    }
-                    if (!file_exists($folder)) {
+                    $folder = File::downloadGithubPluginZip($plg['github'], $config, $CACHE_PATH, $file, $plugin);
+                    if ($folder === false) {
                         r2(getUrl('pluginmanager'), 'e', 'Extracted Folder is unknown');
                     }
                     scanAndRemovePath($folder, $PLUGIN_PATH . DIRECTORY_SEPARATOR);
@@ -238,30 +216,8 @@ switch ($action) {
         if ($tipe == 'plugin') {
             foreach ($json['plugins'] as $plg) {
                 if ($plg['id'] == $plugin) {
-                    if (!empty($config['github_token']) && !empty($config['github_username'])) {
-                        $plg['github'] = str_replace('https://github.com', 'https://' . $config['github_username'] . ':' . $config['github_token'] . '@github.com', $plg['github']);
-                    }
-                    $fp = fopen($file, 'w+');
-                    $ch = curl_init($plg['github'] . '/archive/refs/heads/master.zip');
-                    curl_setopt($ch, CURLOPT_POST, 0);
-                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                    curl_setopt($ch, CURLOPT_FILE, $fp);
-                    curl_exec($ch);
-                    curl_close($ch);
-                    fclose($fp);
-
-                    $zip = new ZipArchive();
-                    $zip->open($file);
-                    $zip->extractTo($CACHE_PATH);
-                    $zip->close();
-                    $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-main/');
-                    if (!file_exists($folder)) {
-                        $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-master/');
-                    }
-                    if (!file_exists($folder)) {
+                    $folder = File::downloadGithubPluginZip($plg['github'], $config, $CACHE_PATH, $file, $plugin);
+                    if ($folder === false) {
                         r2(getUrl('pluginmanager'), 'e', 'Extracted Folder is unknown');
                     }
                     File::copyFolder($folder, $PLUGIN_PATH . DIRECTORY_SEPARATOR, ['README.md', 'LICENSE']);
@@ -275,30 +231,8 @@ switch ($action) {
         } else if ($tipe == 'payment') {
             foreach ($json['payment_gateway'] as $plg) {
                 if ($plg['id'] == $plugin) {
-                    if (!empty($config['github_token']) && !empty($config['github_username'])) {
-                        $plg['github'] = str_replace('https://github.com', 'https://' . $config['github_username'] . ':' . $config['github_token'] . '@github.com', $plg['github']);
-                    }
-                    $fp = fopen($file, 'w+');
-                    $ch = curl_init($plg['github'] . '/archive/refs/heads/master.zip');
-                    curl_setopt($ch, CURLOPT_POST, 0);
-                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                    curl_setopt($ch, CURLOPT_FILE, $fp);
-                    curl_exec($ch);
-                    curl_close($ch);
-                    fclose($fp);
-
-                    $zip = new ZipArchive();
-                    $zip->open($file);
-                    $zip->extractTo($CACHE_PATH);
-                    $zip->close();
-                    $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-main/');
-                    if (!file_exists($folder)) {
-                        $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-master/');
-                    }
-                    if (!file_exists($folder)) {
+                    $folder = File::downloadGithubPluginZip($plg['github'], $config, $CACHE_PATH, $file, $plugin);
+                    if ($folder === false) {
                         r2(getUrl('pluginmanager'), 'e', 'Extracted Folder is unknown');
                     }
                     File::copyFolder($folder, $PAYMENTGATEWAY_PATH . DIRECTORY_SEPARATOR, ['README.md', 'LICENSE']);
@@ -312,30 +246,8 @@ switch ($action) {
         } else if ($tipe == 'device') {
             foreach ($json['devices'] as $d) {
                 if ($d['id'] == $plugin) {
-                    if (!empty($config['github_token']) && !empty($config['github_username'])) {
-                        $d['github'] = str_replace('https://github.com', 'https://' . $config['github_username'] . ':' . $config['github_token'] . '@github.com', $d['github']);
-                    }
-                    $fp = fopen($file, 'w+');
-                    $ch = curl_init($d['github'] . '/archive/refs/heads/master.zip');
-                    curl_setopt($ch, CURLOPT_POST, 0);
-                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                    curl_setopt($ch, CURLOPT_FILE, $fp);
-                    curl_exec($ch);
-                    curl_close($ch);
-                    fclose($fp);
-
-                    $zip = new ZipArchive();
-                    $zip->open($file);
-                    $zip->extractTo($CACHE_PATH);
-                    $zip->close();
-                    $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-main/');
-                    if (!file_exists($folder)) {
-                        $folder = $CACHE_PATH . File::pathFixer('/' . $plugin . '-master/');
-                    }
-                    if (!file_exists($folder)) {
+                    $folder = File::downloadGithubPluginZip($d['github'], $config, $CACHE_PATH, $file, $plugin);
+                    if ($folder === false) {
                         r2(getUrl('pluginmanager'), 'e', 'Extracted Folder is unknown');
                     }
                     File::copyFolder($folder, $DEVICE_PATH . DIRECTORY_SEPARATOR, ['README.md', 'LICENSE']);
