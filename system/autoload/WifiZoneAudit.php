@@ -25,6 +25,7 @@ class WifiZoneAudit
             $row->ip = $ip;
             $row->save();
         } catch (Exception $e) {
+            WifiZoneLogger::note("audit log write for $action on $entityType/$entityId", $e);
         }
         _log("Audit: $action on $entityType/$entityId", 'Audit', $actorId);
     }

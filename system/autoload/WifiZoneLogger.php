@@ -2,6 +2,18 @@
 
 class WifiZoneLogger
 {
+    /**
+     * Record an exception that is caught but intentionally not re-thrown
+     * (best-effort operations such as notifications, cache access or probes).
+     *
+     * Uses error_log() only, so it never throws and never depends on the
+     * database being reachable — safe to call from any catch block.
+     */
+    public static function note($context, Throwable $e)
+    {
+        error_log('[wifizone] ' . $context . ': ' . $e->getMessage());
+    }
+
     public static function logPluginError($plugin, Throwable $e)
     {
         global $UPLOAD_PATH, $config;

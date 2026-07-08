@@ -381,6 +381,7 @@ class WifiZoneCore
             ORM::for_table('tbl_appconfig')->find_one();
             $checks['database'] = true;
         } catch (Exception $e) {
+            WifiZoneLogger::note('health check database probe', $e);
         }
         global $UPLOAD_PATH;
         $checks['writable_uploads'] = is_writable($UPLOAD_PATH);
