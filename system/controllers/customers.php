@@ -999,54 +999,7 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
         }
 
         if ($msg == '') {
-            if (!empty($_FILES['photo']['name']) && file_exists($_FILES['photo']['tmp_name'])) {
-                if (function_exists('imagecreatetruecolor')) {
-                    $hash = md5_file($_FILES['photo']['tmp_name']);
-                    $subfolder = substr($hash, 0, 2);
-                    $folder = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'photos' . DIRECTORY_SEPARATOR;
-                    if (!file_exists($folder)) {
-                        mkdir($folder);
-                    }
-                    $folder = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'photos' . DIRECTORY_SEPARATOR . $subfolder . DIRECTORY_SEPARATOR;
-                    if (!file_exists($folder)) {
-                        mkdir($folder);
-                    }
-                    $imgPath = $folder . $hash . '.jpg';
-                    if (!file_exists($imgPath)) {
-                        File::resizeCropImage($_FILES['photo']['tmp_name'], $imgPath, 1600, 1600, 100);
-                    }
-                    if (!file_exists($imgPath . '.thumb.jpg')) {
-                        if (_post('faceDetect') == 'yes') {
-                            try {
-                                $detector = new svay\FaceDetector();
-                                $detector->setTimeout(5000);
-                                $detector->faceDetect($imgPath);
-                                $detector->cropFaceToJpeg($imgPath . '.thumb.jpg', false);
-                            } catch (Exception $e) {
-                                File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
-                            } catch (Throwable $e) {
-                                File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
-                            }
-                        } else {
-                            File::makeThumb($imgPath, $imgPath . '.thumb.jpg', 200);
-                        }
-                    }
-                    if (file_exists($imgPath)) {
-                        if ($c['photo'] != '' && strpos($c['photo'], 'default') === false) {
-                            if (file_exists($UPLOAD_PATH . $c['photo'])) {
-                                unlink($UPLOAD_PATH . $c['photo']);
-                                if (file_exists($UPLOAD_PATH . $c['photo'] . '.thumb.jpg')) {
-                                    unlink($UPLOAD_PATH . $c['photo'] . '.thumb.jpg');
-                                }
-                            }
-                        }
-                        $c->photo = '/photos/' . $subfolder . '/' . $hash . '.jpg';
-                    }
-                    if (file_exists($_FILES['photo']['tmp_name'])) unlink($_FILES['photo']['tmp_name']);
-                } else {
-                    r2(getUrl('settings/app'), 'e', 'PHP GD is not installed');
-                }
-            }
+            File::handleUserPhotoUpload($c, $UPLOAD_PATH);
             if ($userDiff) {
                 $c->username = $username;
             }
