@@ -29,7 +29,7 @@
 </Files>
 
 # Scripts de diagnostic — ne pas exposer à la racine web
-<FilesMatch "^(check_|test_|mtik_diag).*\.php$">
+<FilesMatch "^(check_|test_|mtik_diag|mikrotik_diag|router_debug|knocknock).*\.php$">
     Order Deny,Allow
     Deny from all
 </FilesMatch>

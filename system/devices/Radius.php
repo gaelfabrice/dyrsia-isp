@@ -521,7 +521,10 @@ class Radius
             if (!empty($n['ports'])) {
                 $port = $n['ports'];
             }
-            $result[] = $n['nasname'] . ': ' . @shell_exec("echo 'User-Name = $username,Framed-IP-Address = " . $act['framedipaddress'] . "' | radclient -x " . trim($n['nasname']) . ":$port disconnect '" . $n['secret'] . "'");
+            $packet = escapeshellarg("User-Name = $username,Framed-IP-Address = " . $act['framedipaddress']);
+            $target = escapeshellarg(trim($n['nasname']) . ":$port");
+            $secret = escapeshellarg($n['secret']);
+            $result[] = $n['nasname'] . ': ' . @shell_exec("echo $packet | radclient -x $target disconnect $secret");
         }
         return $result;
     }
