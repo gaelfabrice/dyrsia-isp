@@ -9,6 +9,7 @@ class WifiZoneRadius
             ORM::for_table('nas', 'radius')->find_one();
             $status['radius_tables'] = true;
         } catch (Exception $e) {
+            WifiZoneLogger::note('radius wizard status probe', $e);
         }
         return $status;
     }
@@ -19,6 +20,7 @@ class WifiZoneRadius
             return 0;
         }
         $count = 0;
+        $failed = 0;
         $plans = ORM::for_table('tbl_plans')->where('type', 'Radius')->find_many();
         foreach ($plans as $plan) {
             try {
@@ -35,7 +37,12 @@ class WifiZoneRadius
                     $count++;
                 }
             } catch (Exception $e) {
+                $failed++;
+                WifiZoneLogger::note('radius plan sync for ' . $plan->name_plan, $e);
             }
+        }
+        if ($failed > 0) {
+            _log("RADIUS plan sync completed with $failed failure(s); $count plan(s) synced.", 'Error');
         }
         return $count;
     }

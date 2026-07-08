@@ -91,6 +91,7 @@ class WifiZonePayment
                 }
             }
         } catch (Throwable $e) {
+            WifiZoneLogger::note('payment receipt notification for customer ' . $customer->id, $e);
         }
         WifiZoneAudit::log('payment_receipt', 'customer', $customer->id, ['ref' => $queueRow->reference]);
     }

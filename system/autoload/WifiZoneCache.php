@@ -12,6 +12,7 @@ class WifiZoneCache
                     return $v !== false ? json_decode($v, true) : null;
                 }
             } catch (Throwable $e) {
+                WifiZoneLogger::note('redis cache get, falling back to file cache', $e);
             }
         }
         global $CACHE_PATH;
@@ -37,6 +38,7 @@ class WifiZoneCache
                     return;
                 }
             } catch (Throwable $e) {
+                WifiZoneLogger::note('redis cache set, falling back to file cache', $e);
             }
         }
         global $CACHE_PATH;

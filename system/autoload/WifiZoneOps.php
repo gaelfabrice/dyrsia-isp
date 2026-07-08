@@ -170,6 +170,7 @@ class WifiZoneOps
                 self::markOpsAlertSent($key);
             }
         } catch (Throwable $e) {
+            WifiZoneLogger::note('payment failure ops alert', $e);
         }
     }
 

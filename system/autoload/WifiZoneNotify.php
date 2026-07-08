@@ -154,6 +154,7 @@ class WifiZoneNotify
             );
             return true;
         } catch (Throwable $e) {
+            WifiZoneLogger::note('renewal reminder for ' . $recharge->username, $e);
             if (function_exists('sendTelegram')) {
                 sendTelegram('Renewal reminder failed for ' . $recharge->username . ': ' . $e->getMessage());
             }
@@ -176,6 +177,7 @@ class WifiZoneNotify
                 }
             }
         } catch (Throwable $e) {
+            WifiZoneLogger::note('customer notification' . (isset($customer->id) ? ' for customer ' . $customer->id : ''), $e);
         }
     }
 
