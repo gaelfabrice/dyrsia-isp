@@ -23,8 +23,10 @@
                         <input type="text" class="form-control" id="name" name="name" maxlength="32" placeholder="RB2011" required>
                     </div>
                     <div class="col-md-6 router-field">
-                        <label>{Lang::T('Zone / Description')}</label>
-                        <textarea class="form-control" id="description" name="description" placeholder="ex: Quartier Centre-ville"></textarea>
+                        <label>Adresse Mac *</label>
+                        <input type="text" class="form-control" id="description" name="description" maxlength="17"
+                            placeholder="18:FD:74:CB:CB:BA" pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$" required>
+                        <p class="help-block" style="margin-top:6px;">Remplie automatiquement après un test de connexion réussi, ou saisie manuelle.</p>
                     </div>
                 </div>
             </div>
@@ -112,6 +114,18 @@
                 field.addEventListener('change', resetTest);
             }
         });
+        var macField = document.getElementById('description');
+        if (macField) {
+            macField.addEventListener('input', function () {
+                var raw = macField.value.replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+                if (raw.length > 12) {
+                    raw = raw.substring(0, 12);
+                }
+                if (raw.length === 12) {
+                    macField.value = raw.match(/.{1,2}/g).join(':');
+                }
+            });
+        }
 
         testButton.addEventListener('click', function () {
             testPassed = false;
@@ -135,7 +149,22 @@
             data.append('username', document.getElementById('username').value);
             data.append('password', document.getElementById('password').value);
 
-            fetch('{/literal}{Text::url('routers/test-connection')}{literal}', {
+            var currentUrl = window.location.href;
+            var testUrl;
+            if (currentUrl.indexOf('?_route=') !== -1) {
+                testUrl = currentUrl.replace(/([?&]_route=)[^&]+/, '$1routers/test-connection');
+            } else if (currentUrl.indexOf('/routers/add') !== -1) {
+                testUrl = currentUrl.replace(/\/routers\/add(?:\?.*)?$/, '/routers/test-connection');
+            } else {
+                var formAction = document.querySelector('.router-card form').getAttribute('action');
+                if (formAction.indexOf('?_route=') !== -1) {
+                    testUrl = formAction.replace(/([?&]_route=)[^&]+/, '$1routers/test-connection');
+                } else {
+                    testUrl = formAction.replace(/\/[^\/]*$/, '/routers/test-connection');
+                }
+            }
+
+            fetch(testUrl, {
                 method: 'POST',
                 body: data,
                 credentials: 'same-origin',
@@ -168,7 +197,17 @@
                     if (response.success) {
                         testPassed = true;
                         createButton.disabled = false;
-                        setMessage('success', 'fa-check-circle', response.message + ' — ' + response.ip_address);
+                        if (response.mac_address) {
+                            var macInput = document.getElementById('description');
+                            if (macInput) {
+                                macInput.value = response.mac_address;
+                            }
+                        }
+                        var successMsg = response.message + ' — ' + response.ip_address;
+                        if (response.mac_address) {
+                            successMsg += ' — MAC ' + response.mac_address;
+                        }
+                        setMessage('success', 'fa-check-circle', successMsg);
                     } else {
                         var errorMsg = response.message || 'Connexion échouée';
                         var detailHtml = '';

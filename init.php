@@ -26,6 +26,44 @@ if (realpath(__FILE__) == realpath($_SERVER['SCRIPT_FILENAME'])) {
     header('location: ../');
     die();
 }
+
+if (!function_exists('wifizone_bootstrap_long_request_limits')) {
+    function wifizone_bootstrap_long_request_limits()
+    {
+        static $applied = false;
+        if ($applied || php_sapi_name() === 'cli') {
+            return;
+        }
+        $applied = true;
+
+        $uri = strtolower((string) ($_SERVER['REQUEST_URI'] ?? ''));
+        $route = strtolower(trim((string) ($_GET['_route'] ?? $_POST['_route'] ?? '')));
+        $isDev = (getenv('APP_STAGE') ?: '') === 'Dev';
+        $longRequest = preg_match('#(?:^|/)(settings/(hotspot|pppoe-setup)|services/|routers/(add-post|edit-post|test-connection))#', $route) === 1
+            || str_contains($uri, 'pppoe-setup')
+            || str_contains($uri, 'settings/hotspot')
+            || str_contains($uri, 'services/sync')
+            || str_contains($uri, 'routers/add-post')
+            || str_contains($uri, 'routers/edit-post')
+            || str_contains($uri, 'routers/test-connection')
+            || !empty($_GET['fetch_router_setup'])
+            || !empty($_POST['ajax_deploy'])
+            || !empty($_POST['send_mikrotik'])
+            || !empty($_POST['sync_hotspot_plans'])
+            || ($isDev && (str_contains($uri, 'settings/') || str_contains($uri, 'services/') || str_contains($uri, 'routers/')));
+
+        if (!$longRequest) {
+            return;
+        }
+
+        @ini_set('max_execution_time', '600');
+        @set_time_limit(600);
+        @ini_set('default_socket_timeout', '120');
+        @ignore_user_abort(true);
+    }
+}
+wifizone_bootstrap_long_request_limits();
+
 $root_path = realpath(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 if (!isset($isApi)) {
     $isApi = false;
@@ -130,6 +168,13 @@ if ($db_password != null && ($db_pass == null || $db_pass === '')) {
 if ($db_pass != null && $db_pass !== '') {
     $db_password = $db_pass;
 }
+
+// FreeRADIUS : même MySQL que l'app si config.php legacy ne définit pas radius_*
+$radius_host = $radius_host ?? $db_host;
+$radius_user = $radius_user ?? $db_user;
+$radius_pass = $radius_pass ?? $db_pass;
+$radius_name = $radius_name ?? $db_name;
+$radius_password = $radius_password ?? $radius_pass;
 
 require_once $root_path . File::pathFixer('system/orm.php');
 
@@ -257,22 +302,7 @@ try {
 }
 function wifizone_extend_sync_time_limit()
 {
-    if (php_sapi_name() === 'cli') {
-        return;
-    }
-    $route = trim((string) ($_GET['_route'] ?? $_POST['_route'] ?? ''));
-    $longSync = preg_match('#^(settings/(hotspot|pppoe-setup)|services/sync/|reports/data-usage-(api|sync))#', $route) === 1
-        || !empty($_POST['send_mikrotik'])
-        || !empty($_POST['sync_hotspot_plans'])
-        || (strpos($route, 'services/sync/pppoe') === 0)
-        || (strpos($route, 'settings/pppoe-setup') === 0);
-    if (!$longSync) {
-        return;
-    }
-    @set_time_limit(600);
-    @ini_set('max_execution_time', '600');
-    @ini_set('default_socket_timeout', '30');
-    @ignore_user_abort(true);
+    wifizone_bootstrap_long_request_limits();
 }
 wifizone_extend_sync_time_limit();
 wifizone_register_activity_logging();
@@ -302,7 +332,22 @@ if ((!empty($radius_user) && $config['radius_enable']) || _post('radius_enable')
  */
 function wifizone_ensure_radius_orm()
 {
-    global $radius_host, $radius_user, $radius_pass, $radius_name, $radius_password;
+    global $radius_host, $radius_user, $radius_pass, $radius_name, $radius_password, $db_host, $db_user, $db_pass, $db_name;
+    if (empty($radius_host)) {
+        $radius_host = $db_host ?? 'localhost';
+    }
+    if (empty($radius_user)) {
+        $radius_user = $db_user ?? 'root';
+    }
+    if (empty($radius_name)) {
+        $radius_name = $db_name ?? 'wifizones';
+    }
+    if (empty($radius_pass) && !empty($radius_password)) {
+        $radius_pass = $radius_password;
+    }
+    if (empty($radius_pass) && isset($db_pass)) {
+        $radius_pass = $db_pass;
+    }
     if (empty($radius_user) || empty($radius_host) || empty($radius_name)) {
         return false;
     }
@@ -440,7 +485,7 @@ function wifizone_verify_csrf()
     if ($handler === 'plugin' && in_array($action, $publicPlugins, true)) {
         return;
     }
-    if ($handler === 'home' || $handler === 'login') {
+    if ($handler === 'home' || $handler === 'login' || $handler === 'provision' || $handler === 'ref') {
         return;
     }
     // AJAX router test: session auth is enough; HTML redirect breaks JSON parsing
@@ -550,7 +595,7 @@ function wifizone_pppoe_portal_route_for_ip($clientIp)
         }
     }
 
-    if ($router === '') {
+    if ($router === '' && $clientIp !== '') {
         $lastExpired = ORM::for_table('tbl_user_recharges')
             ->where_raw("LOWER(type) = 'pppoe'")
             ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= NOW())")
@@ -614,6 +659,104 @@ function wifizone_pppoe_captive_snat_redirect_request($remoteIp)
     return true;
 }
 
+/**
+ * Passerelle hotspot (ex. 10.10.0.1) — distincte du pool PPPoE expiré (10.10.10.x).
+ */
+function wifizone_hotspot_gateway_ip()
+{
+    global $config;
+    $gateway = trim((string) ($config['hotspot_local_address'] ?? '10.10.0.1'));
+    if (strpos($gateway, '/') !== false) {
+        $gateway = (string) explode('/', $gateway)[0];
+    }
+
+    return $gateway;
+}
+
+function wifizone_is_hotspot_pool_ip($ip)
+{
+    $ip = trim((string) $ip);
+    if (!preg_match('/^10\.10\.0\.\d+$/', $ip)) {
+        return false;
+    }
+
+    return $ip !== wifizone_hotspot_gateway_ip();
+}
+
+function wifizone_request_targets_hotspot_gateway()
+{
+    $host = strtolower(trim((string) ($_SERVER['HTTP_HOST'] ?? '')));
+    if ($host === '') {
+        return false;
+    }
+    if (strpos($host, ':') !== false) {
+        $host = (string) parse_url('http://' . $host, PHP_URL_HOST);
+    }
+
+    return $host === strtolower(wifizone_hotspot_gateway_ip());
+}
+
+function wifizone_hotspot_captive_should_intercept($currentRoute)
+{
+    if (php_sapi_name() === 'cli') {
+        return false;
+    }
+    if (strcasecmp($_SERVER['REQUEST_METHOD'] ?? '', 'OPTIONS') === 0) {
+        return false;
+    }
+
+    $currentRoute = trim((string) $currentRoute);
+    if ($currentRoute !== '' && stripos($currentRoute, 'plugin/') === 0) {
+        $action = explode('/', $currentRoute, 2)[1] ?? '';
+        if ($action !== 'hotspot_portal' && $action !== 'hotspot_mikrotik_auth') {
+            return false;
+        }
+    }
+
+    $uriPath = (string) (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
+    if (preg_match('#^/(ui/|favicon\.|robots\.txt)#i', $uriPath)) {
+        return false;
+    }
+    if (isset($_SERVER['HTTP_X_REQUESTED_WITH'])
+        && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        return false;
+    }
+
+    $remoteIp = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+    if (preg_match('/^10\.10\.0\.\d+$/', $remoteIp) && $remoteIp !== wifizone_hotspot_gateway_ip()) {
+        return true;
+    }
+    if (wifizone_request_targets_hotspot_gateway()) {
+        return true;
+    }
+    if (preg_match('/^10\.0\.0\.\d+$/', $remoteIp)) {
+        return wifizone_pppoe_captive_snat_redirect_request($remoteIp);
+    }
+
+    return false;
+}
+
+function wifizone_hotspot_captive_intercept($currentRoute)
+{
+    if (!wifizone_hotspot_captive_should_intercept($currentRoute)) {
+        return $currentRoute;
+    }
+
+    $currentRoute = trim((string) $currentRoute);
+    $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $uriPath = ltrim((string) (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/'), '/');
+
+    if ($method === 'POST' && ($uriPath === 'login' || stripos($currentRoute, 'hotspot_mikrotik_auth') === 0)) {
+        return 'plugin/hotspot_mikrotik_auth';
+    }
+
+    if ($method === 'GET') {
+        return 'plugin/hotspot_portal';
+    }
+
+    return $currentRoute;
+}
+
 function wifizone_pppoe_captive_intercept($currentRoute)
 {
     if (php_sapi_name() === 'cli') {
@@ -621,6 +764,9 @@ function wifizone_pppoe_captive_intercept($currentRoute)
     }
     $currentRoute = trim((string) $currentRoute);
     if ($currentRoute !== '' && stripos($currentRoute, 'plugin/pppoe') === 0) {
+        return $currentRoute;
+    }
+    if ($currentRoute !== '' && stripos($currentRoute, 'plugin/hotspot') === 0) {
         return $currentRoute;
     }
     if (strcasecmp($_SERVER['REQUEST_METHOD'] ?? 'GET', 'OPTIONS') === 0) {
@@ -632,8 +778,15 @@ function wifizone_pppoe_captive_intercept($currentRoute)
         return $currentRoute;
     }
 
+    if (wifizone_is_hotspot_pool_ip($clientIp) || wifizone_request_targets_hotspot_gateway()) {
+        return $currentRoute;
+    }
+
     try {
         if (wifizone_pppoe_captive_snat_redirect_request($clientIp)) {
+            if (wifizone_request_targets_hotspot_gateway()) {
+                return $currentRoute;
+            }
             $portalRoute = wifizone_pppoe_portal_route_for_ip('');
             if ($portalRoute !== null) {
                 return $portalRoute;

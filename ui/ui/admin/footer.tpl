@@ -84,7 +84,7 @@
     window.ROUTER_DISMISS_URL = '{Text::url('routers/dismiss-alert')}';
     window.ROUTER_LIST_URL = '{Text::url('routers/list')}';
 </script>
-<script src="{$app_url}/ui/ui/scripts/router-alerts.js?2025.5.22"></script>
+<script src="{$app_url}/ui/ui/scripts/router-alerts.js?2026.07.11f"></script>
 {/if}
 
 <script>

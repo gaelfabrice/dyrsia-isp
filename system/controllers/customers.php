@@ -16,6 +16,55 @@ function customersRowForUi($customer)
     return $row;
 }
 
+/**
+ * Recharge active (ou dernière) : routeur + expiration.
+ *
+ * @param array<int, int|string> $customerIds
+ * @return array<int, array{router_name: string, expiration: string, time: string}>
+ */
+function customersRechargeSummaryByIds(array $customerIds)
+{
+    $customerIds = array_values(array_unique(array_filter(array_map('intval', $customerIds))));
+    if ($customerIds === []) {
+        return [];
+    }
+
+    $rows = ORM::for_table('tbl_user_recharges')
+        ->where_in('customer_id', $customerIds)
+        ->order_by_desc('id')
+        ->find_many();
+
+    $active = [];
+    $latest = [];
+    foreach ($rows as $row) {
+        $cid = (int) $row->customer_id;
+        $summary = [
+            'router_name' => trim((string) $row->routers),
+            'expiration' => trim((string) ($row->expiration ?? '')),
+            'time' => trim((string) ($row->time ?? '')),
+        ];
+
+        if (!isset($latest[$cid])) {
+            $latest[$cid] = $summary;
+        }
+        if ((string) $row->status === 'on' && !isset($active[$cid])) {
+            $active[$cid] = $summary;
+        }
+    }
+
+    $map = [];
+    foreach ($customerIds as $cid) {
+        $picked = $active[$cid] ?? $latest[$cid] ?? null;
+        $map[$cid] = $picked ?? [
+            'router_name' => '',
+            'expiration' => '',
+            'time' => '',
+        ];
+    }
+
+    return $map;
+}
+
 function customersFindScoped($id, $admin)
 {
     $id = (int) $id;
@@ -362,6 +411,20 @@ switch ($action) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
         $ui->assign('xheader', $leafletpickerHeader);
+        $routersQuery = ORM::for_table('tbl_routers')->where('enabled', '1')->order_by_asc('name');
+        if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $routersQuery->where('admin_id', (int) ($admin['id'] ?? 0));
+        }
+        $ui->assign('r', $routersQuery->find_many());
+        $plansQuery = ORM::for_table('tbl_plans')
+            ->where('enabled', 1)
+            ->where_in('type', ['Hotspot', 'PPPOE', 'VPN'])
+            ->order_by_asc('type')
+            ->order_by_asc('name_plan');
+        if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
+            $plansQuery->where('admin_id', (int) ($admin['id'] ?? 0));
+        }
+        $ui->assign('plans', $plansQuery->find_many());
         run_hook('view_add_customer'); #HOOK
         $ui->assign('csrf_token',  Csrf::generateAndStoreToken());
         $ui->display('admin/customers/add.tpl');
@@ -769,6 +832,8 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
         $service_type = _post('service_type');
         $account_type = _post('account_type');
         $coordinates = _post('coordinates');
+        $activate_plan_id = (int) _post('activate_plan_id');
+        $activate_router = trim((string) _post('activate_router'));
         //post Customers Attributes
         $custom_field_names = (array) $_POST['custom_field_name'];
         $custom_field_values = (array) $_POST['custom_field_value'];
@@ -788,6 +853,19 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
         }
         if (!Validator::Length($password, 36, 2)) {
             $msg .= 'Password should be between 3 to 35 characters' . '<br>';
+        }
+        if ($activate_plan_id > 0 || $activate_router !== '') {
+            if ($activate_plan_id <= 0 || $activate_router === '') {
+                $msg .= Lang::T('Select both router and plan to activate on MikroTik') . '<br>';
+            } else {
+                $activatePlan = ORM::for_table('tbl_plans')->find_one($activate_plan_id);
+                if (!$activatePlan) {
+                    $msg .= Lang::T('Plan Not Found') . '<br>';
+                } elseif (trim((string) $activatePlan['routers']) !== ''
+                    && strcasecmp(trim((string) $activatePlan['routers']), $activate_router) !== 0) {
+                    $msg .= Lang::T('Selected plan is not assigned to this router') . '<br>';
+                }
+            }
         }
 
         $d = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
@@ -896,7 +974,36 @@ if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডম
                     }
                 }
             }
-            r2(getUrl('customers/list'), 's', Lang::T('Account Created Successfully'));
+            $okMsg = Lang::T('Account Created Successfully');
+            if ($activate_plan_id > 0 && $activate_router !== '') {
+                Package::$lastDeviceSyncError = '';
+                $recharged = Package::rechargeUser(
+                    (int) $customerId,
+                    $activate_router,
+                    $activate_plan_id,
+                    'Admin',
+                    $admin['fullname'] ?? 'admin'
+                );
+                if ($recharged) {
+                    if (Package::$lastDeviceSyncError !== '') {
+                        r2(
+                            getUrl('customers/view/') . $customerId,
+                            'w',
+                            $okMsg . ' — forfait activé en base, mais sync MikroTik échouée : '
+                            . Package::$lastDeviceSyncError
+                            . '. Utilisez Sync sur la fiche client quand le routeur est joignable.'
+                        );
+                    }
+                    $okMsg .= ' — forfait synchronisé sur « ' . $activate_router . ' ».';
+                } else {
+                    r2(
+                        getUrl('customers/view/') . $customerId,
+                        'w',
+                        $okMsg . ' — activation du forfait échouée. Rechargez manuellement (Services → Recharge).'
+                    );
+                }
+            }
+            r2(getUrl('customers/list'), 's', $okMsg);
         } else {
             r2(getUrl('customers/add'), 'e', $msg);
         }
@@ -1299,6 +1406,11 @@ if ($f_status == 'Active') {
         DemoShowcase::injectCustomersList($ui, 30, $append_url);
     } else {
         $d = Paginator::findMany($query, ['search' => $search], 30, $append_url);
+        $customerIds = [];
+        foreach ($d as $customer) {
+            $customerIds[] = (int) ($customer['id'] ?? 0);
+        }
+        $rechargeSummary = customersRechargeSummaryByIds($customerIds);
         foreach ($d as $k => $customer) {
             $contactPhone = trim((string) ($customer['phonenumber'] ?? ''));
             if ($contactPhone === '') {
@@ -1311,7 +1423,11 @@ if ($f_status == 'Active') {
                     $contactPhone = trim((string) $payment->phone_number);
                 }
             }
+            $summary = $rechargeSummary[(int) ($customer['id'] ?? 0)] ?? [];
             $d[$k]['contact_phone'] = $contactPhone;
+            $d[$k]['router_name'] = $summary['router_name'] ?? '';
+            $d[$k]['expiration'] = $summary['expiration'] ?? '';
+            $d[$k]['time'] = $summary['time'] ?? '';
         }
         $ui->assign('d', $d);
     }

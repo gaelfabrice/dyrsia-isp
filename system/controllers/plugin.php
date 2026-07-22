@@ -30,7 +30,7 @@ if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $pluginFn)) {
 }
 
 $publicPlugins = [
-    'hotspot_login', 'hotspot_login_file', 'hotspot_ticker', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
+    'hotspot_login', 'hotspot_login_file', 'hotspot_portal', 'hotspot_mikrotik_auth', 'hotspot_ticker', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
     'pppoe_portal', 'pppoe_plan', 'pppoe_pay', 'pppoe_verify',
     'wifizone_reseller_api',
 ];
@@ -139,8 +139,8 @@ if ($pluginFn === 'hotspot_voucher_check' && !function_exists('hotspot_voucher_c
         $customer = ORM::for_table('tbl_customers')->create();
         $customer->username = $username;
         $customer->password = $password;
+        $customer->pppoe_password = $password;
         $customer->pppoe_username = '';
-        $customer->pppoe_password = '';
         $customer->pppoe_ip = '';
         $customer->email = '';
         $customer->account_type = 'Personal';
@@ -166,7 +166,7 @@ if ($pluginFn === 'hotspot_voucher_check' && !function_exists('hotspot_voucher_c
             'success' => true,
             'message' => 'Voucher activé',
             'username' => $username,
-            'password' => $password,
+            'password' => HotspotCustomer::defaultPassword(),
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',
@@ -199,7 +199,7 @@ if ($pluginFn === 'hotspot_account_check' && !function_exists('hotspot_account_c
             'success' => true,
             'message' => 'Compte valide',
             'username' => $username,
-            'password' => $password,
+            'password' => HotspotCustomer::defaultPassword(),
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',
@@ -221,7 +221,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             exit;
         }
 
-        $routerName = trim((string) (_post('routername') ?: _get('routername')));
+        $routerName = hotspot_normalize_router_name(trim((string) (_post('routername') ?: _get('routername'))));
         $customer = HotspotCustomer::findByPhone($phone);
 
         $recharge = null;
@@ -242,7 +242,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             }
         }
 
-        if (!$recharge) {
+        if (!$recharge && $routerName === '') {
             $recharge = ORM::for_table('tbl_user_recharges')
                 ->where('username', $phone)
                 ->where('status', 'on')
@@ -256,7 +256,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
 
         $plan = $recharge ? ORM::for_table('tbl_plans')->where('id', $recharge['plan_id'])->find_one() : null;
         if (!$recharge || !$plan) {
-            echo json_encode(['success' => false, 'message' => 'Aucun forfait actif trouvé pour ce numéro']);
+            echo json_encode(['success' => false, 'message' => 'Aucun forfait actif trouvé pour ce numéro sur ce routeur']);
             exit;
         }
         if (!$customer) {
@@ -266,7 +266,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             'success' => true,
             'message' => 'Forfait retrouvé',
             'username' => $recharge['username'] ?: ($customer['username'] ?? ''),
-            'password' => Password::networkCleartext($customer) ?: HotspotCustomer::defaultPassword(),
+            'password' => HotspotCustomer::defaultPassword(),
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',

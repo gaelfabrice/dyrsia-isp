@@ -167,8 +167,18 @@ try {
             $ui->assign('superadmin_notify_feed', SuperAdminNotifications::feed(12));
             $ui->assign('superadmin_registration_pending', SuperAdminNotifications::registrationPendingCount());
         }
+        if (($admin['user_type'] ?? '') === 'Admin' && class_exists('Referral')) {
+            try {
+                Referral::ensureSchema();
+                $ui->assign('referral_notify_count', Referral::unreadCount((int) ($admin['id'] ?? 0)));
+                $ui->assign('referral_notify_feed', Referral::notificationFeed((int) ($admin['id'] ?? 0), 8));
+            } catch (Throwable $e) {
+                $ui->assign('referral_notify_count', 0);
+                $ui->assign('referral_notify_feed', []);
+            }
+        }
     }
-    if ($currentTenant && $admin) {
+    if ($currentTenant && $admin && $handler !== 'provision' && $handler !== 'ref') {
         Tenant::validateAdminTenant($admin);
     } elseif ($currentTenant && !$admin && $tenantDashboardRoute) {
         $_SESSION['tenant_login_redirect'] = Tenant::dashboardUrl($currentTenant['slug']);

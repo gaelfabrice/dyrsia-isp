@@ -70,34 +70,72 @@ function hotspot_pg_campay_format_phone($phone)
 
 function hotspot_pg_campay_is_ajax()
 {
-    return !empty($_POST['ajax'])
-        || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+    if (function_exists('hotspot_wants_json_response') && hotspot_wants_json_response()) {
+        return true;
+    }
+
+    if (!empty($_POST['ajax']) || !empty($_GET['ajax']) || !empty($_POST['pay']) || !empty($_GET['pay'])) {
+        return true;
+    }
+    if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower((string) $_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        return true;
+    }
+    $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
+
+    return strpos($accept, 'application/json') !== false;
+}
+
+function hotspot_pg_campay_ussd_for_phone($phone)
+{
+    $digits = preg_replace('/\D/', '', (string) $phone);
+    $local = strlen($digits) >= 9 ? substr($digits, -9) : $digits;
+    if ($local !== '' && $local[0] === '6') {
+        if (preg_match('/^6[5-8]/', $local)) {
+            return ['operator' => 'MTN', 'ussd_code' => '*126#'];
+        }
+        if (preg_match('/^6[69]/', $local)) {
+            return ['operator' => 'Orange', 'ussd_code' => '#150*50#'];
+        }
+    }
+
+    return ['operator' => 'Mobile Money', 'ussd_code' => '*126#'];
 }
 
 function hotspot_pg_campay_respond_error($message)
 {
-    if (hotspot_pg_campay_is_ajax()) {
+    // Toujours JSON : le portail captif utilise fetch() et ne suit pas les redirects HTML.
+    if (!headers_sent()) {
+        header('Access-Control-Allow-Origin: *');
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(['ok' => false, 'message' => $message]);
-        exit;
     }
-    header('Location: ' . U . 'plugin/hotspot_verify&message=' . urlencode($message));
+    echo json_encode(['ok' => false, 'message' => $message], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-function hotspot_pg_campay_respond_success($txref, $result = [])
+function hotspot_pg_campay_respond_success($txref, $result = [], $phone = '')
 {
-    if (hotspot_pg_campay_is_ajax()) {
-        header('Content-Type: application/json; charset=utf-8');
-        echo json_encode([
-            'ok' => true,
-            'reference' => $txref,
-            'operator' => $result['operator'] ?? '',
-            'ussd_code' => $result['ussd_code'] ?? '',
-        ]);
-        exit;
+    global $config;
+    $hint = hotspot_pg_campay_ussd_for_phone($phone);
+    $operator = trim((string) ($result['operator'] ?? ''));
+    $ussd = trim((string) ($result['ussd_code'] ?? ''));
+    if ($operator === '') {
+        $operator = $hint['operator'];
     }
-    header('Location: ' . U . 'plugin/hotspot_verify&reference=' . urlencode($txref));
+    if ($ussd === '') {
+        $ussd = $hint['ussd_code'];
+    }
+
+    if (!headers_sent()) {
+        header('Access-Control-Allow-Origin: *');
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode([
+        'ok' => true,
+        'reference' => $txref,
+        'operator' => $operator,
+        'ussd_code' => $ussd,
+        'currency' => $config['campay_currency'] ?? 'XAF',
+    ], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -107,6 +145,9 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     $fullname = 'Hotspot User';
     $address = 'Hotspot';
     $gatewayMeta = json_decode($trx->gateway_response ?? '{}', true);
+    if (!is_array($gatewayMeta)) {
+        $gatewayMeta = [];
+    }
     if (!empty($gatewayMeta['customer_name'])) {
         $fullname = $gatewayMeta['customer_name'];
     }
@@ -125,12 +166,36 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     }
 
     $formattedPhone = Lang::phoneFormat($phone);
-    $customer = HotspotCustomer::findOrCreate($phone, $fullname, $address);
 
-    if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator)) {
-        _log('[CamPay Hotspot] Activation failed for trx ' . $trx->transaction_ref);
-        return false;
+    $previousGlobalTrx = $GLOBALS['trx'] ?? null;
+    unset($GLOBALS['trx']);
+
+    $customer = null;
+    $networkPassword = '';
+
+    try {
+        $customer = HotspotCustomer::findOrCreate($phone, $fullname, $address);
+        $prepared = HotspotCustomer::prepareForHotspotActivation($customer);
+        $customer = $prepared['customer'];
+        $networkPassword = HotspotCustomer::defaultPassword();
+
+        if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator)) {
+            _log('[CamPay Hotspot] Activation failed for trx ' . $trx->transaction_ref);
+            return false;
+        }
+
+        HotspotCustomer::forceMikrotikHotspotPassword($customer->username, $routername, $networkPassword);
+    } finally {
+        HotspotCustomer::clearActivationNetworkPassword();
+        if ($previousGlobalTrx !== null) {
+            $GLOBALS['trx'] = $previousGlobalTrx;
+        } else {
+            unset($GLOBALS['trx']);
+        }
     }
+
+    $customer = ORM::for_table('tbl_customers')->find_one($customer->id);
+    HotspotCustomer::storePaymentNetworkPassword($trx, $networkPassword);
 
     $expiration = ORM::for_table('tbl_user_recharges')
         ->where('plan_id', $planid)
@@ -207,10 +272,20 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
     $status = strtoupper($result['status'] ?? 'PENDING');
     $operator = $result['operator'] ?? 'CamPay';
 
-    $trx->gateway_response = json_encode($result);
+    $existingMeta = json_decode((string) ($trx->gateway_response ?? '{}'), true);
+    if (!is_array($existingMeta)) {
+        $existingMeta = [];
+    }
+    $existingMeta['campay_poll'] = $result;
+    $trx->gateway_response = json_encode($existingMeta, JSON_UNESCAPED_UNICODE);
 
     if ($status === 'SUCCESSFUL') {
-        hotspot_pg_campay_activate_user($trx, $operator);
+        try {
+            hotspot_pg_campay_activate_user($trx, $operator);
+        } catch (Throwable $e) {
+            _log('[CamPay Hotspot] Activation exception for trx ' . $trx->transaction_ref . ': ' . $e->getMessage());
+            Package::$lastDeviceSyncError = $e->getMessage();
+        }
         if ((string) $trx->transaction_status === 'pending') {
             // CamPay confirmed payment but local activation failed — keep pending for retry.
             $trx->save();
@@ -237,7 +312,9 @@ function hotspot_processPayment_campay($data)
     $phone = $data['phone'];
     $mac_address = $data['mac_address'];
     $ip_address = $data['ip_address'];
-    $routername = $data['routername'];
+    $routername = function_exists('hotspot_normalize_router_name')
+        ? hotspot_normalize_router_name($data['routername'] ?? '')
+        : trim((string) ($data['routername'] ?? ''));
     $txref = $data['txref'];
     $planid = $data['planid'];
     $plan_name = $data['plan_name'];
@@ -255,16 +332,10 @@ function hotspot_processPayment_campay($data)
         }
     }
 
-    $formattedPhone = Lang::phoneFormat($phone);
-    $customerCheck = ORM::for_table('tbl_customers')->where('phonenumber', $formattedPhone)->find_one();
-
-    if ($customerCheck) {
-        $activePlan = ORM::for_table('tbl_user_recharges')
-            ->where('customer_id', $customerCheck->id)
-            ->where('status', 'on')
-            ->find_one();
-        if ($activePlan) {
-            hotspot_pg_campay_respond_error(Lang::T('You already have an active plan for this username/phone number.'));
+    if (function_exists('hotspot_cleanup_stale_recharge')) {
+        $customerCheck = class_exists('HotspotCustomer') ? HotspotCustomer::findByPhone($phone) : null;
+        if ($customerCheck) {
+            hotspot_cleanup_stale_recharge((int) $customerCheck->id, $routername);
         }
     }
 
@@ -348,7 +419,7 @@ function hotspot_processPayment_campay($data)
         hotspot_invalidate_overview_cache();
     }
 
-    hotspot_pg_campay_respond_success($txref, $result);
+    hotspot_pg_campay_respond_success($txref, $result, $phone);
 }
 
 function hotspot_pg_campay_verify()

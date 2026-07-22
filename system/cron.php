@@ -43,7 +43,7 @@ while ($row = $statement->fetch(PDO::FETCH_ASSOC)) {
 $_c = $config;
 
 run_hook('cronjob'); #HOOK
-Package::processExpiredRecharges(['silent' => false]);
+Package::processExpiredRecharges(['silent' => false, 'reinforce_routers' => true]);
 
 //Cek interim-update radiusrest
 if ($config['frrest_interim_update'] != 0) {

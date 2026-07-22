@@ -8,6 +8,9 @@
             <div class="wz-cc-actions">
                 <a href="{Text::url('customers/add')}" class="btn btn-primary btn-sm"><i class="fa fa-user-plus"></i> {Lang::T('New Customer')}</a>
                 <a href="{Text::url('plan/recharge')}" class="btn btn-default btn-sm"><i class="fa fa-bolt"></i> {Lang::T('Recharge')}</a>
+                {if in_array($_admin['user_type'], ['Admin', 'SuperAdmin'])}
+                <a href="{Text::url('referral')}" class="btn btn-default btn-sm"><i class="fa fa-users"></i> Parrainage</a>
+                {/if}
                 {if !$admin_subscription || $admin_subscription->status neq 'trial'}
                 <a href="{Text::url('routers/add')}" class="btn btn-default btn-sm"><i class="fa fa-server"></i> {Lang::T('Add Router')}</a>
                 {/if}
@@ -43,7 +46,6 @@
                     <div class="wz-cc-demo-text">
                         <strong class="wz-cc-demo-title">{Lang::T('Demo_Mode')}</strong>
                         <span class="wz-cc-demo-countdown" id="wzDemoCountdown" aria-live="polite">—</span>
-                        <span class="wz-cc-demo-label">{Lang::T('Demo_trial_countdown_label')}</span>
                     </div>
                 </div>
                 <a href="{Text::url('admin/subscription')}" class="wz-cc-demo-cta">

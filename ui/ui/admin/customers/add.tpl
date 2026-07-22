@@ -77,6 +77,33 @@
                         </div>
                     </div>
                     <div class="form-group">
+                        <label class="col-md-3 control-label">{Lang::T('Activate on Router')}</label>
+                        <div class="col-md-9">
+                            <select class="form-control" id="activate_router" name="activate_router">
+                                <option value="">{Lang::T('None')} — {Lang::T('create account only')}</option>
+                                {foreach $r as $router}
+                                    <option value="{$router['name']|escape}">{$router['name']|escape}</option>
+                                {/foreach}
+                            </select>
+                            <span class="help-block">{Lang::T('Optional')}: {Lang::T('creates the user on MikroTik immediately with the selected plan')}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="col-md-3 control-label">{Lang::T('Service Plan')}</label>
+                        <div class="col-md-9">
+                            <select class="form-control" id="activate_plan_id" name="activate_plan_id">
+                                <option value="">{Lang::T('Select Plans')}</option>
+                                {foreach $plans as $plan}
+                                    <option value="{$plan['id']}" data-type="{$plan['type']|escape}" data-router="{$plan['routers']|escape}">
+                                        [{$plan['type']|escape}] {$plan['name_plan']|escape}
+                                        {if $plan['routers']} — {$plan['routers']|escape}{/if}
+                                        ({$plan['price']|escape})
+                                    </option>
+                                {/foreach}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
                         <label class="col-md-3 control-label">{Lang::T('Account Type')}</label>
                         <div class="col-md-9">
                             <select class="form-control" id="account_type" name="account_type">
@@ -304,6 +331,42 @@
         window.onload = function() {
             getLocation();
         }
+    </script>
+    <script>
+        (function () {
+            var routerSel = document.getElementById('activate_router');
+            var planSel = document.getElementById('activate_plan_id');
+            var typeSel = document.getElementById('service_type');
+            if (!routerSel || !planSel) return;
+            var allOptions = Array.prototype.slice.call(planSel.querySelectorAll('option')).map(function (o) {
+                return { value: o.value, text: o.textContent, type: o.getAttribute('data-type') || '', router: o.getAttribute('data-router') || '', el: o };
+            });
+            function filterPlans() {
+                var router = (routerSel.value || '').toLowerCase();
+                var type = (typeSel && typeSel.value) ? typeSel.value.toLowerCase() : '';
+                var keep = planSel.value;
+                planSel.innerHTML = '';
+                var empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = 'Sélectionner un forfait';
+                planSel.appendChild(empty);
+                allOptions.forEach(function (opt) {
+                    if (!opt.value) return;
+                    if (type && opt.type && opt.type.toLowerCase() !== type && type !== 'others') return;
+                    if (router && opt.router && opt.router.toLowerCase() !== router) return;
+                    var o = document.createElement('option');
+                    o.value = opt.value;
+                    o.textContent = opt.text;
+                    o.setAttribute('data-type', opt.type);
+                    o.setAttribute('data-router', opt.router);
+                    if (opt.value === keep) o.selected = true;
+                    planSel.appendChild(o);
+                });
+            }
+            routerSel.addEventListener('change', filterPlans);
+            if (typeSel) typeSel.addEventListener('change', filterPlans);
+            filterPlans();
+        })();
     </script>
 {/literal}
 

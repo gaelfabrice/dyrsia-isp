@@ -46,7 +46,7 @@
             color: var(--muted); margin-bottom: 8px;
         }
         .field { margin-bottom: 18px; }
-        input[type="text"], input[type="email"], select {
+        input[type="text"], input[type="email"], input[type="tel"], select {
             width: 100%; padding: 12px 14px;
             border-radius: 10px; border: 1px solid var(--line);
             background: #0f172a; color: var(--text); font-size: 15px;
@@ -98,39 +98,51 @@
                 <div class="alert alert-{$notify_t|default:'danger'}">{$notify}</div>
             {/if}
 
-            <form method="post" action="{Text::url('provision/submit')}" id="provision-form" autocomplete="on">
+            <form method="post" action="/?_route=provision/submit" id="provision-form" autocomplete="on">
                 <input type="hidden" name="signup_intent" value="{$signup_intent|default:'demo'}">
+                <input type="hidden" name="referral_code" value="{$provision_referral_code|default:''|escape}">
+                <input type="hidden" name="ajax" value="1">
+                {if isset($provision_referral_code) && $provision_referral_code neq ''}
+                <div style="margin-bottom:14px;padding:10px 14px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:10px;font-size:13px;color:#22c55e;">
+                    <i class="fa fa-users"></i> <strong>Parrainage actif</strong> — Code : <code>{$provision_referral_code|escape}</code>. Vous avez été invité par un parrain !
+                </div>
+                {/if}
                 <div class="hp-field" aria-hidden="true">
                     <label for="website">Website</label>
                     <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+                </div>
+                <div class="field">
+                    <label for="full_name">Full Name</label>
+                    <input type="text" id="full_name" name="full_name" placeholder="e.g. Jean Dupont" required maxlength="150">
+                </div>
+                <div class="field">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email" placeholder="admin@isp.com" required maxlength="150">
+                </div>
+                <div class="field">
+                    <label for="phone_number">Phone Number</label>
+                    <input type="tel" id="phone_number" name="phone_number" placeholder="e.g. 677123456" required maxlength="30">
                 </div>
                 <div class="field">
                     <label for="business_name">ISP / Business Name</label>
                     <input type="text" id="business_name" name="business_name" placeholder="e.g. Mombasa Fiber" required maxlength="150">
                 </div>
                 <div class="field">
-                    <label for="country_code">Pays / Mobile Money</label>
+                    <label for="country_code">Pays</label>
                     <select id="country_code" name="country_code" required>
                         <option value="">— Choisir un pays —</option>
                         {foreach $provision_countries as $country}
-                            <option value="{$country.code}">{$country.name} — {$country.payment_label}</option>
+                            <option value="{$country.code}">
+                                {if $country.code eq 'GA'}GABON{elseif $country.code eq 'CM'}cameroun{else}{$country.name}{/if}
+                            </option>
                         {/foreach}
                     </select>
-                    <p style="margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.45">
-                        Seuls le Gabon (MyPVit) et le Cameroun (CamPay) disposent d'une API Mobile Money active.
-                    </p>
                 </div>
-                <div class="row2">
-                    <div class="field">
-                        <label for="subdomain">Desired Subdomain</label>
-                        <div class="subdomain-wrap">
-                            <input type="text" id="subdomain" name="subdomain" placeholder="wizfiber" pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*" required maxlength="63">
-                            <span class="suffix">{$tenant_domain_suffix}</span>
-                        </div>
-                    </div>
-                    <div class="field">
-                        <label for="email">Admin Email</label>
-                        <input type="email" id="email" name="email" placeholder="admin@isp.com" required maxlength="150">
+                <div class="field">
+                    <label for="subdomain">Desired Subdomain</label>
+                    <div class="subdomain-wrap">
+                        <input type="text" id="subdomain" name="subdomain" placeholder="wizfiber" pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*" required maxlength="63">
+                        <span class="suffix">{$tenant_domain_suffix}</span>
                     </div>
                 </div>
                 <button type="submit" class="btn" id="provision-btn">
@@ -143,6 +155,11 @@
     </div>
     <script>
     {literal}
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r){ r.unregister(); });
+        });
+    }
     (function () {
         var form = document.getElementById('provision-form');
         var btn = document.getElementById('provision-btn');
@@ -164,9 +181,18 @@
             if (!t) return null;
             try { return JSON.parse(t); } catch (e1) {}
             var start = t.indexOf('{');
-            var end = t.lastIndexOf('}');
-            if (start >= 0 && end > start) {
-                try { return JSON.parse(t.slice(start, end + 1)); } catch (e2) {}
+            if (start < 0) return null;
+            var depth = 0;
+            for (var i = start; i < t.length; i++) {
+                var ch = t.charAt(i);
+                if (ch === '{') depth++;
+                else if (ch === '}') {
+                    depth--;
+                    if (depth === 0) {
+                        try { return JSON.parse(t.slice(start, i + 1)); } catch (e2) {}
+                        break;
+                    }
+                }
             }
             return null;
         }
@@ -187,52 +213,59 @@
                 event.preventDefault();
                 var country = document.getElementById('country_code');
                 if (country && !country.value) {
-                    if (status) status.textContent = 'Veuillez choisir un pays avec API Mobile Money (Gabon ou Cameroun).';
+                    if (status) status.textContent = 'Veuillez choisir un pays.';
                     return;
                 }
                 btn.disabled = true;
                 var label = btn.querySelector('.btn-label');
-                if (label) label.textContent = 'Provisioning Environment… ◯';
+                if (label) label.textContent = 'Provisioning… ◯';
                 if (status) status.textContent = 'Création en cours… Cela peut prendre jusqu\'à 60 secondes.';
+
                 var data = new FormData(form);
                 data.append('ajax', '1');
-                var controller = new AbortController();
-                var timeoutId = setTimeout(function(){ controller.abort(); }, 120000);
-                fetch(form.action, {
-                    method: 'POST',
-                    body: data,
-                    credentials: 'same-origin',
-                    signal: controller.signal
-                }).then(function (response) {
-                    return response.text().then(function (text) {
-                        var res = parseJsonResponse(text);
-                        if (!res) {
-                            throw new Error(serverErrorMessage(response, text));
-                        }
-                        return res;
-                    });
-                }).then(function (res) {
+
+                var timeoutId = null;
+                var xhr = new XMLHttpRequest();
+                var postUrl = window.location.protocol + '//' + window.location.host + '/?_route=provision/submit';
+                xhr.open('POST', postUrl, true);
+                xhr.timeout = 120000;
+
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState !== 4) return;
                     clearTimeout(timeoutId);
+                    var text = xhr.responseText || '';
+                    var res = parseJsonResponse(text);
+                    if (!res) {
+                        btn.disabled = false;
+                        if (label) label.textContent = 'Create Environment →';
+                        if (status) status.textContent = 'Erreur serveur (HTTP ' + xhr.status + '). Réponse: ' + text.substring(0, 120);
+                        return;
+                    }
                     if (res.status === 'success') {
                         if (status) {
-                            status.innerHTML = 'Instance créée. Username: <strong>' + res.username + '</strong> Password: <strong>' + res.password + '</strong><br><a style="color:#93c5fd" href="' + res.redirect + '">Ouvrir le dashboard</a>';
+                            status.innerHTML = 'Instance créée ! Login: <strong>' + res.username + '</strong> — Redirection…';
                         }
                         window.location.href = res.redirect;
                         return;
                     }
                     btn.disabled = false;
                     if (label) label.textContent = 'Create Environment →';
-                    if (status) status.textContent = res.message || 'Provisioning failed.';
-                }).catch(function (err) {
-                    clearTimeout(timeoutId);
+                    if (status) status.textContent = res.message || 'Erreur inconnue.';
+                };
+
+                xhr.ontimeout = function () {
                     btn.disabled = false;
                     if (label) label.textContent = 'Create Environment →';
-                    if (status) {
-                        status.textContent = (err && err.name === 'AbortError')
-                            ? 'Délai dépassé (plus de 2 minutes). Le serveur met du temps à créer l\'instance — réessayez avec un autre sous-domaine.'
-                            : (err.message || 'Provisioning failed. Please check the server response and try again.');
-                    }
-                });
+                    if (status) status.textContent = 'Délai dépassé (2 min). Réessayez avec un autre sous-domaine.';
+                };
+
+                xhr.onerror = function () {
+                    btn.disabled = false;
+                    if (label) label.textContent = 'Create Environment →';
+                    if (status) status.textContent = 'Erreur réseau. Vérifiez votre connexion et réessayez.';
+                };
+
+                xhr.send(data);
             });
         }
     })();

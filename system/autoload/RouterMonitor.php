@@ -266,10 +266,16 @@ class RouterMonitor
             return [];
         }
 
+        $graceSeconds = 1200;
+        $now = time();
         $online = [];
         $offline = [];
         foreach ($routers as $router) {
-            if (strtolower((string) ($router->status ?? '')) === 'online') {
+            $status = strtolower((string) ($router->status ?? ''));
+            $lastSeenTs = strtotime((string) ($router->last_seen ?? '')) ?: 0;
+            $recentlySeen = $lastSeenTs > 0 && ($now - $lastSeenTs) <= $graceSeconds;
+
+            if ($status === 'online' || $recentlySeen) {
                 $online[] = $router;
             } else {
                 $offline[] = $router;

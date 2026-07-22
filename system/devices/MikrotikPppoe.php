@@ -132,6 +132,22 @@ class MikrotikPppoe
         return array_values(array_unique(array_filter($names)));
     }
 
+    private function markPppoeCustomerConnectedLocal($customerId)
+    {
+        $customerId = (int) $customerId;
+        if ($customerId <= 0) {
+            return;
+        }
+        if (method_exists('Mikrotik', 'markPppoeCustomerConnected')) {
+            Mikrotik::markPppoeCustomerConnected($customerId);
+            return;
+        }
+        if (trim((string) User::getAttribute('pppoe_first_connected', $customerId)) !== '') {
+            return;
+        }
+        User::setAttribute('pppoe_first_connected', date('Y-m-d H:i:s'), $customerId);
+    }
+
     private function resolvePlanRateLimit($plan, $bw)
     {
         if ($this->isExpirePlan($plan) || strtoupper(trim((string) ($plan['name_plan'] ?? ''))) === 'EXPIRE') {
@@ -158,6 +174,7 @@ class MikrotikPppoe
             $foundActive = false;
             foreach ($client->sendSync($activeRequest) as $active) {
                 $foundActive = true;
+                $this->markPppoeCustomerConnectedLocal((int) ($customer['id'] ?? 0));
                 $sessionId = $active->getProperty('.id');
                 $ip = trim((string) $active->getProperty('address'));
                 if ($ip !== '') {
@@ -199,6 +216,7 @@ class MikrotikPppoe
             $activeRequest->setArgument('.proplist', '.id');
             $activeRequest->setQuery(RouterOS\Query::where('name', $name));
             foreach ($client->sendSync($activeRequest) as $active) {
+                $this->markPppoeCustomerConnectedLocal((int) ($customer['id'] ?? 0));
                 $sessionId = $active->getProperty('.id');
                 if (!empty($sessionId)) {
                     $this->setActivePppoeProfile($client, $sessionId, $profileName);
@@ -426,12 +444,26 @@ class MikrotikPppoe
         if (strcasecmp(trim((string) ($plan['name_plan'] ?? '')), 'EXPIRE') === 0) {
             return;
         }
-        $client = $this->routerClient($plan['routers']);
+        $routerName = trim((string) ($plan['routers'] ?? ''));
+        if (!$this->info($routerName)) {
+            _log(
+                'PPPoE remove_plan: routeur introuvable « ' . $routerName . ' » pour forfait « '
+                . trim((string) ($plan['name_plan'] ?? '')) . ' » — profil MikroTik ignoré.',
+                'PPPoE',
+                0
+            );
+
+            return;
+        }
+        $client = $this->routerClient($routerName);
         $printRequest = new RouterOS\Request(
             '/ppp profile print .proplist=.id',
             RouterOS\Query::where('name', $plan['name_plan'])
         );
         $profileID = $client->sendSync($printRequest)->getProperty('.id');
+        if ($profileID === null || $profileID === '') {
+            return;
+        }
 
         $removeRequest = new RouterOS\Request('/ppp/profile/remove');
         $client->sendSync(
@@ -544,9 +576,9 @@ class MikrotikPppoe
         );
     }
 
-    function getClient($ip, $user, $pass)
+    function getClient($ip, $user, $pass, $timeout = 5, $fallback = true, $failOnUnreachable = false)
     {
-        return Mikrotik::getClient($ip, $user, $pass);
+        return Mikrotik::getClient($ip, $user, $pass, $timeout, $fallback, $failOnUnreachable);
     }
 
     function removePpoeUser($client, $username)

@@ -22,13 +22,18 @@ class Message
         global $config;
         run_hook('send_telegram', [$txt, $chat_id, $topik]); #HOOK
         if (!empty($config['telegram_bot'])) {
-            if (empty($chat_id)) {
-                $chat_id = $config['telegram_target_id'];
+            try {
+                if (empty($chat_id)) {
+                    $chat_id = $config['telegram_target_id'];
+                }
+                if (!empty($topik)) {
+                    $topik = "message_thread_id=$topik&";
+                }
+                return Http::getData('https://api.telegram.org/bot' . $config['telegram_bot'] . '/sendMessage?' . $topik . 'chat_id=' . $chat_id . '&text=' . urlencode($txt));
+            } catch (Throwable $e) {
+                error_log('Message::sendTelegram failed: ' . $e->getMessage());
+                return false;
             }
-            if (!empty($topik)) {
-                $topik = "message_thread_id=$topik&";
-            }
-            return Http::getData('https://api.telegram.org/bot' . $config['telegram_bot'] . '/sendMessage?' . $topik . 'chat_id=' . $chat_id . '&text=' . urlencode($txt));
         }
     }
 
@@ -148,7 +153,7 @@ class Message
         } else {
             $mail = new PHPMailer();
             $mail->isSMTP();
-            if (isset($debug_mail) && $debug_mail == 'Dev') {
+            if (isset($debug_mail) && $debug_mail == 'Dev' && empty($GLOBALS['wifizone_suppress_smtp_debug'])) {
                 $mail->SMTPDebug = SMTP::DEBUG_SERVER;
             }
             $mail->Host = $config['smtp_host'];

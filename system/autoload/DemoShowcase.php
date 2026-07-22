@@ -364,6 +364,9 @@ class DemoShowcase
                 'status' => $active ? 'Active' : 'Inactive',
                 'created_at' => date('Y-m-d H:i:s', strtotime('-' . mt_rand(1, 240) . ' days')),
                 'address' => 'Quartier ' . ['Akwa', 'Bonamoussadi', 'Makepe', 'Logpom', 'Bastos'][mt_rand(0, 4)],
+                'router_name' => $routers !== [] ? $routers[mt_rand(0, count($routers) - 1)] : '',
+                'expiration' => date('Y-m-d', strtotime('+' . mt_rand(1, 30) . ' days')),
+                'time' => date('H:i:s'),
             ];
         }
         return $rows;

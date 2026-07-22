@@ -468,7 +468,7 @@ body.theme-dark .ac-status.off { color: #f87171; }
                             <a href="{Text::url('plan/edit/')}{$ds.id}" class="ac-edit">
                                 <i class="fa fa-pencil"></i> {Lang::T('Edit')}
                             </a>
-                            {if !$ds.is_active && $_c['extend_expired']}
+                            {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
                             <a href="javascript:void(0)" onclick="extend('{$ds.id}')" class="ac-edit" style="margin-left:8px">
                                 {Lang::T('Extend')}
                             </a>

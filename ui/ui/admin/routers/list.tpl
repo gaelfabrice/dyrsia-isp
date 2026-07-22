@@ -44,7 +44,7 @@
                                 <th>{Lang::T('Router Name')}</th>
                                 <th>{Lang::T('IP Address')}</th>
                                 <th>{Lang::T('Username')}</th>
-                                <th>{Lang::T('Description')}</th>
+                                <th>Adresse Mac</th>
                                 <th>{Lang::T('Online Status')}</th>
                                 <th>{Lang::T('Last Seen')}</th>
                                 <th>{Lang::T('Status')}</th>

@@ -282,27 +282,48 @@
 
 .rx-op-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
 }
-@media (max-width: 480px) { .rx-op-grid { grid-template-columns: 1fr; } }
-.rx-op-grid input { position: absolute; opacity: 0; pointer-events: none; }
-.rx-op-card {
+.rx-op-grid label {
     display: block;
+    margin: 0;
+    min-width: 0;
+}
+.rx-op-grid input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+    pointer-events: none;
+}
+.rx-op-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
     text-align: center;
-    padding: 12px 8px;
+    padding: 12px 10px;
     border: 2px solid var(--rx-border);
     border-radius: 12px;
     cursor: pointer;
     font-size: 12px;
     font-weight: 600;
     color: var(--rx-muted);
-    transition: all .15s;
+    line-height: 1.3;
+    box-shadow: inset 0 0 0 0 transparent;
+    transition: border-color .15s, background .15s, color .15s, box-shadow .15s;
+    user-select: none;
+}
+.rx-op-grid input:focus-visible + .rx-op-card {
+    box-shadow: inset 0 0 0 1px var(--rx-accent);
 }
 .rx-op-grid input:checked + .rx-op-card {
     border-color: var(--rx-accent);
     background: var(--rx-accent-soft);
     color: var(--rx-accent);
+    box-shadow: inset 0 0 0 1px var(--rx-accent);
 }
 
 .rx-btn {

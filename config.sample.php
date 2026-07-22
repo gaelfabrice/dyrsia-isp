@@ -37,6 +37,12 @@ $db_pass = wz_env('DB_PASSWORD', wz_env('DB_PASS', ''));
 $db_name = wz_env('DB_DATABASE', wz_env('DB_NAME', 'wifizones'));
 $db_password = $db_pass;
 
+$radius_host = wz_env('RADIUS_HOST', $db_host);
+$radius_user = wz_env('RADIUS_USERNAME', $db_user);
+$radius_pass = wz_env('RADIUS_PASSWORD', $db_pass);
+$radius_name = wz_env('RADIUS_DATABASE', $db_name);
+$radius_password = $radius_pass;
+
 if ($_app_stage != 'Live') {
     error_reporting(E_ERROR);
     ini_set('display_errors', 1);

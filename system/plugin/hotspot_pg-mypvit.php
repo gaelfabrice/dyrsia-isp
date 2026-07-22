@@ -126,16 +126,38 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
     $routername = $trx->router_name;
     $planid = $trx->plan_id;
 
-    $customer = HotspotCustomer::findOrCreate(
-        $trx->phone_number,
-        $gatewayResponse['customer_name'] ?? 'Client Hotspot',
-        $gatewayResponse['customer_address'] ?? 'Hotspot'
-    );
+    $previousGlobalTrx = $GLOBALS['trx'] ?? null;
+    unset($GLOBALS['trx']);
 
-    if (!Package::rechargeUser($customer->id, $routername, $planid, 'MyPVit', $operator)) {
-        _log('[MyPVit Hotspot] Activation failed for trx ' . $trx->transaction_ref);
-        return false;
+    $networkPassword = '';
+
+    try {
+        $customer = HotspotCustomer::findOrCreate(
+            $trx->phone_number,
+            $gatewayResponse['customer_name'] ?? 'Client Hotspot',
+            $gatewayResponse['customer_address'] ?? 'Hotspot'
+        );
+        $prepared = HotspotCustomer::prepareForHotspotActivation($customer);
+        $customer = $prepared['customer'];
+        $networkPassword = HotspotCustomer::defaultPassword();
+
+        if (!Package::rechargeUser($customer->id, $routername, $planid, 'MyPVit', $operator)) {
+            _log('[MyPVit Hotspot] Activation failed for trx ' . $trx->transaction_ref);
+            return false;
+        }
+
+        HotspotCustomer::forceMikrotikHotspotPassword($customer->username, $routername, $networkPassword);
+    } finally {
+        HotspotCustomer::clearActivationNetworkPassword();
+        if ($previousGlobalTrx !== null) {
+            $GLOBALS['trx'] = $previousGlobalTrx;
+        } else {
+            unset($GLOBALS['trx']);
+        }
     }
+
+    $customer = ORM::for_table('tbl_customers')->find_one($customer->id);
+    HotspotCustomer::storePaymentNetworkPassword($trx, $networkPassword);
 
     $expiration = ORM::for_table('tbl_user_recharges')
         ->where('plan_id', $planid)
@@ -206,7 +228,9 @@ function hotspot_processPayment_mypvit($data)
     }
     $mac_address = $data['mac_address'];
     $ip_address = $data['ip_address'];
-    $routername = $data['routername'];
+    $routername = function_exists('hotspot_normalize_router_name')
+        ? hotspot_normalize_router_name($data['routername'] ?? '')
+        : trim((string) ($data['routername'] ?? ''));
     $txref = $data['txref'];
     $planid = $data['planid'];
     $plan_name = $data['plan_name'];
@@ -219,15 +243,10 @@ function hotspot_processPayment_mypvit($data)
         }
     }
 
-    $formattedPhone = Lang::phoneFormat($phone);
-    $customerCheck = ORM::for_table('tbl_customers')->where('phonenumber', $formattedPhone)->find_one();
-    if ($customerCheck) {
-        $activePlan = ORM::for_table('tbl_user_recharges')
-            ->where('customer_id', $customerCheck->id)
-            ->where('status', 'on')
-            ->find_one();
-        if ($activePlan) {
-            hotspot_pg_mypvit_respond_error(Lang::T('You already have an active plan for this username/phone number.'));
+    if (function_exists('hotspot_cleanup_stale_recharge')) {
+        $customerCheck = class_exists('HotspotCustomer') ? HotspotCustomer::findByPhone($phone) : null;
+        if ($customerCheck) {
+            hotspot_cleanup_stale_recharge((int) $customerCheck->id, $routername);
         }
     }
 

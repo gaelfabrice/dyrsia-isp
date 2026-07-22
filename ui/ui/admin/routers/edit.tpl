@@ -53,11 +53,12 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="col-md-2 control-label">{Lang::T('Description')}</label>
+                        <label class="col-md-2 control-label">Adresse Mac</label>
                         <div class="col-md-6">
-                            <textarea class="form-control" id="description"
-                                name="description">{$d['description']}</textarea>
-                            <p class="help-block">{Lang::T('Explain Coverage of router')}</p>
+                            <input type="text" class="form-control" id="description" name="description"
+                                value="{$d['description']|escape:'html'}" maxlength="17"
+                                placeholder="18:FD:74:CB:CB:BA" pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$" required>
+                            <p class="help-block">Adresse MAC du routeur MikroTik (System → RouterBOARD ou interface ether1).</p>
                         </div>
                     </div>
                     <div class="form-group">

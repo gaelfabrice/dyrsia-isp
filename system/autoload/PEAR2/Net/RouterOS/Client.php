@@ -73,7 +73,7 @@ class Client
      *
      * @var Communicator
      */
-    protected $com;
+    public $com;
 
     /**
      * The number of currently pending requests.
@@ -509,10 +509,24 @@ class Client
         $hasNoTag = '' == $tag;
         $result = $hasNoTag ? array()
             : $this->extractNewResponses($tag)->toArray();
+        // Never wait indefinitely: a dead/half-open VPN socket would freeze
+        // the whole PHP request (Send complet) forever. 60s tolerates a very
+        // high-latency tunnel (double-hop WireGuard ~400ms RTT) where a single
+        // chatty API command can take 20-30s, while still failing fast on a
+        // genuinely dead socket.
+        $replyTimeout = 60;
         while ((!$hasNoTag && $this->isRequestActive($tag))
             || ($hasNoTag && 0 !== $this->getPendingRequestsCount())
         ) {
-            $newReply = $this->dispatchNextResponse(null);
+            try {
+                $newReply = $this->dispatchNextResponse($replyTimeout);
+            } catch (SocketException $e) {
+                try {
+                    $this->com->close();
+                } catch (Throwable $closeErr) {
+                }
+                throw $e;
+            }
             if ($newReply->getTag() === $tag) {
                 if ($hasNoTag) {
                     $result[] = $newReply;

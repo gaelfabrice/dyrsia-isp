@@ -465,7 +465,11 @@ class MobileMoneyGateway
             return password;
         }
         function connectAfterPayment(code, password, planName, validity) {
-            const loginPassword = normalizeHotspotLoginPassword(password);
+            const loginPassword = normalizeHotspotLoginPassword(password || '123456');
+            if (!loginPassword) {
+                Swal.fire('Erreur', 'Mot de passe non reçu du serveur.', 'error');
+                return;
+            }
             Swal.fire({
                 html: buildPaymentSuccessHtml(planName, validity),
                 showConfirmButton: false,
@@ -710,7 +714,7 @@ class MobileMoneyGateway
 
             $html = preg_replace(
                 '/function connecter\(user,pass,nom\)\{[\s\S]*?setTimeout\(\(\)=>\{[\s\S]*?\},600\);\s*\}/',
-                "function connecter(user,pass,nom){Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});setTimeout(function(){if(typeof fillAndSubmitHotspotLogin==='function'){fillAndSubmitHotspotLogin(user,pass||'123456');}else{const userEl=document.getElementById('user')||document.getElementById('loginUsername');const passEl=document.getElementById('pass')||document.getElementById('loginPassword');if(userEl)userEl.value=user||'';if(passEl){passEl.value=pass||user||'';delete passEl.dataset.chapDone;}if(typeof Swal!=='undefined'&&Swal.close)Swal.close();if(typeof submitHotspotLogin==='function')submitHotspotLogin();else{const f=document.getElementById('loginForm');if(f){prepareMikrotikLogin(f);f.submit();}}}},500);}",
+                "function connecter(user,pass,nom){var loginPass=String(pass||'123456').trim();if(!loginPass||loginPass.indexOf('$2y$')===0||loginPass.indexOf('$2a$')===0||loginPass.indexOf('$2b$')===0){loginPass='123456';}Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});setTimeout(function(){if(typeof fillAndSubmitHotspotLogin==='function'){fillAndSubmitHotspotLogin(user,loginPass);}else{const userEl=document.getElementById('user')||document.getElementById('loginUsername');const passEl=document.getElementById('pass')||document.getElementById('loginPassword');if(userEl)userEl.value=user||'';if(passEl){passEl.value=loginPass;delete passEl.dataset.chapDone;}if(typeof Swal!=='undefined'&&Swal.close)Swal.close();if(typeof submitHotspotLogin==='function')submitHotspotLogin();else{const f=document.getElementById('loginForm');if(f){prepareMikrotikLogin(f);f.submit();}}}},500);}",
                 $html,
                 1
             );

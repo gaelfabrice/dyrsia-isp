@@ -9,6 +9,7 @@
             <div class="panel-body">
                 <form class="form-horizontal" method="post" role="form" action="{Text::url('')}plan/edit-post">
                     <input type="hidden" name="id" value="{$d['id']}">
+                    {csrf_field()}
                     <div class="form-group">
                         <label class="col-md-2 control-label">{Lang::T('Select Account')}</label>
                         <div class="col-md-6">
@@ -53,6 +54,18 @@
                         <div class="col-md-2">
                             <input type="text" class="form-control" id="time" name="time" placeholder="00:00:00"
                                 value="{$d['time']}">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="col-md-2 control-label">{Lang::T('Adjust Expiry')}</label>
+                        <div class="col-md-4">
+                            <div class="input-group">
+                                <span class="input-group-addon">+/-</span>
+                                <input type="number" class="form-control" id="adjust_days" name="adjust_days"
+                                    placeholder="0" value="">
+                                <span class="input-group-addon">{Lang::T('days')}</span>
+                            </div>
+                            <p class="help-block">{Lang::T('Add or subtract days from the current expiry. Leave empty to use the date above.')}</p>
                         </div>
                     </div>
 

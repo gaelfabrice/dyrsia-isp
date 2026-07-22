@@ -17,6 +17,13 @@ $ui->assign('_title', Lang::T('Network'));
 $ui->assign('_system_menu', 'network');
 $ui->assign('_admin', $admin);
 
+// Connexion MikroTik (VPN/API) : éviter le Fatal "Maximum execution time of 15 seconds"
+if (in_array($action, ['add-post', 'edit-post', 'test-connection', 'delete'], true)) {
+    @ini_set('max_execution_time', '120');
+    @set_time_limit(120);
+    @ini_set('default_socket_timeout', '30');
+}
+
 require_once $DEVICE_PATH . DIRECTORY_SEPARATOR . "MikrotikHotspot.php";
 
 if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
@@ -37,14 +44,14 @@ $leafletpickerHeader = <<<EOT
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css">
 EOT;
 
-function router_check_status($ip_address, $username, $password, &$errorDetail = null)
+function router_check_status($ip_address, $username, $password, &$errorDetail = null, $timeout = 15, $fallback = true)
 {
     $oldTimeout = ini_get('default_socket_timeout');
-    ini_set('default_socket_timeout', 5);
+    ini_set('default_socket_timeout', $timeout);
     $errorDetail = null;
-    
+
     try {
-        (new MikrotikHotspot())->getClient($ip_address, $username, $password);
+        (new MikrotikHotspot())->getClient($ip_address, $username, $password, $timeout, $fallback, true);
         ini_set('default_socket_timeout', $oldTimeout);
         return 'Online';
     } catch (Throwable $e) {
@@ -88,10 +95,98 @@ function router_normalize_ip_port($ip_address, $api_port = '8728')
 function router_scoped_query($admin)
 {
     $query = ORM::for_table('tbl_routers');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('admin_id', $admin['id']);
+    if (!empty($admin['id'])) {
+        $query->where('admin_id', (int) $admin['id']);
     }
+
     return $query;
+}
+
+function router_normalize_mac($mac)
+{
+    $mac = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', (string) $mac));
+    if (strlen($mac) !== 12) {
+        return '';
+    }
+
+    return implode(':', str_split($mac, 2));
+}
+
+function router_validate_mac($mac)
+{
+    $normalized = router_normalize_mac($mac);
+    if ($normalized === '') {
+        return '';
+    }
+    if (!preg_match('/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/', $normalized)) {
+        return '';
+    }
+
+    return $normalized;
+}
+
+function router_find_mac_conflict($macAddress, $excludeId = 0)
+{
+    $macAddress = router_validate_mac($macAddress);
+    if ($macAddress === '') {
+        return '';
+    }
+
+    $excludeId = (int) $excludeId;
+    $query = ORM::for_table('tbl_routers')->where('description', $macAddress);
+    if ($excludeId > 0) {
+        $query->where_not_equal('id', $excludeId);
+    }
+    if ($query->find_one()) {
+        return 'Cette adresse MAC est déjà enregistrée sur un autre compte.';
+    }
+
+    return '';
+}
+
+function router_fetch_mac_from_device($ip_address, $username, $password, $timeout = 8)
+{
+    try {
+        $client = (new MikrotikHotspot())->getClient($ip_address, $username, $password, $timeout, false, true);
+        if (!$client || !class_exists('Mikrotik')) {
+            return '';
+        }
+
+        return Mikrotik::fetchRouterMacAddress($client);
+    } catch (Throwable $e) {
+        return '';
+    } catch (Exception $e) {
+        return '';
+    }
+}
+
+function router_find_global_conflict($name, $ipAddress, $excludeId = 0)
+{
+    $excludeId = (int) $excludeId;
+    $name = trim((string) $name);
+    $ipAddress = trim((string) $ipAddress);
+
+    if ($name !== '') {
+        $query = ORM::for_table('tbl_routers')->where('name', $name);
+        if ($excludeId > 0) {
+            $query->where_not_equal('id', $excludeId);
+        }
+        if ($query->find_one()) {
+            return 'Ce nom de routeur est déjà enregistré sur un autre compte.';
+        }
+    }
+
+    if ($ipAddress !== '') {
+        $query = ORM::for_table('tbl_routers')->where('ip_address', $ipAddress);
+        if ($excludeId > 0) {
+            $query->where_not_equal('id', $excludeId);
+        }
+        if ($query->find_one()) {
+            return 'Cette adresse IP MikroTik est déjà enregistrée sur un autre compte.';
+        }
+    }
+
+    return '';
 }
 
 switch ($action) {
@@ -107,6 +202,8 @@ switch ($action) {
         break;
 
     case 'test-connection':
+        @ini_set('max_execution_time', '120');
+        @set_time_limit(120);
         // Start output buffering to capture any stray output (deprecation warnings etc.)
         ob_start();
         
@@ -183,7 +280,7 @@ switch ($action) {
             }
             
             $errorDetail = null;
-            $routerStatus = router_check_status($ip_address, $username, $password, $errorDetail);
+            $routerStatus = router_check_status($ip_address, $username, $password, $errorDetail, 6, false);
             
             $response = [
                 'success' => $routerStatus == 'Online',
@@ -191,6 +288,13 @@ switch ($action) {
                 'ip_address' => $ip_address,
                 'message' => $routerStatus == 'Online' ? Lang::T('Connexion réussie') : Lang::T('Connexion échouée')
             ];
+
+            if ($routerStatus == 'Online') {
+                $macAddress = router_fetch_mac_from_device($ip_address, $username, $password, 6);
+                if ($macAddress !== '') {
+                    $response['mac_address'] = $macAddress;
+                }
+            }
             
             if ($errorDetail) {
                 $response['error'] = $errorDetail;
@@ -265,9 +369,6 @@ switch ($action) {
         }
 
         $d = router_scoped_query($admin)->where('id', $id)->find_one();
-        if (!$d && $admin['user_type'] === 'SuperAdmin') {
-            $d = ORM::for_table('tbl_routers')->find_one($id);
-        }
         if (!$d) {
             r2(getUrl('routers/list'), 'e', Lang::T('Account Not Found'));
         }
@@ -286,11 +387,13 @@ switch ($action) {
         break;
 
     case 'add-post':
+        @ini_set('max_execution_time', '120');
+        @set_time_limit(120);
         $name = _post('name');
         $ip_address = router_normalize_ip_port(_post('ip_address'), _post('api_port'));
         $username = _post('username');
         $password = _post('password');
-        $description = _post('description');
+        $description = router_validate_mac(_post('description'));
         $enabled = _post('enabled');
 
         $msg = '';
@@ -301,11 +404,21 @@ switch ($action) {
             if ($ip_address == '' or $username == '') {
                 $msg .= Lang::T('All field is required') . '<br>';
             }
-
-            $d = router_scoped_query($admin)->where('ip_address', $ip_address)->find_one();
-            if ($d) {
-                $msg .= Lang::T('IP Router Already Exist') . '<br>';
+        }
+        if ($description === '' && ($enabled || _post('testIt'))) {
+            $description = router_fetch_mac_from_device($ip_address, $username, $password, 6);
+        }
+        if ($description === '') {
+            $msg .= 'Adresse MAC requise (format AA:BB:CC:DD:EE:FF). Testez la connexion pour la récupérer automatiquement.<br>';
+        } else {
+            $macConflict = router_find_mac_conflict($description);
+            if ($macConflict !== '') {
+                $msg .= $macConflict . '<br>';
             }
+        }
+        $conflict = router_find_global_conflict($name, $enabled || _post('testIt') ? $ip_address : '');
+        if ($conflict !== '') {
+            $msg .= $conflict . '<br>';
         }
         if (strtolower($name) == 'radius') {
             $msg .= '<b>Radius</b> name is reserved<br>';
@@ -319,9 +432,10 @@ switch ($action) {
                 }
             }
             run_hook('add_router'); #HOOK
-            $routerStatus = router_check_status($ip_address, $username, $password);
+            // Timeout court + sans fallback long (évite fatal 15s sur VPN lent)
+            $routerStatus = router_check_status($ip_address, $username, $password, $errorDetail, 8, false);
             if ($routerStatus != 'Online') {
-                r2(getUrl('routers/add'), 'e', Lang::T('Router connection failed. Please verify IP, API port, username, password, MikroTik API service and firewall.'));
+                r2(getUrl('routers/add'), 'e', Lang::T('Router connection failed. Please verify IP, API port, username, password, MikroTik API service and firewall.') . ($errorDetail ? ' (' . $errorDetail . ')' : ''));
             }
             $d = ORM::for_table('tbl_routers')->create();
             $d->admin_id = $admin['id'];
@@ -350,7 +464,7 @@ switch ($action) {
         $ip_address = router_normalize_ip_port(_post('ip_address'), _post('api_port'));
         $username = _post('username');
         $password = _post('password');
-        $description = _post('description');
+        $description = router_validate_mac(_post('description'));
         $coordinates = _post('coordinates');
         $coverage = _post('coverage');
         $enabled = $_POST['enabled'];
@@ -363,6 +477,14 @@ switch ($action) {
                 $msg .= Lang::T('All field is required') . '<br>';
             }
         }
+        if ($description === '') {
+            $msg .= 'Adresse MAC requise (format AA:BB:CC:DD:EE:FF).<br>';
+        } else {
+            $macConflict = router_find_mac_conflict($description, (int) _post('id'));
+            if ($macConflict !== '') {
+                $msg .= $macConflict . '<br>';
+            }
+        }
 
         $id = _post('id');
         $d = router_scoped_query($admin)->where('id', $id)->find_one();
@@ -372,18 +494,18 @@ switch ($action) {
         }
 
         if ($d['name'] != $name) {
-            $c = router_scoped_query($admin)->where('name', $name)->where_not_equal('id', $id)->find_one();
-            if ($c) {
-                $msg .= 'Name Already Exists<br>';
+            $conflict = router_find_global_conflict($name, '', (int) $d['id']);
+            if ($conflict !== '') {
+                $msg .= $conflict . '<br>';
             }
         }
         $oldname = $d['name'];
 
         if($enabled || _post("testIt")){
             if ($d['ip_address'] != $ip_address) {
-                $c = router_scoped_query($admin)->where('ip_address', $ip_address)->where_not_equal('id', $id)->find_one();
-                if ($c) {
-                    $msg .= 'IP Already Exists<br>';
+                $conflict = router_find_global_conflict('', $ip_address, (int) $d['id']);
+                if ($conflict !== '') {
+                    $msg .= $conflict . '<br>';
                 }
             }
         }
@@ -399,9 +521,9 @@ switch ($action) {
                 $passwordToStore = $d->password;
             }
             if ($enabled || _post('testIt')) {
-                $routerStatus = router_check_status($ip_address, $username, $passwordToStore);
+                $routerStatus = router_check_status($ip_address, $username, $passwordToStore, $errorDetail, 8, false);
                 if ($routerStatus != 'Online' && (_post('testIt') || $enabled)) {
-                    r2(getUrl('routers/edit/') . $id, 'e', Lang::T('Router connection failed. Check API user, password, port 8728 and firewall.'));
+                    r2(getUrl('routers/edit/') . $id, 'e', Lang::T('Router connection failed. Check API user, password, port 8728 and firewall.') . ($errorDetail ? ' (' . $errorDetail . ')' : ''));
                 }
             } else {
                 $routerStatus = $d->status ?: 'Offline';

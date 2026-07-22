@@ -169,7 +169,7 @@ body.dark-mode .rv-page {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
-    min-width: 860px;
+    min-width: 1080px;
 }
 .rv-table th {
     text-align: left;
@@ -383,6 +383,61 @@ body.dark-mode .rv-profile {
     color: var(--rv-muted);
     line-height: 1.45;
 }
+
+.rv-lock-form { margin: 0; }
+.rv-lock-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+.rv-lock-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.rv-lock-track {
+    width: 44px;
+    height: 24px;
+    border-radius: 999px;
+    background: #cbd5e1;
+    position: relative;
+    transition: background .2s;
+    flex-shrink: 0;
+}
+.rv-lock-track::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
+    transition: transform .2s;
+}
+.rv-lock-toggle input:checked + .rv-lock-track {
+    background: var(--rv-success);
+}
+.rv-lock-toggle input:checked + .rv-lock-track::after {
+    transform: translateX(20px);
+}
+.rv-lock-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    min-width: 28px;
+}
+.rv-lock-label.on { color: var(--rv-success); }
+.rv-lock-label.off { color: var(--rv-muted); }
+.rv-lock-missing {
+    font-size: 12px;
+    color: var(--rv-muted);
+    font-style: italic;
+}
 {/literal}
 </style>
 
@@ -418,6 +473,78 @@ body.dark-mode .rv-profile {
 
     <div class="rv-card">
         <div class="rv-card-head">
+            <h2><i class="fa fa-id-card-o"></i> Profils bénéficiaires enregistrés</h2>
+            {if $withdrawal_profiles|@count > 0}
+            <span class="rv-badge approved"><i class="fa fa-users"></i> {$withdrawal_profiles|@count} profil(s)</span>
+            {/if}
+        </div>
+        <div class="rv-card-body">
+            <div class="rv-table-wrap">
+                <table class="rv-table rv-table-compact">
+                    <thead>
+                        <tr>
+                            <th>Enregistré le</th>
+                            <th>Client</th>
+                            <th>Nom</th>
+                            <th>Téléphone</th>
+                            <th>Méthode</th>
+                            <th>Verrouillage</th>
+                            <th>Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {if $withdrawal_profiles|@count > 0}
+                            {foreach $withdrawal_profiles as $prof}
+                            <tr>
+                                <td>{$prof->created_at|date_format:"%d/%m/%Y %H:%M"}</td>
+                                <td>
+                                    <strong style="color:var(--rv-heading)">{$prof->admin_fullname|default:$prof->admin_username|escape}</strong>
+                                    <span class="rv-phone">ID #{$prof->admin_id} · @{$prof->admin_username|escape}</span>
+                                </td>
+                                <td><strong>{$prof->first_name|escape} {$prof->last_name|escape}</strong></td>
+                                <td>+237 {$prof->phone|escape}</td>
+                                <td>
+                                    {foreach $withdrawal_operators as $k => $label}{if $prof->operator eq $k}{$label}{/if}{/foreach}
+                                </td>
+                                <td>
+                                    <form method="post" action="{Text::url('finance/reversement-lock-post')}" class="rv-lock-form">
+                                        <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                                        <input type="hidden" name="admin_id" value="{$prof->admin_id}">
+                                        <input type="hidden" name="locked" value="{if $prof->locked|default:1}0{else}1{/if}">
+                                        <label class="rv-lock-toggle" title="ON = profil verrouillé · OFF = le client peut modifier le bénéficiaire">
+                                            <input type="checkbox" {if $prof->locked|default:1}checked{/if} onchange="this.form.submit()">
+                                            <span class="rv-lock-track" aria-hidden="true"></span>
+                                            <span class="rv-lock-label {if $prof->locked|default:1}on{else}off{/if}">{if $prof->locked|default:1}ON{else}OFF{/if}</span>
+                                        </label>
+                                    </form>
+                                </td>
+                                <td>
+                                    {if $prof->locked|default:1}
+                                    <span class="rv-badge approved"><i class="fa fa-lock"></i> Verrouillé</span>
+                                    {else}
+                                    <span class="rv-badge pending"><i class="fa fa-unlock"></i> Modifiable client</span>
+                                    {/if}
+                                </td>
+                            </tr>
+                            {/foreach}
+                        {else}
+                            <tr>
+                                <td colspan="7">
+                                    <div class="rv-empty">
+                                        <i class="fa fa-user-plus"></i>
+                                        Aucun profil bénéficiaire enregistré pour le moment.
+                                    </div>
+                                </td>
+                            </tr>
+                        {/if}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="rv-card">
+        <div class="rv-card-head">
             <h2><i class="fa fa-clock-o"></i> Demandes en traitement</h2>
             {if $withdrawal_pending|@count > 0}
             <span class="rv-badge pending"><i class="fa fa-hourglass-half"></i> {$withdrawal_pending|@count} en attente</span>
@@ -430,9 +557,12 @@ body.dark-mode .rv-profile {
                         <tr>
                             <th>Date</th>
                             <th>Client</th>
+                            <th>Nom</th>
+                            <th>Téléphone</th>
                             <th>Méthode</th>
                             <th>Montant</th>
                             <th>Compte à rebours</th>
+                            <th>Verrouillage</th>
                             <th>Statut</th>
                             <th>Actions</th>
                         </tr>
@@ -443,15 +573,44 @@ body.dark-mode .rv-profile {
                             <tr>
                                 <td>{$p->created_at|date_format:"%d/%m/%Y %H:%M"}</td>
                                 <td>
-                                    <strong style="color:var(--rv-heading)">{$p->admin_fullname|default:$p->beneficiary_name|escape}</strong>
+                                    <strong style="color:var(--rv-heading)">{$p->admin_fullname|default:$p->admin_username|escape}</strong>
                                     <span class="rv-phone">ID #{$p->admin_id}</span>
                                 </td>
                                 <td>
+                                    {if $p->profile_first_name || $p->profile_last_name}
+                                        <strong>{$p->profile_first_name|escape} {$p->profile_last_name|escape}</strong>
+                                    {else}
+                                        <span class="rv-lock-missing">{$p->beneficiary_name|default:'—'|escape}</span>
+                                    {/if}
+                                </td>
+                                <td>
+                                    {if $p->profile_phone}
+                                        +237 {$p->profile_phone|escape}
+                                    {else}
+                                        <span class="rv-lock-missing">+237 {$p->beneficiary_phone|default:'—'|escape}</span>
+                                    {/if}
+                                </td>
+                                <td>
                                     {foreach $withdrawal_operators as $k => $label}{if $p->operator eq $k}{$label}{/if}{/foreach}
-                                    <span class="rv-phone">+237 {$p->beneficiary_phone|escape}</span>
                                 </td>
                                 <td><span class="rv-amount">{number_format($p->amount,0,',',' ')} Fcfa</span></td>
                                 <td><span class="rv-countdown" id="rv-countdown-{$p->id}" data-expires="{$p->expires_at}">—</span></td>
+                                <td>
+                                    {if $p->profile_first_name || $p->profile_last_name || $p->profile_phone}
+                                    <form method="post" action="{Text::url('finance/reversement-lock-post')}" class="rv-lock-form" id="rvLockForm{$p->admin_id}">
+                                        <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                                        <input type="hidden" name="admin_id" value="{$p->admin_id}">
+                                        <input type="hidden" name="locked" value="{if $p->profile_locked|default:1}0{else}1{/if}">
+                                        <label class="rv-lock-toggle" title="ON = profil verrouillé · OFF = le client peut modifier le bénéficiaire">
+                                            <input type="checkbox" {if $p->profile_locked|default:1}checked{/if} onchange="this.form.submit()">
+                                            <span class="rv-lock-track" aria-hidden="true"></span>
+                                            <span class="rv-lock-label {if $p->profile_locked|default:1}on{else}off{/if}">{if $p->profile_locked|default:1}ON{else}OFF{/if}</span>
+                                        </label>
+                                    </form>
+                                    {else}
+                                    <span class="rv-lock-missing">—</span>
+                                    {/if}
+                                </td>
                                 <td><span class="rv-badge pending">En traitement</span></td>
                                 <td>
                                     <div class="rv-actions">
@@ -467,7 +626,7 @@ body.dark-mode .rv-profile {
                             {/foreach}
                         {else}
                             <tr>
-                                <td colspan="7">
+                                <td colspan="10">
                                     <div class="rv-empty">
                                         <i class="fa fa-inbox"></i>
                                         Aucune demande en attente pour le moment.

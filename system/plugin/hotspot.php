@@ -461,11 +461,25 @@
         return null;
     }
 
+    /**
+     * Nom canonique MikroTik (tbl_routers.name) pour comparer forfaits / paiements par routeur.
+     */
+    function hotspot_normalize_router_name($routerInput)
+    {
+        $routerInput = trim((string) $routerInput);
+        if ($routerInput === '') {
+            return '';
+        }
+        $row = hotspot_resolve_router($routerInput);
+        return $row ? trim((string) $row['name']) : $routerInput;
+    }
+
     function hotspot_customer_has_active_recharge($customerId, $routerName = '')
     {
         if ((int) $customerId <= 0) {
             return null;
         }
+        $routerName = hotspot_normalize_router_name($routerName);
         $q = ORM::for_table('tbl_user_recharges')
             ->where('customer_id', (int) $customerId)
             ->where('status', 'on')
@@ -483,6 +497,27 @@
         return null;
     }
 
+    function hotspot_cleanup_stale_recharge($customerId, $routerName = '')
+    {
+        if ((int) $customerId <= 0) {
+            return;
+        }
+        $routerName = hotspot_normalize_router_name($routerName);
+        $q = ORM::for_table('tbl_user_recharges')
+            ->where('customer_id', (int) $customerId)
+            ->where('status', 'on')
+            ->where('type', 'Hotspot');
+        if ($routerName !== '') {
+            $q->where('routers', $routerName);
+        }
+        foreach ($q->find_many() as $stale) {
+            if (!Package::isRechargeActive($stale)) {
+                $stale->status = 'off';
+                $stale->save();
+            }
+        }
+    }
+
     function hotspot_find_paid_payment_by_phone($phone, $routerName = '')
     {
         $digits = preg_replace('/\D/', '', (string) $phone);
@@ -490,6 +525,7 @@
             return null;
         }
         $local = substr($digits, -9);
+        $routerName = hotspot_normalize_router_name($routerName);
         $q = ORM::for_table('tbl_hotspot_payments')
             ->where('transaction_status', 'paid')
             ->order_by_desc('id');
@@ -589,11 +625,7 @@
             exit;
         }
 
-        $hotspotplan = ORM::for_table('tbl_plans')
-            ->where('type', 'Hotspot')
-            ->where('routers', $routername)
-            ->where('enabled', 1)
-            ->find_many();
+        $hotspotplan = WifiZoneHotspot::plansQueryForRouter($routername)->find_many();
 
         if (count($hotspotplan) > 0) {
             $response = [
@@ -614,9 +646,14 @@
                     $rate_up_unit = $bandwidthrow->rate_up_unit;
                     $downlimit = "$rate_down $rate_down_unit";
                     $uplimit = "$rate_up $rate_up_unit";
-                    $paymentlink = U . "plugin/hotspot_pay&planid=" . $row->id . "&routername=" . $routername;
-                    $planId = $row->id;
-                    switch ($limittype) {
+                } else {
+                    $downlimit = 'Unlimited';
+                    $uplimit = 'Unlimited';
+                }
+
+                $paymentlink = U . "plugin/hotspot_pay&planid=" . $row->id . "&routername=" . $routername;
+                $planId = $row->id;
+                switch ($limittype) {
                         case 'Unlimited':
                             $validity = "{$row->validity} {$row->validity_unit}";
                             $data = [
@@ -705,23 +742,26 @@
                                     $response['data'][] = $data;
                                     break;
                                 default:
-                                    $response = [
-                                        'ResultCode' => "204",
-                                        'message' => "unknown limit type"
-                                    ];
-                                    echo json_encode($response, JSON_PRETTY_PRINT);
-                                    exit;
+                                    _log(
+                                        'Hotspot plan skipped (unknown limit type): '
+                                        . (string) ($row->name_plan ?? '')
+                                        . ' / ' . (string) ($row->limit_type ?? ''),
+                                        'Hotspot',
+                                        0
+                                    );
+                                    break;
                             }
                             break;
                         default:
-                            $response = [
-                                'ResultCode' => "204",
-                                'message' => "unknown bandwidth type"
-                            ];
-                            echo json_encode($response, JSON_PRETTY_PRINT);
-                            exit;
+                            _log(
+                                'Hotspot plan skipped (unknown bandwidth type): '
+                                . (string) ($row->name_plan ?? '')
+                                . ' / ' . (string) $limittype,
+                                'Hotspot',
+                                0
+                            );
+                            break;
                     }
-                }
             }
 
             $responseJson = json_encode($response, JSON_PRETTY_PRINT);
@@ -735,57 +775,110 @@
             echo json_encode($response, JSON_PRETTY_PRINT);
         }
     }
+    function hotspot_wants_json_response($payload = null)
+    {
+        if (is_array($payload)) {
+            if (!empty($payload['ajax']) || !empty($payload['pay'])) {
+                return true;
+            }
+        }
+        if (!empty($_GET['ajax']) || !empty($_POST['ajax']) || !empty($_GET['pay']) || !empty($_POST['pay'])) {
+            return true;
+        }
+        if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower((string) $_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+            return true;
+        }
+        $accept = (string) ($_SERVER['HTTP_ACCEPT'] ?? '');
+
+        return strpos($accept, 'application/json') !== false;
+    }
+
+    function hotspot_respond_json(array $data, $httpCode = 200)
+    {
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        if (!headers_sent()) {
+            http_response_code((int) $httpCode);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Access-Control-Allow-Origin: *');
+        }
+        echo json_encode($data, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     function hotspot_pay()
     {
         global $config;
 
+        $paymentInput = hotspot_payment_payload();
+        $wantsJson = hotspot_wants_json_response($paymentInput);
+
         if ($config['maintenance_mode']) {
+            if ($wantsJson) {
+                hotspot_respond_json(['ok' => false, 'message' => Lang::T('Service is under maintenance. Please try again later.')], 503);
+            }
             displayMaintenanceMessage();
             die();
         }
 
         $payment_gateways = hotspot_getAvailablePaymentGateways();
 
-        if (isset($_GET['planid']) || isset($_GET['routername']) || isset($_POST['planid']) || isset($_POST['routername'])) {
-            $routername = $_GET['routername'] ?? $_POST['routername'] ?? '';
-            $planid = $_GET['planid'] ?? $_POST['planid'] ?? '';
-            $mac_address = $_GET['mac'] ?? $_POST['mac'] ?? $_POST['mac_address'] ?? '';
-            $ip_address = $_GET['ip'] ?? $_POST['ip'] ?? $_POST['ip_address'] ?? '';
+        $routername = '';
+        $planid = '';
+        $mac_address = '';
+        $ip_address = '';
+        $amount = '';
+        $plan_name = '';
+        $validity = '';
 
-            hotspot_validateMacAddress($mac_address);
+        if (!empty($paymentInput['planid']) || !empty($paymentInput['routername'])) {
+            $routername = hotspot_normalize_router_name((string) ($paymentInput['routername'] ?? ''));
+            $planid = (string) ($paymentInput['planid'] ?? '');
+            $mac_address = (string) ($paymentInput['mac'] ?? $paymentInput['mac_address'] ?? '');
+            $ip_address = (string) ($paymentInput['ip'] ?? $paymentInput['ip_address'] ?? '');
 
-            $plan = hotspot_getHotspotPlan($planid);
+            $mac_address = hotspot_validateMacAddress($mac_address);
+
+            $plan = hotspot_getHotspotPlan(
+                $planid,
+                $routername,
+                (string) ($paymentInput['plan_name'] ?? '')
+            );
             if (!$plan) {
+                _log(
+                    'Hotspot pay: plan introuvable planid=' . $planid
+                    . ' router=' . $routername
+                    . ' plan_name=' . (string) ($paymentInput['plan_name'] ?? ''),
+                    'Hotspot',
+                    0
+                );
                 hotspot_throwError(Lang::T("Invalid plan selected."));
             }
 
             $amount = $plan['price'];
             $plan_name = $plan['name_plan'];
+            $planid = (string) $plan['id'];
             $validity = $plan['validity'] . ' ' . $plan['validity_unit'];
         }
 
-        $paymentInput = hotspot_payment_payload();
-        if (isset($paymentInput['pay'])) {
+        if (!empty($paymentInput['pay'])) {
             $payment_data = hotspot_validateAndPreparePaymentData($paymentInput);
 
-            // Ensure payment type is set
             if (!isset($paymentInput['type'])) {
                 hotspot_throwError(Lang::T("Payment type is required."));
-                die();
             }
 
             $type = $paymentInput['type'];
             $gateway = preg_replace('/[^a-zA-Z0-9_]/', '', $payment_data['payment_gateway']);
 
             if ($type === 'token') {
-                $token = $paymentInput['payment_token'] ?? null; // Avoid undefined index warnings
+                $token = $paymentInput['payment_token'] ?? null;
                 if (empty($token)) {
                     hotspot_throwError(Lang::T("Payment token is required."));
-                    die();
                 }
                 if (!ctype_digit($token)) {
                     hotspot_throwError(Lang::T("Invalid token value, Token must be only numeric value."));
-                    die();
                 }
 
                 $function_name = "hotspot_processPayment_tokens";
@@ -793,9 +886,8 @@
                     $result = $function_name($payment_data);
                     if (!$result) {
                         hotspot_throwError(Lang::T("Failed to process payment using payment token. Please try again."));
-                    } else {
-                        echo $result;
                     }
+                    echo $result;
                 } else {
                     sendTelegram("Error: Token payment processing function not found, Please Check the system");
                     hotspot_throwError(Lang::T("We are currently experiencing problems trying to connect to this module. Please go back and try again, or report this issue to ") . ' <a href="tel:' . ($config['phone'] ?? 'Not Available') . '">' . ($config['phone'] ?? 'Not Available') . '</a><br><br>' . Lang::T("Thanks."));
@@ -803,13 +895,23 @@
             } else {
                 $function_name = "hotspot_processPayment_$gateway";
                 if (function_exists($function_name)) {
-                    $result = $function_name($payment_data);
-                    echo $result;
+                    $function_name($payment_data);
                 } else {
                     hotspot_throwError(Lang::T("$gateway payment processing function not found. Please go back and try again, or report this issue to ") . ' <a href="tel:' . ($config['phone'] ?? 'Not Available') . '">' . ($config['phone'] ?? 'Not Available') . '</a><br><br>' . Lang::T("Thanks."));
                 }
             }
         } else {
+            if ($wantsJson || strcasecmp($_SERVER['REQUEST_METHOD'] ?? '', 'POST') === 0) {
+                $receivedKeys = implode(',', array_keys($paymentInput));
+                _log(
+                    'Hotspot pay: missing pay param, keys=' . ($receivedKeys !== '' ? $receivedKeys : 'aucun')
+                        . ' method=' . ($_SERVER['REQUEST_METHOD'] ?? '')
+                        . ' ct=' . ($_SERVER['CONTENT_TYPE'] ?? ''),
+                    'Hotspot',
+                    0
+                );
+                hotspot_respond_json(['ok' => false, 'message' => 'Requête de paiement incomplète. Réessayez depuis le portail captif.']);
+            }
             hotspot_displayPaymentForm($payment_gateways, $planid, $plan_name, $amount, $routername, $validity, $mac_address, $ip_address);
         }
     }
@@ -840,13 +942,53 @@
         return $email;
     }
 
-    function hotspot_getHotspotPlan($planid)
+    function hotspot_getHotspotPlan($planid, $routerName = '', $planName = '')
     {
-        return ORM::for_table('tbl_plans')
-            ->where('type', 'Hotspot')
-            ->where('enabled', 1)
-            ->where('id', $planid)
-            ->find_one();
+        $planid = (int) $planid;
+        $routerName = hotspot_normalize_router_name($routerName);
+        $planName = trim((string) $planName);
+        $ownerId = ($routerName !== '' && class_exists('WifiZoneHotspot'))
+            ? WifiZoneHotspot::routerAdminId($routerName)
+            : 0;
+
+        $baseQuery = static function () use ($ownerId) {
+            $q = ORM::for_table('tbl_plans')->where('type', 'Hotspot')->where('enabled', 1);
+            if ($ownerId > 0) {
+                $q->where('admin_id', $ownerId);
+            }
+
+            return $q;
+        };
+
+        if ($planid > 0) {
+            $byId = $baseQuery()->where('id', $planid)->find_one();
+            if ($byId) {
+                $planRouter = hotspot_normalize_router_name((string) $byId->routers);
+                if ($routerName !== '' && strcasecmp($planRouter, $routerName) !== 0) {
+                    _log(
+                        'Hotspot pay: forfait #' . $planid
+                        . ' routeur=' . $planRouter
+                        . ' attendu=' . $routerName,
+                        'Hotspot',
+                        0
+                    );
+
+                    return null;
+                }
+
+                return $byId;
+            }
+        }
+
+        if ($routerName !== '' && $planName !== '') {
+            foreach (WifiZoneHotspot::plansQueryForRouter($routerName)->find_many() as $candidate) {
+                if (strcasecmp((string) $candidate->name_plan, $planName) === 0) {
+                    return $candidate;
+                }
+            }
+        }
+
+        return null;
     }
 
     function hotspot_resolve_payment_phone(array $data)
@@ -964,17 +1106,25 @@
             $mac_address = hotspot_getMacAddressByPhone($phone);
         }
         $mac = hotspot_validateMacAddress($mac_address);
-        $plan = hotspot_getHotspotPlan($post_data['planid']);
+        $routername = hotspot_normalize_router_name($post_data['routername']);
+        $plan = hotspot_getHotspotPlan(
+            $post_data['planid'],
+            $routername,
+            (string) ($post_data['plan_name'] ?? '')
+        );
+        if (!$plan) {
+            hotspot_throwError(Lang::T("Invalid plan selected."));
+        }
         $email = hotspot_getEmailAddress($phone);
         $plan_name = $plan['name_plan'];
         return [
-            'routername' => $post_data['routername'],
-            'planid' => $post_data['planid'],
+            'routername' => $routername,
+            'planid' => (string) $plan['id'],
             'plan_name' => $plan_name,
             'payment_gateway' => $post_data['payment_gateway'],
             'phone' => $phone,
             'email' => $email,
-            'amount' => $post_data['amount'],
+            'amount' => (string) ($plan['price'] ?? $post_data['amount']),
             'mac_address' => $mac,
             'ip_address' => $post_data['ip_address'],
             'txref' => uniqid('trx'),
@@ -1136,14 +1286,14 @@
 
     function hotspot_throwError($message)
     {
-        $isAjax = !empty($_POST['ajax']) || !empty($_GET['ajax'])
-            || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+        $isAjax = hotspot_wants_json_response();
         if ($isAjax) {
             if (!headers_sent()) {
+                header('Access-Control-Allow-Origin: *');
                 header('Content-Type: application/json; charset=utf-8');
                 header('HTTP/1.1 400 Bad Request');
             }
-            echo json_encode(['ok' => false, 'message' => strip_tags((string) $message)]);
+            echo json_encode(['ok' => false, 'message' => strip_tags((string) $message)], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -3054,6 +3204,34 @@
     function hotspot_login()
     {
         WifiZoneHotspot::handleLogin();
+    }
+
+    function hotspot_portal()
+    {
+        global $config;
+        wifizone_hotspot_plugin_cors();
+        $routerName = trim((string) ($_GET['routername'] ?? ''));
+        if ($routerName === '') {
+            try {
+                $sessionAdmin = Admin::_info();
+                if ($sessionAdmin) {
+                    $sessionAdmin = Impersonate::resolveActingAdmin($sessionAdmin);
+                    $sessionAdmin = Impersonate::adminToArray($sessionAdmin);
+                    $routerName = WifiZoneHotspot::loadLoginRouterForAdmin($sessionAdmin, $config);
+                }
+            } catch (Throwable $e) {
+            }
+        }
+        if ($routerName === '') {
+            $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+        }
+        WifiZoneHotspot::renderCaptivePortalHtml('', '', $routerName);
+    }
+
+    function hotspot_mikrotik_auth()
+    {
+        wifizone_hotspot_plugin_cors();
+        WifiZoneHotspot::handleMikrotikNativeAuth();
     }
 
     function hotspot_loginSuccess($message)

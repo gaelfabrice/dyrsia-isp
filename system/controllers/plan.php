@@ -23,6 +23,15 @@ function plan_scoped_router_query($admin)
     return $query;
 }
 
+function plan_scoped_plan_query($admin)
+{
+    $query = ORM::for_table('tbl_plans');
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $query->where('admin_id', $admin['id']);
+    }
+    return $query;
+}
+
 function plan_list_apply_filters($query, $admin, $search, $router, $plan, $type, $status = null)
 {
     if ($admin['user_type'] != 'SuperAdmin') {
@@ -355,6 +364,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
 }
 
             // রিচার্জ প্রক্রিয়া শুরু
+            Package::$lastDeviceSyncError = '';
             if (Package::rechargeUser($id_customer, $server, $planId, $gateway, $channel)) {
                 
                 // --- অ্যাডমিন ওয়ালেট থেকে টাকা কাটার লজিক শুরু ---
@@ -404,6 +414,17 @@ if ($admin['user_type'] != 'SuperAdmin') {
                     }
                 }
                 // --- অ্যাডমিন ওয়ালেট লজিক শেষ ---
+
+                if (Package::$lastDeviceSyncError !== '') {
+                    r2(
+                        getUrl('customers/view/') . $id_customer,
+                        'w',
+                        Lang::T('Data Created Successfully')
+                        . ' — forfait en base, mais sync MikroTik échouée : '
+                        . Package::$lastDeviceSyncError
+                        . '. Relancez Sync sur la fiche client.'
+                    );
+                }
 
                 $in = ORM::for_table('tbl_transactions')->where('username', $cust['username'])->order_by_desc('id')->find_one();
                 Package::createInvoice($in);
@@ -576,18 +597,27 @@ if ($admin['user_type'] != 'SuperAdmin') {
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
+        $id = _post('id');
+        $csrf_token = _post('csrf_token');
+        if ($csrf_token === '') {
+            $csrf_token = _req('token');
+        }
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('plan/edit/') . $id, 'e', Lang::T('Invalid or Expired CSRF Token') . ".");
+        }
         $id_plan = _post('id_plan');
         $recharged_on = _post('recharged_on');
         $expiration = _post('expiration');
         $time = _post('time');
+        $adjust_days = (int) _post('adjust_days');
 
-        $id = _post('id');
         $d = ORM::for_table('tbl_user_recharges')->find_one($id);
         if ($d) {
         } else {
             $msg .= Lang::T('Data Not Found') . '<br>';
         }
         $oldPlanID = $d['plan_id'];
+        $p = ORM::for_table('tbl_plans')->find_one($oldPlanID);
         $newPlan = ORM::for_table('tbl_plans')->where('id', $id_plan)->find_one();
         if ($newPlan) {
         } else {
@@ -595,6 +625,11 @@ if ($admin['user_type'] != 'SuperAdmin') {
         }
         if ($msg == '') {
             run_hook('edit_customer_plan'); #HOOK
+            if ($adjust_days != 0) {
+                $sign = $adjust_days > 0 ? '+' : '-';
+                $days = abs($adjust_days);
+                $expiration = date('Y-m-d', strtotime($d['expiration'] . " $sign$days days"));
+            }
             $d->expiration = $expiration;
             $d->time = $time;
             if ($d['status'] == 'off') {
@@ -606,17 +641,18 @@ if ($admin['user_type'] != 'SuperAdmin') {
             if ($oldPlanID != $id_plan) {
                 $d->plan_id = $newPlan['id'];
                 $d->namebp = $newPlan['name_plan'];
+                $p = $newPlan;
                 $customer = User::_info($d['customer_id']);
                 //remove from old plan
                 if ($d['status'] == 'on') {
-                    $p = ORM::for_table('tbl_plans')->find_one($oldPlanID);
-                    $dvc = Package::getDevice($p);
+                    $oldPlan = ORM::for_table('tbl_plans')->find_one($oldPlanID);
+                    $dvc = Package::getDevice($oldPlan);
                     if ($_app_stage != 'demo') {
                         if (file_exists($dvc)) {
                             require_once $dvc;
-                            $p['plan_expired'] = 0;
+                            $oldPlan['plan_expired'] = 0;
                             try {
-                                (new $p['device'])->remove_customer($customer, $p);
+                                (new $oldPlan['device'])->remove_customer($customer, $oldPlan);
                             } catch (Throwable $e) {
                                 r2(getUrl('plan/list'), 'e', WifiZoneSecurity::safeExceptionMessage($e));
                                 exit;
@@ -638,6 +674,23 @@ if ($admin['user_type'] != 'SuperAdmin') {
                 }
             }
             $d->save();
+            // sync router when active so the new expiry is applied on the device
+            if ($d['status'] == 'on') {
+                $customer = User::_info($d['customer_id']);
+                $dvc = Package::getDevice($p);
+                if ($_app_stage != 'demo' && file_exists($dvc)) {
+                    require_once $dvc;
+                    try {
+                        if (method_exists($p['device'], 'sync_customer')) {
+                            (new $p['device'])->sync_customer($customer, $p);
+                        } else {
+                            (new $p['device'])->add_customer($customer, $p);
+                        }
+                    } catch (Throwable $e) {
+                        _log('Plan edit sync error: ' . $e->getMessage(), 'Error');
+                    }
+                }
+            }
             _log('[' . $admin['username'] . ']: ' . 'Edit Plan for Customer ' . $d['username'] . ' to [' . $d['namebp'] . '][' . Lang::moneyFormat($p['price']) . ']', $admin['user_type'], $admin['id']);
             r2(getUrl('plan/list'), 's', Lang::T('Data Updated Successfully'));
         } else {
@@ -761,7 +814,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
         $ui->assign('_title', Lang::T('Add Vouchers'));
         $c = ORM::for_table('tbl_customers')->find_many();
         $ui->assign('c', $c);
-        $p = ORM::for_table('tbl_plans')->where('enabled', '1')->find_many();
+        $p = plan_scoped_plan_query($admin)->where('enabled', '1')->find_many();
         $ui->assign('p', $p);
         $r = plan_scoped_router_query($admin)->where('enabled', '1')->find_many();
         $ui->assign('r', $r);
@@ -889,7 +942,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
         $ui->assign('vpl', $vpl);
         $ui->assign('pagebreak', $pagebreak);
 
-        $plans = ORM::for_table('tbl_plans')->find_many();
+        $plans = plan_scoped_plan_query($admin)->find_many();
         $ui->assign('plans', $plans);
         $ui->assign('limit', $limit);
         $ui->assign('planid', $planid);
@@ -1299,55 +1352,61 @@ if ($admin['user_type'] != 'SuperAdmin') {
         break;
     case 'extend':
         $id = $routes[2];
-        $days = $routes[3];
+        $days = (int) $routes[3];
         $svoucher = _get('svoucher');
         if (App::getVoucherValue($svoucher)) {
             r2(getUrl('plan'), 's', "Extend already done");
         }
         $tur = ORM::for_table('tbl_user_recharges')->find_one($id);
-        $status = $tur['status'];
-        if ($status == 'off') {
-            if (strtotime($tur['expiration'] . ' ' . $tur['time']) > time()) {
-                // not expired
-                $expiration = date('Y-m-d', strtotime($tur['expiration'] . " +$days day"));
-            } else {
-                //expired
-                $expiration = date('Y-m-d', strtotime(" +$days day"));
-            }
-            App::setVoucher($svoucher, $id);
-            $c = ORM::for_table('tbl_customers')->findOne($tur['customer_id']);
-            if ($c) {
-                $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
-                if ($p) {
-                    $dvc = Package::getDevice($p);
-                    if ($_app_stage != 'demo') {
-                        if (file_exists($dvc)) {
-                            require_once $dvc;
-                            global $isChangePlan;
-                            $isChangePlan = true;
-                            (new $p['device'])->add_customer($c, $p);
-                        } else {
-                            throw new Exception(Lang::T("Devices Not Found"));
-                        }
-                    }
-                    $tur->expiration = $expiration;
-                    $tur->status = "on";
-                    $tur->save();
-                } else {
-                    r2(getUrl('plan'), 's', "Plan not found");
-                }
-            } else {
-                r2(getUrl('plan'), 's', "Customer not found");
-            }
-            Message::sendTelegram("#u$tur[username] #id$tur[customer_id]  #extend by $admin[fullname] #" . $p['type'] . " \n" . $p['name_plan'] .
-                "\nLocation: " . $p['routers'] .
-                "\nCustomer: " . $c['fullname'] .
-                "\nNew Expired: " . Lang::dateAndTimeFormat($expiration, $tur['time']));
-            _log("$admin[fullname] extend Customer $tur[customer_id] $tur[username] #$tur[customer_id] for $days days", $admin['user_type'], $admin['id']);
-            r2(getUrl('plan'), 's', "Extend until $expiration");
-        } else {
-            r2(getUrl('plan'), 's', "Customer is not expired yet");
+        if (!$tur) {
+            r2(getUrl('plan'), 'e', "Data Not Found");
         }
+        if (!$tur) {
+            r2(getUrl('plan'), 'e', "Data Not Found");
+        }
+        $status = $tur['status'];
+        if (strtotime($tur['expiration'] . ' ' . $tur['time']) > time()) {
+            // not expired yet, extend from current expiration
+            $expiration = date('Y-m-d', strtotime($tur['expiration'] . " +$days day"));
+        } else {
+            // expired, extend from today
+            $expiration = date('Y-m-d', strtotime(" +$days day"));
+        }
+        App::setVoucher($svoucher, $id);
+        $c = ORM::for_table('tbl_customers')->findOne($tur['customer_id']);
+        if ($c) {
+            $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
+            if ($p) {
+                $dvc = Package::getDevice($p);
+                if ($_app_stage != 'demo') {
+                    if (file_exists($dvc)) {
+                        require_once $dvc;
+                        global $isChangePlan;
+                        $isChangePlan = true;
+                        try {
+                            (new $p['device'])->add_customer($c, $p);
+                        } catch (Throwable $e) {
+                            r2(getUrl('plan'), 'e', WifiZoneSecurity::safeExceptionMessage($e));
+                        }
+                    } else {
+                        throw new Exception(Lang::T("Devices Not Found"));
+                    }
+                }
+                $tur->expiration = $expiration;
+                $tur->status = "on";
+                $tur->save();
+            } else {
+                r2(getUrl('plan'), 'e', "Plan not found");
+            }
+        } else {
+            r2(getUrl('plan'), 'e', "Customer not found");
+        }
+        Message::sendTelegram("#u$tur[username] #id$tur[customer_id]  #extend by $admin[fullname] #" . $p['type'] . " \n" . $p['name_plan'] .
+            "\nLocation: " . $p['routers'] .
+            "\nCustomer: " . $c['fullname'] .
+            "\nNew Expired: " . Lang::dateAndTimeFormat($expiration, $tur['time']));
+        _log("$admin[fullname] extend Customer $tur[customer_id] $tur[username] #$tur[customer_id] for $days days", $admin['user_type'], $admin['id']);
+        r2(getUrl('plan'), 's', "Extend until $expiration");
         break;
     default:
         // ১. শুরুতেই 'show' বা লিমিট ভ্যালু রিসিভ করা

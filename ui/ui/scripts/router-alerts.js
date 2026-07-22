@@ -99,6 +99,9 @@
         if (!alertsUrl) {
             return;
         }
+        if (window.HS_SYNC_IN_PROGRESS) {
+            return;
+        }
         fetch(alertsUrl, { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (data) {
@@ -120,6 +123,7 @@
     }
 
     if (alertsUrl) {
+        window.hsRefreshRouterAlerts = fetchAlerts;
         fetchAlerts();
         setInterval(fetchAlerts, POLL_MS);
     }

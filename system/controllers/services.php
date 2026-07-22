@@ -29,6 +29,44 @@ function services_scoped_plan_query($admin)
     return $query;
 }
 
+/** Propriétaire du forfait = propriétaire du routeur (isolation multi-comptes). */
+function services_plan_owner_admin_id($admin, $routers, $isRadius = false)
+{
+    $routers = trim((string) $routers);
+    if (!$isRadius && $routers !== '') {
+        $router = ORM::for_table('tbl_routers')->where('name', $routers)->find_one();
+        if ($router && !empty($router['admin_id'])) {
+            $ownerId = (int) $router['admin_id'];
+            if ($admin['user_type'] != 'SuperAdmin' && $ownerId !== (int) $admin['id']) {
+                return 0; // routeur d'un autre compte
+            }
+
+            return $ownerId;
+        }
+    }
+
+    return (int) $admin['id'];
+}
+
+function services_backfill_plan_admin_ids()
+{
+    try {
+        ORM::raw_execute(
+            "UPDATE tbl_plans p
+             INNER JOIN tbl_routers r ON r.name = p.routers
+             SET p.admin_id = r.admin_id
+             WHERE r.admin_id IS NOT NULL
+               AND r.admin_id > 0
+               AND (p.admin_id IS NULL OR p.admin_id = 0 OR p.admin_id <> r.admin_id)
+               AND p.routers IS NOT NULL
+               AND p.routers <> ''
+               AND LOWER(p.routers) <> 'radius'"
+        );
+    } catch (Throwable $e) {
+    } catch (Exception $e) {
+    }
+}
+
 /**
  * Push plan changes to the device driver (MikroTik, etc.) without aborting DB save on failure.
  *
@@ -161,9 +199,14 @@ try {
         $columns = $db->query("SHOW COLUMNS FROM $table LIKE 'admin_id'")->fetchAll(PDO::FETCH_ASSOC);
         if (empty($columns)) {
             ORM::raw_execute("ALTER TABLE $table ADD COLUMN admin_id INT NULL DEFAULT NULL AFTER id");
-            ORM::raw_execute("UPDATE $table SET admin_id = " . intval($admin['id']) . " WHERE admin_id IS NULL");
         }
     }
+    // Aligner les forfaits sur le propriétaire du routeur (jamais globaux)
+    services_backfill_plan_admin_ids();
+    ORM::raw_execute(
+        "UPDATE tbl_plans SET admin_id = " . intval($admin['id'])
+        . " WHERE admin_id IS NULL AND (routers IS NULL OR routers = '' OR LOWER(routers) = 'radius')"
+    );
 } catch (Exception $e) {
 }
 
@@ -255,7 +298,7 @@ switch ($action) {
                         $log .= "FAILED : connexion MikroTik « " . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8') . " »<br>";
                         continue;
                     }
-                    $bridgeName = trim((string) ($config['pppoe_setup_bridge'] ?? 'bridge-pppoe'));
+                    $bridgeName = Mikrotik::resolvePppoeBridgeName(is_array($config) ? $config : []);
                     $sync = Mikrotik::fullPppoeRouterSync($client, $routerName, $admin, $bridgeName);
                     $planSync = $sync['plans'] ?? [];
                     $secretSync = $sync['secrets'] ?? [];
@@ -400,7 +443,11 @@ switch ($action) {
         $ui->assign('type2s', ORM::for_table('tbl_plans')->getEnum("plan_type"));
         $ui->assign('type3s', ORM::for_table('tbl_plans')->getEnum("typebp"));
         $ui->assign('valids', ORM::for_table('tbl_plans')->getEnum("validity_unit"));
-        $ui->assign('routers', array_column(ORM::for_table('tbl_plans')->distinct()->select("routers")->where('tbl_plans.type', 'Hotspot')->whereNotEqual('routers', '')->findArray(), 'routers'));
+        $registeredRouters = [];
+        foreach (services_scoped_router_query($admin)->order_by_asc('name')->find_many() as $routerRow) {
+            $registeredRouters[] = (string) $routerRow->name;
+        }
+        $ui->assign('routers', $registeredRouters);
         $devices = [];
         $files = scandir($DEVICE_PATH);
         foreach ($files as $file) {
@@ -477,7 +524,7 @@ switch ($action) {
 
     case 'edit':
         $id = $routes['2'];
-        $d = ORM::for_table('tbl_plans')->find_one($id);
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
         if ($d) {
             if (empty($d['device'])) {
                 if ($d['is_radius']) {
@@ -500,10 +547,11 @@ switch ($action) {
             }
             $ui->assign('devices', $devices);
             //select expired plan
+            $expsQ = services_scoped_plan_query($admin)->selects('id', 'name_plan')->where('type', 'Hotspot');
             if ($d['is_radius']) {
-                $exps = ORM::for_table('tbl_plans')->selects('id', 'name_plan')->where('type', 'Hotspot')->where("is_radius", 1)->findArray();
+                $exps = $expsQ->where("is_radius", 1)->findArray();
             } else {
-                $exps = ORM::for_table('tbl_plans')->selects('id', 'name_plan')->where('type', 'Hotspot')->where("routers", $d['routers'])->findArray();
+                $exps = $expsQ->where("routers", $d['routers'])->findArray();
             }
             $ui->assign('exps', $exps);
             run_hook('view_edit_plan'); #HOOK
@@ -516,16 +564,21 @@ switch ($action) {
     case 'delete':
         $id = $routes['2'];
 
-        $d = ORM::for_table('tbl_plans')->find_one($id);
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
         if ($d) {
             run_hook('delete_plan'); #HOOK
             $dvc = Package::getDevice($d);
             if ($_app_stage != 'demo') {
                 if (file_exists($dvc)) {
                     require_once $dvc;
-                    (new $d['device'])->remove_plan($d);
-                } else {
-                    throw new Exception(Lang::T("Devices Not Found"));
+                    try {
+                        (new $d['device'])->remove_plan($d);
+                    } catch (Throwable $e) {
+                        // Suppression DB prioritaire si le routeur a été renommé/supprimé.
+                        _log('Hotspot plan delete: ' . $e->getMessage(), 'Services', $admin['id'] ?? 0);
+                    } catch (Exception $e) {
+                        _log('Hotspot plan delete: ' . $e->getMessage(), 'Services', $admin['id'] ?? 0);
+                    }
                 }
             }
             $d->delete();
@@ -539,18 +592,22 @@ case 'hotspot-bulk-delete':
             r2(getUrl('services/hotspot'), 'e', "Please select at least one item!");
         }
         foreach ($ids as $id) {
-                $d = ORM::for_table('tbl_plans')->find_one($id);
+                $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
                 if ($d) {
                     run_hook('delete_plan'); #HOOK
                     $dvc = Package::getDevice($d);
                     if ($_app_stage != 'demo') {
                         if (file_exists($dvc)) {
                             require_once $dvc;
-                            // মাইক্রোটিক বা ডিভাইস থেকে প্ল্যান রিমুভ করা
-                            (new $d['device'])->remove_plan($d);
+                            try {
+                                (new $d['device'])->remove_plan($d);
+                            } catch (Throwable $e) {
+                                _log('Hotspot plan bulk-delete: ' . $e->getMessage(), 'Services', $admin['id'] ?? 0);
+                            } catch (Exception $e) {
+                                _log('Hotspot plan bulk-delete: ' . $e->getMessage(), 'Services', $admin['id'] ?? 0);
+                            }
                         }
                     }
-                    // ডাটাবেজ থেকে ডিলিট করা
                     $d->delete();
                 }
             }
@@ -592,20 +649,30 @@ case 'hotspot-bulk-delete':
                 $msg .= Lang::T('All field is required') . '<br>';
             }
         }
-        $d = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'Hotspot')->find_one();
-        if ($d) {
-            $msg .= Lang::T('Name Plan Already Exist') . '<br>';
+        // Unicité du nom par routeur : le même nom de forfait est autorisé sur des routeurs différents
+        $dup = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'Hotspot');
+        if (empty($radius)) {
+            $dup->where('routers', $routers);
+        } else {
+            $dup->where('is_radius', 1);
+        }
+        if ($dup->find_one()) {
+            $msg .= Lang::T('Name Plan Already Exist') . (empty($radius) ? ' (' . $routers . ')' : ' (Radius)') . '<br>';
         }
 
         run_hook('add_plan'); #HOOK
 
         if ($msg == '') {
             // Create new plan
+            $ownerId = services_plan_owner_admin_id($admin, $routers, !empty($radius));
+            if ($ownerId <= 0) {
+                r2(getUrl('services/add'), 'e', 'Ce routeur appartient à un autre compte.');
+            }
             $d = ORM::for_table('tbl_plans')->create();
-            $d->admin_id = $admin['id'];
+            $d->admin_id = $ownerId;
             $d->name_plan = $name;
             $d->id_bw = $id_bw;
-            $d->price = $price; // Set price with or without tax based on configuration
+            $d->price = $price;
             $d->type = 'Hotspot';
             $d->typebp = $typebp;
             $d->plan_type = $plan_type;
@@ -690,8 +757,8 @@ case 'hotspot-bulk-delete':
         if ($name == '' or $id_bw == '' or $price == '' or $validity == '') {
             $msg .= Lang::T('All field is required') . '<br>';
         }
-        $d = ORM::for_table('tbl_plans')->where('id', $id)->find_one();
-        $old = ORM::for_table('tbl_plans')->where('id', $id)->find_one();
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
+        $old = $d ? ORM::for_table('tbl_plans')->where('id', $id)->find_one() : null;
         if ($d) {
         } else {
             $msg .= Lang::T('Data Not Found') . '<br>';
@@ -703,6 +770,10 @@ case 'hotspot-bulk-delete':
 
         run_hook('edit_plan'); #HOOK
         if ($msg == '') {
+            $ownerId = services_plan_owner_admin_id($admin, $d['routers'] ?: $routers, !empty($d['is_radius']));
+            if ($ownerId <= 0) {
+                r2(getUrl('services/edit/') . $id, 'e', 'Ce routeur appartient à un autre compte.');
+            }
             $b = ORM::for_table('tbl_bandwidth')->where('id', $id_bw)->find_one();
             if ($b['rate_down_unit'] == 'Kbps') {
                 $unitdown = 'K';
@@ -723,6 +794,7 @@ case 'hotspot-bulk-delete':
 
             $rate = trim($rate . " " . $b['burst']);
 
+            $d->admin_id = $ownerId;
             $d->name_plan = $name;
             $d->id_bw = $id_bw;
             $d->price = $price; // Set price with or without tax based on configuration
@@ -835,6 +907,9 @@ case 'hotspot-bulk-delete':
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
             ->where('tbl_plans.type', 'PPPOE');
+        if ($admin['user_type'] != 'SuperAdmin') {
+            $query->where('tbl_plans.admin_id', $admin['id']);
+        }
         if (!empty($type1)) {
             $query->where('tbl_plans.prepaid', $type1);
         }
@@ -900,7 +975,7 @@ case 'hotspot-bulk-delete':
     case 'pppoe-edit':
         $ui->assign('_title', Lang::T('PPPOE Plans'));
         $id = $routes['2'];
-        $d = ORM::for_table('tbl_plans')->find_one($id);
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
         if ($d) {
             if (empty($d['device'])) {
                 if ($d['is_radius']) {
@@ -930,10 +1005,11 @@ case 'hotspot-bulk-delete':
             }
             $ui->assign('devices', $devices);
             //select expired plan
+            $expsQ = services_scoped_plan_query($admin)->selects('id', 'name_plan')->where('type', 'PPPOE');
             if ($d['is_radius']) {
-                $exps = ORM::for_table('tbl_plans')->selects('id', 'name_plan')->where('type', 'PPPOE')->where("is_radius", 1)->findArray();
+                $exps = $expsQ->where("is_radius", 1)->findArray();
             } else {
-                $exps = ORM::for_table('tbl_plans')->selects('id', 'name_plan')->where('type', 'PPPOE')->where("routers", $d['routers'])->findArray();
+                $exps = $expsQ->where("routers", $d['routers'])->findArray();
             }
             $ui->assign('exps', $exps);
             run_hook('view_edit_ppoe'); #HOOK
@@ -946,7 +1022,7 @@ case 'hotspot-bulk-delete':
     case 'pppoe-delete':
         $id = $routes['2'];
 
-        $d = ORM::for_table('tbl_plans')->find_one($id);
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
         if ($d) {
             if (Mikrotik::isPppoeSystemExpirePlan($d)) {
                 r2(getUrl('services/pppoe'), 'e', Lang::T('PPPoE system EXPIRE plan cannot be deleted'));
@@ -978,7 +1054,7 @@ case 'hotspot-bulk-delete':
 
     foreach ($ids as $id) {
 
-        $d = ORM::for_table('tbl_plans')->find_one($id);
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
 
         if ($d) {
             if (Mikrotik::isPppoeSystemExpirePlan($d)) {
@@ -1046,9 +1122,15 @@ break;
             }
         }
 
-        $d = ORM::for_table('tbl_plans')->where('name_plan', $name)->find_one();
-        if ($d) {
-            $msg .= Lang::T('Name Plan Already Exist') . '<br>';
+        // Unicité du nom par routeur : le même nom de forfait est autorisé sur des routeurs différents
+        $dup = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'PPPOE');
+        if (empty($radius)) {
+            $dup->where('routers', $routers);
+        } else {
+            $dup->where('is_radius', 1);
+        }
+        if ($dup->find_one()) {
+            $msg .= Lang::T('Name Plan Already Exist') . (empty($radius) ? ' (' . $routers . ')' : ' (Radius)') . '<br>';
         }
         run_hook('add_ppoe'); #HOOK
         if ($msg == '') {
@@ -1077,12 +1159,16 @@ break;
             $rate = $b['rate_down'] . $unitdown . "/" . $b['rate_up'] . $unitup;
             $radiusRate = $b['rate_down'] . $raddown . '/' . $b['rate_up'] . $radup . '/' . $b['burst'];
             $rate = trim($rate . " " . $b['burst']);
+            $ownerId = services_plan_owner_admin_id($admin, $routers, !empty($radius));
+            if ($ownerId <= 0) {
+                r2(getUrl('services/pppoe-add'), 'e', 'Ce routeur appartient à un autre compte.');
+            }
             $d = ORM::for_table('tbl_plans')->create();
-            $d->admin_id = $admin['id'];
-            $d->type = 'PPPOE';
+            $d->admin_id = $ownerId;
             $d->name_plan = $name;
             $d->id_bw = $id_bw;
             $d->price = $price;
+            $d->type = 'PPPOE';
             $d->plan_type = $plan_type;
             $d->validity = $validity;
             $d->validity_unit = $validity_unit;
@@ -1172,8 +1258,8 @@ break;
             $price_old = '';
         }
 
-        $d = ORM::for_table('tbl_plans')->where('id', $id)->find_one();
-        $old = ORM::for_table('tbl_plans')->where('id', $id)->find_one();
+        $d = services_scoped_plan_query($admin)->where('id', $id)->find_one();
+        $old = $d ? ORM::for_table('tbl_plans')->where('id', $id)->find_one() : null;
         $isSystemExpire = $d && Mikrotik::isPppoeSystemExpirePlan($d);
         if ($d) {
         } else {
@@ -1184,6 +1270,11 @@ break;
         }
         run_hook('edit_ppoe'); #HOOK
         if ($msg == '') {
+            $ownerId = services_plan_owner_admin_id($admin, $d['routers'] ?: $routers, !empty($d['is_radius']));
+            if ($ownerId <= 0) {
+                r2(getUrl('services/pppoe-edit/') . $id, 'e', 'Ce routeur appartient à un autre compte.');
+            }
+            $d->admin_id = $ownerId;
             $b = ORM::for_table('tbl_bandwidth')->where('id', $id_bw)->find_one();
             if ($b['rate_down_unit'] == 'Kbps') {
                 $unitdown = 'K';
@@ -1341,7 +1432,7 @@ break;
             $msg .= Lang::T('All field is required') . '<br>';
         }
 
-        $d = ORM::for_table('tbl_plans')->where('name_plan', $name)->find_one();
+        $d = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'Balance')->find_one();
         if ($d) {
             $msg .= Lang::T('Name Plan Already Exist') . '<br>';
         }
@@ -1610,9 +1701,15 @@ break;
             }
         }
 
-        $d = ORM::for_table('tbl_plans')->where('name_plan', $name)->find_one();
-        if ($d) {
-            $msg .= Lang::T('Name Plan Already Exist') . '<br>';
+        // Unicité du nom par routeur : le même nom de forfait est autorisé sur des routeurs différents
+        $dup = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'VPN');
+        if (empty($radius)) {
+            $dup->where('routers', $routers);
+        } else {
+            $dup->where('is_radius', 1);
+        }
+        if ($dup->find_one()) {
+            $msg .= Lang::T('Name Plan Already Exist') . (empty($radius) ? ' (' . $routers . ')' : ' (Radius)') . '<br>';
         }
         run_hook('add_vpn'); #HOOK
         if ($msg == '') {

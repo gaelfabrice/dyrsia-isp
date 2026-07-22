@@ -115,14 +115,27 @@ class SuperAdminNotifications
         return array_slice($items, 0, (int) $limit);
     }
 
-    public static function notifyInstanceCreated($tenantId, $businessName, $slug)
+    public static function notifyInstanceCreated($tenantId, $businessNameOrPayload = '', $slugOrDeferTelegram = false)
     {
         self::ensureSchema();
         $tenantId = (int) $tenantId;
-        $businessName = trim((string) $businessName);
-        $slug = trim((string) $slug);
         if ($tenantId <= 0) {
             return;
+        }
+
+        $deferTelegram = false;
+        if (is_array($businessNameOrPayload)) {
+            $payload = $businessNameOrPayload;
+            $businessName = trim((string) ($payload['business_name'] ?? ''));
+            $slug = trim((string) ($payload['slug'] ?? ''));
+            $deferTelegram = (bool) $slugOrDeferTelegram;
+        } else {
+            $businessName = trim((string) $businessNameOrPayload);
+            $slug = is_string($slugOrDeferTelegram) ? trim($slugOrDeferTelegram) : '';
+            $payload = [
+                'business_name' => $businessName,
+                'slug' => $slug,
+            ];
         }
 
         $exists = ORM::for_table('wifizone_superadmin_alerts')
@@ -141,6 +154,141 @@ class SuperAdminNotifications
         $alert->target_url = getUrl('superadmin/instances');
         $alert->created_at = date('Y-m-d H:i:s');
         $alert->save();
+
+        if ($deferTelegram) {
+            register_shutdown_function(static function () use ($payload) {
+                @ignore_user_abort(true);
+                ob_start();
+                try {
+                    self::sendInstanceCreatedTelegram($payload);
+                } catch (Throwable $e) {
+                    if (function_exists('_log')) {
+                        _log('Deferred superadmin telegram failed: ' . $e->getMessage());
+                    }
+                }
+                ob_end_clean();
+            });
+            return;
+        }
+
+        self::sendInstanceCreatedTelegram($payload);
+    }
+
+    /** @return array{bot: string, chat_id: string} */
+    public static function telegramSettings()
+    {
+        return [
+            'bot' => trim((string) self::getAppConfig('superadmin_telegram_bot')),
+            'chat_id' => trim((string) self::getAppConfig('superadmin_telegram_chat_id')),
+        ];
+    }
+
+    public static function saveTelegramSettings($bot, $chatId)
+    {
+        self::setAppConfig('superadmin_telegram_bot', trim((string) $bot));
+        self::setAppConfig('superadmin_telegram_chat_id', trim((string) $chatId));
+    }
+
+    public static function sendTelegramMessage($text, $bot = null, $chatId = null)
+    {
+        $settings = self::telegramSettings();
+        $bot = trim((string) ($bot ?? $settings['bot']));
+        $chatId = trim((string) ($chatId ?? $settings['chat_id']));
+        if ($bot === '' || $chatId === '') {
+            return false;
+        }
+
+        try {
+            return Http::getData(
+                'https://api.telegram.org/bot' . $bot . '/sendMessage?chat_id=' . urlencode($chatId) . '&text=' . urlencode($text)
+            );
+        } catch (Throwable $e) {
+            if (function_exists('_log')) {
+                _log('SuperAdmin Telegram send failed: ' . $e->getMessage());
+            }
+            return false;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public static function sendInstanceCreatedTelegram(array $payload)
+    {
+        $message = self::formatInstanceCreatedTelegram($payload);
+        if ($message === '') {
+            return;
+        }
+        self::sendTelegramMessage($message);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public static function formatInstanceCreatedTelegram(array $payload)
+    {
+        $fullName = trim((string) ($payload['full_name'] ?? ''));
+        $email = trim((string) ($payload['email'] ?? ''));
+        $businessName = trim((string) ($payload['business_name'] ?? ''));
+        $phone = trim((string) ($payload['phone_number'] ?? ''));
+        $slug = trim((string) ($payload['slug'] ?? ''));
+        $countryCode = trim((string) ($payload['country_code'] ?? ''));
+        $country = self::countryLabel($countryCode);
+        $subdomain = $slug !== '' ? $slug . Tenant::domainSuffix() : '';
+        $timestamp = date('d/m/Y - H:i');
+
+        $line = static function ($icon, $label, $value) {
+            return $icon . '  ' . str_pad($label, 19, ' ', STR_PAD_RIGHT) . ':  ' . $value;
+        };
+
+        return implode("\n", [
+            '🔔 ──────────────────────────────',
+            '    ✨ NOUVELLE INSTANCE ✨',
+            '────────────────────────────────',
+            '',
+            $line('👤', 'Full Name', $fullName),
+            $line('📧', 'Email', $email),
+            $line('🏢', 'ISP/Business Name', $businessName),
+            $line('🌍', 'Pays', $country),
+            $line('📱', 'Phone Number', $phone),
+            $line('🔗', 'Desired Subdomain', $subdomain),
+            '',
+            '────────────────────────────────',
+            '🕐  ' . $timestamp,
+            '🔔 ──────────────────────────────',
+        ]);
+    }
+
+    public static function countryLabel($countryCode)
+    {
+        $code = strtoupper(trim((string) $countryCode));
+        if ($code === 'GA') {
+            return 'GABON';
+        }
+        if ($code === 'CM') {
+            return 'cameroun';
+        }
+        $country = MobileMoneyCountry::resolve($code);
+
+        return $country['name'] ?? $code;
+    }
+
+    private static function getAppConfig($key)
+    {
+        $row = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+
+        return $row ? (string) $row->value : '';
+    }
+
+    private static function setAppConfig($key, $value)
+    {
+        $row = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+        if (!$row) {
+            $row = ORM::for_table('tbl_appconfig')->create();
+            $row->setting = $key;
+        }
+        $row->value = $value;
+        $row->save();
     }
 
     public static function markInstanceAlertsRead()

@@ -6,7 +6,7 @@
             <li {if $_system_menu eq 'dashboard'}class="active"{/if}>
                 <a href="{Text::url('dashboard')}"><i class="ion ion-monitor"></i> <span class="wz-nav-label">{Lang::T('Dashboard')}</span></a>
             </li>
-            {if in_array($_admin['user_type'], ['SuperAdmin','Admin'])}
+            {if $_admin['user_type'] eq 'SuperAdmin'}
             <li {if $_routes[0] eq 'registration_requests'}class="active"{/if}>
                 <a href="{Text::url('registration_requests')}"><i class="ion ion-person-add"></i> <span class="wz-nav-label">{Lang::T('Registration_Requests')}</span>{if $superadmin_registration_pending|default:0 > 0} <span class="label label-danger">{$superadmin_registration_pending}</span>{/if}</a>
             </li>
@@ -160,9 +160,12 @@
             {$_MENU_AFTER_RADIUS}
 
             <li class="header wz-nav-section">{Lang::T('Notification')}</li>
-            <li class="{if $_system_menu eq 'pages' || ($_system_menu eq 'settings' && in_array($_routes[1], ['notifications','app','smtp']))}active menu-open{/if} treeview">
+            <li class="{if $_system_menu eq 'pages' || ($_system_menu eq 'settings' && in_array($_routes[1], ['notifications','app','smtp'])) || $_system_menu eq 'superadmin_notifications' || ($_routes[0] eq 'superadmin' && $_routes[1] eq 'notifications')}active menu-open{/if} treeview">
                 <a href="#"><i class="ion ion-android-notifications"></i> <span class="wz-nav-label">{Lang::T('Notification')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
                 <ul class="treeview-menu">
+                    {if $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
+                    <li {if $_routes[0] eq 'superadmin' && $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('superadmin/notifications')}">Telegram Config</a></li>
+                    {/if}
                     <li {if $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('settings/notifications')}">{Lang::T('User_notification')}</a></li>
                     <li {if $_routes[1] eq 'app'}class="active"{/if}><a href="{Text::url('settings/app')}">{Lang::T('Reminder_Notification')}</a></li>
                     <li {if $_routes[0] eq 'plugin' && $_routes[1] eq 'whatsappGateway'}class="active"{/if}><a href="{Text::url('plugin/whatsappGateway')}">WhatsApp Gateway</a></li>
@@ -179,11 +182,13 @@
                 <ul class="treeview-menu">
                     {if $_admin['user_type'] eq 'Admin'}
                     <li {if $_routes[0] eq 'admin' && $_routes[1] eq 'subscription'}class="active"{/if}><a href="{Text::url('admin/subscription')}">{Lang::T('My_Subscription')}</a></li>
+                    <li {if $_routes[0] eq 'referral'}class="active"{/if}><a href="{Text::url('referral')}"><i class="fa fa-users text-success"></i> Parrainage{if $referral_notify_count|default:0 > 0} <span class="label label-success">{$referral_notify_count}</span>{/if}</a></li>
                     {/if}
                     {if $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
                     <li {if $_routes[0] eq 'superadmin' && $_routes[1] eq 'isp-settings'}class="active"{/if}><a href="{Text::url('superadmin/isp-settings')}">{Lang::T('ISP_Settings')}</a></li>
                     <li {if $_routes[0] eq 'superadmin' && $_routes[1] eq 'admin-subscriptions'}class="active"{/if}><a href="{Text::url('superadmin/admin-subscriptions')}">{Lang::T('Admin_Subscriptions')}</a></li>
                     <li {if $_routes[0] eq 'superadmin' && $_routes[1] eq 'instances'}class="active"{/if}><a href="{Text::url('superadmin/instances')}">{Lang::T('Instances')}</a></li>
+                    <li {if $_routes[0] eq 'superadmin' && $_routes[1] eq 'referrals'}class="active"{/if}><a href="{Text::url('superadmin/referrals')}"><i class="fa fa-users text-success"></i> Parrainage — Retraits</a></li>
                     {/if}
                 </ul>
             </li>

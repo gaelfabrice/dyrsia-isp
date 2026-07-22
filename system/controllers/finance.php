@@ -102,6 +102,7 @@ switch ($action) {
         $csrf_token = Csrf::generateAndStoreToken();
         $ui->assign('_title', 'Reversement');
         $ui->assign('withdrawal_stats', Withdrawal::platformStats());
+        $ui->assign('withdrawal_profiles', Withdrawal::profilesForSuperAdmin());
         $ui->assign('withdrawal_pending', Withdrawal::pendingForSuperAdmin());
         $ui->assign('withdrawal_history', Withdrawal::allRequestsForSuperAdmin(null, 100));
         $ui->assign('withdrawal_operators', Withdrawal::OPERATORS);
@@ -146,6 +147,27 @@ switch ($action) {
         try {
             Withdrawal::rejectRequest((int) _post('request_id'), $adminId, _post('comment'));
             r2(getUrl('finance/reversement'), 's', 'Demande rejetée. Le montant a été recrédité sur le solde disponible.');
+        } catch (Exception $e) {
+            r2(getUrl('finance/reversement'), 'e', $e->getMessage());
+        }
+        break;
+
+    case 'reversement-lock-post':
+        if (!$isSuperAdmin) {
+            _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        }
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('finance/reversement'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+        }
+        try {
+            $targetAdminId = (int) _post('admin_id');
+            $locked = (int) _post('locked') === 1;
+            Withdrawal::setProfileLock($targetAdminId, $locked);
+            $msg = $locked
+                ? 'Profil bénéficiaire verrouillé (ON).'
+                : 'Profil déverrouillé (OFF). Le client peut mettre à jour son bénéficiaire.';
+            r2(getUrl('finance/reversement'), 's', $msg);
         } catch (Exception $e) {
             r2(getUrl('finance/reversement'), 'e', $e->getMessage());
         }

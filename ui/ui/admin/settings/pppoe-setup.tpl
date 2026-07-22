@@ -2,7 +2,7 @@
 
 {assign var=ps_router value=$_c['pppoe_setup_router']|default:''}
 {assign var=ps_bridge value=$_c['pppoe_setup_bridge_name']|default:'bridge-pppoe'}
-{assign var=ps_ports value=$_c['pppoe_setup_bridge_ports']|default:'ether2,ether3,ether4,ether5'}
+{assign var=ps_ports value=$_c['pppoe_setup_bridge_ports']|default:'ether4'}
 {assign var=ps_gateway value=$_c['pppoe_setup_gateway']|default:'10.10.10.1/24'}
 {assign var=ps_pool_name value=$_c['pppoe_setup_pool_name']|default:'pppoe-pool'}
 {assign var=ps_pool_range value=$_c['pppoe_setup_pool_range']|default:'10.10.10.2-10.10.10.254'}
@@ -19,6 +19,7 @@
 {assign var=ps_expired_list value=$_c['pppoe_setup_expired_list']|default:'pppoe-expired'}
 {assign var=ps_nat_iface value=$_c['pppoe_setup_nat_interface']|default:'ether1'}
 {assign var=ps_nat value=$_c['pppoe_setup_nat_masquerade']|default:'1'}
+{assign var=ps_on_hotspot value='0'}
 
 <style>
 {literal}
@@ -95,11 +96,182 @@
 .ps-sync-status.loading { display: flex; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
 .ps-sync-status.ok { display: flex; background: #ecfdf5; color: #047857; border: 1px solid #86efac; }
 .ps-sync-status.error { display: flex; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.ps-pppoe-server-status {
+    display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px;
+    padding: 12px 14px; border-radius: 12px; font-size: 13px; line-height: 1.45;
+}
+.ps-pppoe-server-status.ok { background: #ecfdf5; color: #047857; border: 1px solid #86efac; }
+.ps-pppoe-server-status.warn { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+.ps-pppoe-server-status em { display: block; margin-top: 6px; font-style: normal; font-size: 12px; opacity: .85; }
 .ps-port-hints {
     margin-top: 8px; padding: 8px 12px; border-radius: 10px;
     background: rgba(8, 145, 178, .08); color: #0e7490; font-size: 12px; font-weight: 600;
 }
 .ps-port-hints:empty { display: none; }
+.ps-router-port-picker { margin: 10px 0 4px; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+
+/* Faceplate MikroTik RB2011 / L009 */
+.ps-mtk-unit {
+    min-width: 420px; max-width: 720px;
+    background: linear-gradient(180deg, #f4f5f7 0%, #dfe2e8 35%, #c8cdd6 100%);
+    border: 1px solid #9ca3af; border-radius: 6px;
+    box-shadow: 0 14px 36px rgba(15,23,42,.18), inset 0 1px 0 #fff, inset 0 -2px 0 rgba(0,0,0,.06);
+    overflow: hidden;
+}
+.ps-mtk-rail {
+    height: 6px;
+    background: repeating-linear-gradient(90deg, #6b7280 0 8px, #4b5563 8px 9px, transparent 9px 18px);
+    opacity: .35;
+}
+.ps-mtk-body {
+    display: flex; align-items: stretch; gap: 0;
+    padding: 12px 14px 14px;
+    background: linear-gradient(180deg, #eceef2 0%, #d8dce3 55%, #c4c9d2 100%);
+    border-top: 1px solid rgba(255,255,255,.65);
+}
+.ps-mtk-left {
+    flex: 0 0 118px; padding: 6px 12px 6px 4px;
+    display: flex; flex-direction: column; justify-content: space-between; gap: 8px;
+    border-right: 1px solid rgba(0,0,0,.08);
+}
+.ps-mtk-logo {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, #fff 0%, #f3f4f6 40%, #d1d5db 100%);
+    border: 2px solid #9ca3af;
+    box-shadow: inset 0 -2px 4px rgba(0,0,0,.12), 0 1px 2px rgba(255,255,255,.8);
+    position: relative;
+}
+.ps-mtk-logo::after {
+    content: ""; position: absolute; inset: 9px;
+    background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);
+    clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%);
+}
+.ps-mtk-meta { min-width: 0; }
+.ps-mtk-brand { display: block; font-size: 11px; font-weight: 900; letter-spacing: .14em; color: #111827; text-transform: uppercase; }
+.ps-mtk-model { display: block; font-size: 10px; font-weight: 700; color: #4b5563; margin-top: 2px; line-height: 1.3; }
+.ps-mtk-led-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ps-mtk-led { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 5px rgba(34,197,94,.8); }
+.ps-mtk-led.sys { background: #3b82f6; box-shadow: 0 0 5px rgba(59,130,246,.7); }
+.ps-mtk-led-txt { font-size: 8px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .08em; }
+.ps-mtk-reset {
+    width: 28px; height: 28px; border-radius: 50%; align-self: flex-start;
+    background: radial-gradient(circle at 30% 25%, #fff, #d1d5db 70%);
+    border: 2px solid #6b7280; box-shadow: inset 0 2px 4px rgba(0,0,0,.15);
+}
+.ps-mtk-ports-wrap { flex: 1 1 auto; min-width: 0; padding: 4px 0 0 10px; }
+.ps-mtk-ports-title {
+    font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+    color: #4b5563; margin-bottom: 8px;
+}
+.ps-mtk-port-strip {
+    display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 6px;
+    padding: 10px 12px 8px;
+    background: linear-gradient(180deg, #2b2f36 0%, #1a1d23 100%);
+    border-radius: 4px; border: 1px solid #0f1115;
+    box-shadow: inset 0 3px 8px rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.15);
+}
+.ps-mtk-port-group { display: flex; align-items: flex-end; gap: 6px; }
+.ps-mtk-port-group.wan-group {
+    padding-right: 10px; margin-right: 4px;
+    border-right: 1px dashed rgba(255,255,255,.15);
+}
+.ps-mtk-group-label {
+    font-size: 7px; font-weight: 800; letter-spacing: .12em; color: rgba(255,255,255,.45);
+    writing-mode: vertical-rl; transform: rotate(180deg); align-self: center; margin-right: 2px;
+}
+
+.ps-port-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 2px 4px 4px; border: none; background: transparent;
+    cursor: pointer; border-radius: 4px; position: relative; z-index: 2;
+    pointer-events: auto; touch-action: manipulation;
+    transition: transform .1s, filter .15s;
+}
+.ps-port-btn:hover:not(.wan) { transform: translateY(-1px); filter: brightness(1.08); }
+.ps-port-btn:active:not(.wan) { transform: translateY(0); }
+.ps-port-btn.wan { cursor: not-allowed; opacity: .85; pointer-events: none; }
+
+.ps-port-led {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #374151; box-shadow: inset 0 1px 2px rgba(0,0,0,.5);
+    transition: background .15s, box-shadow .15s;
+}
+.ps-port-btn.free .ps-port-led { background: #fb923c; box-shadow: 0 0 6px rgba(251,146,60,.9); }
+.ps-port-btn.configured .ps-port-led { background: #22c55e; box-shadow: 0 0 7px rgba(34,197,94,.95); }
+.ps-port-btn.wan .ps-port-led { background: #64748b; box-shadow: none; }
+
+.ps-port-jack-wrap {
+    padding: 2px 3px 1px; border-radius: 3px;
+    background: linear-gradient(180deg, #6b7280, #374151);
+    border: 1px solid #1f2937;
+    box-shadow: 0 1px 0 rgba(255,255,255,.12);
+}
+.ps-port-btn.free .ps-port-jack-wrap {
+    background: linear-gradient(180deg, #fdba74, #ea580c);
+    border-color: #c2410c;
+    box-shadow: 0 0 0 1px rgba(251,146,60,.35), 0 2px 4px rgba(0,0,0,.25);
+}
+.ps-port-btn.configured .ps-port-jack-wrap {
+    background: linear-gradient(180deg, #86efac, #16a34a);
+    border-color: #15803d;
+    box-shadow: 0 0 0 1px rgba(34,197,94,.4), 0 2px 4px rgba(0,0,0,.25);
+}
+.ps-port-btn.wan .ps-port-jack-wrap {
+    background: linear-gradient(180deg, #94a3b8, #475569);
+    border-color: #334155;
+}
+
+.ps-port-jack {
+    width: 34px; height: 28px; position: relative;
+    background: linear-gradient(180deg, #252830 0%, #0a0b0d 100%);
+    border: 1px solid #000; border-radius: 2px 2px 1px 1px;
+    box-shadow: inset 0 3px 5px rgba(0,0,0,.8);
+}
+.ps-port-jack-tab {
+    position: absolute; top: -4px; left: 50%; margin-left: -8px;
+    width: 16px; height: 5px; border-radius: 2px 2px 0 0;
+    background: linear-gradient(180deg, #cbd5e1, #64748b);
+    border: 1px solid #334155;
+}
+.ps-port-jack-hole {
+    position: absolute; left: 4px; right: 4px; bottom: 4px; height: 10px;
+    background: #000; border-radius: 0 0 1px 1px;
+}
+.ps-port-jack-pins {
+    position: absolute; left: 5px; right: 5px; bottom: 5px; height: 4px;
+    background: repeating-linear-gradient(90deg, #ca8a04 0 1px, #fde047 1px 2px, transparent 2px 3px);
+    opacity: .85;
+}
+
+.ps-port-label {
+    font-size: 9px; font-weight: 800; color: #e5e7eb;
+    font-family: Consolas, Monaco, monospace; letter-spacing: .02em;
+}
+.ps-port-btn.free .ps-port-label { color: #fed7aa; }
+.ps-port-btn.configured .ps-port-label { color: #bbf7d0; }
+.ps-port-btn.wan .ps-port-label { color: #94a3b8; }
+
+.ps-port-role {
+    font-size: 7px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+    color: rgba(255,255,255,.45); max-width: 48px; text-align: center; line-height: 1.15;
+}
+.ps-port-btn.free .ps-port-role { color: #fdba74; }
+.ps-port-btn.configured .ps-port-role { color: #86efac; }
+.ps-port-btn.wan .ps-port-role { color: #94a3b8; }
+
+.ps-port-picker-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 12px; color: #64748b; }
+.ps-port-picker-legend span { display: inline-flex; align-items: center; gap: 8px; }
+.ps-legend-dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.15);
+}
+.ps-legend-dot.configured { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.6); }
+.ps-legend-dot.free { background: #f97316; box-shadow: 0 0 6px rgba(249,115,22,.5); }
+.ps-legend-dot.wan { background: #64748b; }
+.ps-port-picker-empty {
+    padding: 24px 16px; text-align: center; color: #64748b; font-size: 13px;
+    border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc;
+}
 .ps-summary-card {
     background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
     color: #e2e8f0; border-radius: 16px; padding: 20px;
@@ -144,7 +316,7 @@
 .ps-btn-sync {
     background: #fff; border: 2px solid #cbd5e1; color: #334155;
 }
-.ps-btn-sync:hover { background: #f8fafc; border-color: #94a3b8; }
+.ps-btn-send:disabled { opacity: .72; cursor: wait; }
 @media (max-width: 991px) {
     .ps-aside { flex: 1 1 100%; width: 100%; position: static; order: -1; }
     .ps-main { flex: 1 1 100%; }
@@ -191,7 +363,7 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                                     <option value="{$r['name']|escape}" {if $ps_router eq $r['name']}selected{/if}>{$r['name']|escape}{if $r['description']} — {$r['description']|escape}{/if}</option>
                                 {/foreach}
                             </select>
-                            <p class="ps-help">Identique à <strong>Réseau → Routeurs</strong> et à l'identité MikroTik (ex. RB2011).</p>
+                            <p class="ps-help">Identique à <strong>Réseau → Routeurs</strong>. La configuration est lue automatiquement à la sélection.</p>
                         </div>
                         <div id="ps-sync-status" class="ps-sync-status"></div>
                     </div>
@@ -199,11 +371,14 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                     <div class="ps-section bridge">
                         <div class="ps-section-head">
                             <span class="ps-section-num">0</span>
-                            <h3 class="ps-section-title"><i class="fa fa-sitemap"></i> Bridge &amp; réseau LAN</h3>
+                            <h3 class="ps-section-title"><i class="fa fa-sitemap"></i> Bridge PPPoE (séparé du Hotspot)</h3>
                         </div>
+                        <p class="help-block" style="margin:-6px 0 14px;">Le PPPoE utilise son propre bridge <code>bridge-pppoe</code>. Le Hotspot reste sur <code>bridge-hotspot</code> — aucun VLAN trunk, aucune diffusion PPPoE dans le Hotspot.</p>
+                        <input type="hidden" name="lan_trunk_enabled" value="0">
+                        <input type="hidden" name="pppoe_setup_on_hotspot" value="0">
                         <div class="ps-field-row">
                             <div class="ps-field">
-                                <label>Nom du bridge</label>
+                                <label>Nom du bridge PPPoE</label>
                                 <input name="pppoe_setup_bridge_name" id="pppoe_setup_bridge_name" class="form-control ps-live" value="{$ps_bridge|escape}" placeholder="bridge-pppoe">
                             </div>
                             <div class="ps-field">
@@ -212,13 +387,22 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                             </div>
                         </div>
                         <div class="ps-field">
-                            <label>Ports membres (virgules)</label>
-                            <input name="pppoe_setup_bridge_ports" id="pppoe_setup_bridge_ports" class="form-control ps-live" value="{$ps_ports|escape}" placeholder="ether2,ether3,ether4,ether5">
+                            <label>Ports membres</label>
+                            <input type="hidden" name="pppoe_setup_bridge_ports" id="pppoe_setup_bridge_ports" value="{$ps_ports|escape}">
+                            <div id="ps-router-port-picker" class="ps-router-port-picker">
+                                <div class="ps-port-picker-empty">Sélectionnez un routeur — la synchronisation démarre automatiquement.</div>
+                            </div>
+                            <div class="ps-port-picker-legend" id="ps-port-legend" style="display:none;">
+                                <span><span class="ps-legend-dot configured"></span> Configuré PPPoE (vert)</span>
+                                <span><span class="ps-legend-dot free"></span> Port libre (orange)</span>
+                                <span><span class="ps-legend-dot wan"></span> ether1 WAN (bloqué)</span>
+                            </div>
                             <div id="ps-port-hints" class="ps-port-hints"></div>
+                            <p class="help-block">Cliquez un port <strong>orange</strong> pour l'ajouter au bridge PPPoE. Les ports <strong>verts</strong> sont déjà sélectionnés ou configurés sur le routeur. Seul <strong>ether1</strong> (port 1) est bloqué.</p>
                         </div>
                     </div>
 
-                    <div class="ps-section pool">
+<div class="ps-section pool">
                         <div class="ps-section-head">
                             <span class="ps-section-num">1</span>
                             <h3 class="ps-section-title"><i class="fa fa-database"></i> Pool IP clients</h3>
@@ -277,20 +461,27 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                             <span class="ps-section-num">4</span>
                             <h3 class="ps-section-title"><i class="fa fa-bolt"></i> Serveur PPPoE</h3>
                         </div>
+                        <div id="ps-pppoe-server-status" class="ps-pppoe-server-status warn">
+                            <i class="fa fa-info-circle"></i>
+                            <span>Synchronisez le routeur pour vérifier le serveur PPPoE. Il se configure sur le bridge (ex. <code>bridge-pppoe</code>) — pas une entrée séparée dans <strong>Interfaces</strong>.</span>
+                        </div>
                         <div class="ps-field-row">
                             <div class="ps-field">
                                 <label>Service name</label>
                                 <input name="pppoe_setup_service_name" id="pppoe_setup_service_name" class="form-control ps-live" value="{$ps_service|escape}" placeholder="internet">
                             </div>
                             <div class="ps-field">
-                                <label>Interface serveur</label>
+                                <label>Interface serveur (bridge LAN)</label>
                                 <input name="pppoe_setup_server_interface" id="pppoe_setup_server_interface" class="form-control ps-live" value="{$ps_iface|escape}">
+                                <p class="ps-help" style="margin-top:6px;">Interface MikroTik qui porte le serveur PPPoE — en général le bridge (<code>bridge-pppoe</code>), pas <code>etherX</code>.</p>
                             </div>
                         </div>
                         <label class="ps-toggle" style="margin-bottom:14px;">
                             <input type="checkbox" name="pppoe_setup_one_session" id="pppoe_setup_one_session" value="1" class="ps-live-check" {if $ps_one_session eq '1'}checked{/if}>
                             <span>One session per host</span>
                         </label>
+                        <input type="hidden" name="pppoe_setup_on_hotspot" value="0">
+
                         <div class="ps-field-row">
                             <div class="ps-field">
                                 <label>Max MRU</label>
@@ -329,12 +520,13 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                             <i class="fa fa-save"></i> Enregistrer
                         </button>
                         <button type="submit" name="send_mikrotik" value="1" class="btn ps-btn-send" id="ps-send-mikrotik">
-                            <i class="fa fa-cloud-upload"></i> Envoyer vers MikroTik
+                            <i class="fa fa-cloud-upload"></i> <span class="ps-send-label">Envoyer vers MikroTik</span>
                         </button>
                         <button type="button" class="btn ps-btn-sync" id="ps-sync-btn">
                             <i class="fa fa-refresh"></i> Sync routeur
                         </button>
                     </div>
+                    <p class="ps-help" style="margin-top:12px;">Envoie l'<strong>infrastructure</strong> (bridge, pool, serveur PPPoE, NAT, portail expirés) et synchronise les <strong>profils forfaits</strong>. Les <strong>clients</strong> sont poussés sur le routeur à chaque création, modification ou recharge.</p>
                 </div>
 
                 <aside class="ps-aside">
@@ -365,7 +557,7 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
     </div>
 </div>
 
-<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.06.21b"></script>
+<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.22a"></script>
 <script>
 window.PPPOE_FETCH_URL = '{$pppoe_fetch_url|escape:'javascript'}';
 window.PPPOE_INITIAL_ROUTER = '{$ps_router|escape:'javascript'}';

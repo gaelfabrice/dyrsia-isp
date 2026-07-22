@@ -27,7 +27,7 @@ class WifiZoneOps
         WifiZoneNotify::processRenewalReminders();
         WifiZoneNotify::checkGenieacsOffline();
 
-        Package::processExpiredRecharges(['silent' => true, 'min_interval' => 300]);
+        Package::processExpiredRecharges(['silent' => true, 'min_interval' => 300, 'reinforce_routers' => true]);
 
         if (!empty($config['router_check']) && (string) $config['router_check'] === '1') {
             $monitor = RouterMonitor::maybeRunDailyCheck(false);

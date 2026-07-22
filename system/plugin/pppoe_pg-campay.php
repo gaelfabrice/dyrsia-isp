@@ -112,12 +112,7 @@ function pppoe_processPayment_campay($data)
         pppoe_pg_campay_respond_error('Identifiant PPPoE introuvable. Vérifiez votre login ou contactez le support.');
     }
 
-    $activePlan = ORM::for_table('tbl_user_recharges')
-        ->where('customer_id', $customer->id)
-        ->where('type', 'PPPOE')
-        ->where('status', 'on')
-        ->find_one();
-    if ($activePlan) {
+    if (!pppoe_customer_can_renew($customer)) {
         pppoe_pg_campay_respond_error('Vous avez déjà un forfait PPPoE actif.');
     }
 

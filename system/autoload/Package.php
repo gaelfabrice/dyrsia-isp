@@ -74,6 +74,14 @@ class Package
 
         foreach ($due as $ds) {
             try {
+                if (strtolower(trim((string) ($ds['type'] ?? ''))) === 'pppoe'
+                    && !Mikrotik::pppoeCustomerEverConnected((int) ($ds['customer_id'] ?? 0))) {
+                    if (!$silent) {
+                        echo $ds['expiration'] . ' ' . $ds['time'] . ' : ' . $ds['username'] . " : SKIP (PPPoE jamais connecté)\r\n";
+                    }
+                    continue;
+                }
+
                 if (!$silent) {
                     echo $ds['expiration'] . ' ' . $ds['time'] . ' : ' . $ds['username'] . " : EXPIRED \r\n";
                 }
@@ -90,7 +98,17 @@ class Package
 
                 $p = ORM::for_table('tbl_plans')->find_one($u['plan_id']);
                 if (!$p) {
-                    throw new Exception('Plan not found for ID: ' . $u['plan_id']);
+                    $u->status = 'off';
+                    $u->save();
+                    _log(
+                        'Expired recharge #' . $u['id'] . ' (' . $u['username'] . ') : plan #'
+                        . $u['plan_id'] . ' supprimé — recharge clôturée sans sync MikroTik'
+                    );
+                    if (!$silent) {
+                        echo $u['username'] . " : OFF (plan #{$u['plan_id']} introuvable)\r\n";
+                    }
+                    $processed++;
+                    continue;
                 }
 
                 $dvc = self::getDevice($p);
@@ -154,19 +172,24 @@ class Package
         }
 
         if ($_app_stage != 'demo' && $_app_stage != 'Demo' && class_exists('Mikrotik')) {
-            try {
-                Mikrotik::reinforceExpiredPppoeOnAllRouters();
-            } catch (Throwable $e) {
-                _log('[PPPoE expire reinforce] ' . $e->getMessage());
-            } catch (Exception $e) {
-                _log('[PPPoE expire reinforce] ' . $e->getMessage());
-            }
-            try {
-                Mikrotik::reinforceExpiredHotspotOnAllRouters();
-            } catch (Throwable $e) {
-                _log('[Hotspot expire reinforce] ' . $e->getMessage());
-            } catch (Exception $e) {
-                _log('[Hotspot expire reinforce] ' . $e->getMessage());
+            $reinforceRouters = array_key_exists('reinforce_routers', $options)
+                ? !empty($options['reinforce_routers'])
+                : empty($options['silent']);
+            if ($reinforceRouters) {
+                try {
+                    Mikrotik::reinforceExpiredPppoeOnAllRouters();
+                } catch (Throwable $e) {
+                    _log('[PPPoE expire reinforce] ' . $e->getMessage());
+                } catch (Exception $e) {
+                    _log('[PPPoE expire reinforce] ' . $e->getMessage());
+                }
+                try {
+                    Mikrotik::reinforceExpiredHotspotOnAllRouters();
+                } catch (Throwable $e) {
+                    _log('[Hotspot expire reinforce] ' . $e->getMessage());
+                } catch (Exception $e) {
+                    _log('[Hotspot expire reinforce] ' . $e->getMessage());
+                }
             }
         }
 
@@ -392,6 +415,12 @@ class Package
             }
 
             //if ($b['status'] == 'on') {
+            if (!$isVoucher && !empty($c['id']) && class_exists('HotspotCustomer')) {
+                $refreshed = HotspotCustomer::refreshForDeviceSync((int) $c['id']);
+                if ($refreshed) {
+                    $c = $refreshed;
+                }
+            }
             $dvc = Package::getDevice($p);
             if ($_app_stage != 'Demo') {
                 try {
@@ -508,6 +537,12 @@ class Package
                 "\nNote:\n" . $note);
         } else {
             // active plan not exists
+            if (!$isVoucher && !empty($c['id']) && class_exists('HotspotCustomer')) {
+                $refreshed = HotspotCustomer::refreshForDeviceSync((int) $c['id']);
+                if ($refreshed) {
+                    $c = $refreshed;
+                }
+            }
             $dvc = Package::getDevice($p);
             if ($_app_stage != 'Demo') {
                 try {
@@ -635,8 +670,19 @@ class Package
         }
         run_hook("recharge_user_finish");
         Message::sendInvoice($c, $t);
-        if ($trx) {
-            $trx->trx_invoice = $inv;
+        if ($trx && is_object($trx)) {
+            $tableName = '';
+            if ($trx instanceof ORM) {
+                $ref = new ReflectionObject($trx);
+                if ($ref->hasProperty('_table_name')) {
+                    $prop = $ref->getProperty('_table_name');
+                    $prop->setAccessible(true);
+                    $tableName = (string) $prop->getValue($trx);
+                }
+            }
+            if ($tableName === 'tbl_payment_gateway') {
+                $trx->trx_invoice = $inv;
+            }
         }
         return $inv;
     }

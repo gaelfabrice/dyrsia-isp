@@ -662,6 +662,41 @@ body.theme-dark .sidebar-menu li a {
                                 <li><a href="{Text::url('finance/reversement')}"><strong>Retraits — Reversement</strong>{if $withdrawal_pending_count|default:0 > 0} <span class="label label-danger">{$withdrawal_pending_count}</span>{/if}</a></li>
                                 <li><a href="{Text::url('registration_requests')}"><strong>{Lang::T('Registration_Requests')}</strong>{if $superadmin_registration_pending|default:0 > 0} <span class="label label-danger">{$superadmin_registration_pending}</span>{/if}</a></li>
                                 <li><a href="{Text::url('superadmin/instances')}"><strong>{Lang::T('Instances')}</strong></a></li>
+                                <li><a href="{Text::url('superadmin/notifications')}"><strong>Telegram Config</strong></a></li>
+                            </ul>
+                        </li>
+                        {/if}
+                        {if $_admin['user_type'] eq 'Admin'}
+                        <li class="dropdown" id="referralNotifyDropdown">
+                            <a href="{Text::url('referral/mark-read&ajax=1')}" id="referralBellLink"
+                               class="dropdown-toggle" data-toggle="dropdown" title="Parrainage — Notifications"
+                               onclick="markReferralRead()">
+                                <i class="fa fa-bell"></i>
+                                {if $referral_notify_count|default:0 > 0}
+                                <span class="label label-success" id="referralBadge" style="position:absolute;top:8px;right:4px;font-size:10px;padding:2px 5px">{$referral_notify_count}</span>
+                                {/if}
+                            </a>
+                            <ul class="dropdown-menu" style="min-width:360px;max-height:420px;overflow-y:auto">
+                                <li class="dropdown-header"><i class="fa fa-users"></i> Parrainage
+                                    {if $referral_notify_count|default:0 > 0}
+                                    <span class="label label-success">{$referral_notify_count}</span>
+                                    {/if}
+                                </li>
+                                {if $referral_notify_feed|default:[]|@count > 0}
+                                {foreach $referral_notify_feed as $rn}
+                                <li style="{if !$rn->read_at}background:#f0fff4;{/if}">
+                                    <a href="{Text::url('referral')}">
+                                        <i class="fa fa-gift text-success"></i>
+                                        <span style="white-space:normal;display:inline-block;max-width:300px;">{$rn->message|escape}</span>
+                                        <br><small class="text-muted" style="padding-left:18px;">{$rn->created_at}</small>
+                                    </a>
+                                </li>
+                                {/foreach}
+                                {else}
+                                <li class="text-muted" style="padding:10px 16px">Aucune notification de parrainage.</li>
+                                {/if}
+                                <li class="divider"></li>
+                                <li><a href="{Text::url('referral')}"><strong><i class="fa fa-users"></i> Mon espace parrainage</strong></a></li>
                             </ul>
                         </li>
                         {/if}
@@ -795,6 +830,13 @@ body.theme-dark .sidebar-menu li a {
                         });
                     </script>
                 {/if}
+<script>
+function markReferralRead() {
+    var badge = document.getElementById('referralBadge');
+    if (badge) { badge.remove(); }
+    fetch(appUrl + '/?_route=referral/mark-read&ajax=1', { method: 'GET', credentials: 'same-origin' }).catch(function(){});
+}
+</script>
 <script>
 (function () { 
     function applyTheme(theme) {

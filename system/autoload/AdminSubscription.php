@@ -96,6 +96,9 @@ class AdminSubscription
 
     public static function isSubscriptionRoute($handler, $action)
     {
+        if ($handler === 'referral') {
+            return true;
+        }
         return $handler === 'admin'
             && in_array((string) $action, self::subscriptionGateRoutes(), true);
     }
@@ -132,6 +135,9 @@ class AdminSubscription
             return;
         }
         if ($handler === 'logout') {
+            return;
+        }
+        if ($handler === 'provision' || $handler === 'ref') {
             return;
         }
         if (self::isSubscriptionRoute($handler, $action)) {
@@ -404,6 +410,13 @@ class AdminSubscription
         $admin = ORM::for_table('tbl_users')->find_one((int) $payment->admin_id);
         if ($admin) {
             self::sendActivationNotifications($admin, $sub, $invoice);
+        }
+        if (class_exists('Referral')) {
+            try {
+                Referral::processCommission((int) $payment->admin_id, $invoice->plan_type, (int) $invoice->id());
+            } catch (Throwable $e) {
+                _log('Referral commission failed: ' . $e->getMessage());
+            }
         }
         if (isset($_SESSION['signup_checkout_plan'])) {
             unset($_SESSION['signup_checkout_plan']);

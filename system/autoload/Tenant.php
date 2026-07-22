@@ -300,6 +300,7 @@ class Tenant
         $tables = [
             'tbl_customers' => 'admin_id',
             'tbl_plans' => 'admin_id',
+            'tbl_routers' => 'admin_id',
             'tbl_user_recharges' => 'admin_id',
             'tbl_voucher' => 'admin_id',
             'tbl_transactions' => 'admin_id',
@@ -462,6 +463,8 @@ class Tenant
         $businessName = trim($businessName);
         $slug = self::normalizeSlug($slug);
         $email = trim(strtolower($email));
+        $fullName = trim((string) ($options['full_name'] ?? ''));
+        $phoneNumber = trim((string) ($options['phone_number'] ?? ''));
 
         $countryCheck = MobileMoneyCountry::validateForProvision($countryCode);
         if (!$countryCheck['ok']) {
@@ -469,6 +472,12 @@ class Tenant
         }
         $country = $countryCheck['country'];
 
+        if ($fullName === '' || strlen($fullName) < 2) {
+            throw new InvalidArgumentException(Lang::T('Full name is required'));
+        }
+        if ($phoneNumber === '') {
+            throw new InvalidArgumentException(Lang::T('Phone number is required'));
+        }
         if ($businessName === '' || strlen($businessName) < 2) {
             throw new InvalidArgumentException(Lang::T('ISP / Business name is required'));
         }
@@ -510,10 +519,10 @@ class Tenant
 
         $admin = ORM::for_table('tbl_users')->create();
         $admin->username = $username;
-        $admin->fullname = $businessName;
+        $admin->fullname = $fullName;
         $admin->password = $passwordHash;
         $admin->user_type = 'Admin';
-        $admin->phone = '';
+        $admin->phone = $phoneNumber;
         $admin->email = $email;
         $admin->city = '';
         $admin->subdistrict = '';
@@ -525,6 +534,17 @@ class Tenant
         AdminSubscription::ensureTrial((int) $admin->id(), $signupIntent);
 
         self::ensureAdminWallet((int) $admin->id());
+
+        if (class_exists('Referral')) {
+            $referralCode = trim((string) ($options['referral_code'] ?? $_SESSION['referral_code'] ?? ''));
+            if ($referralCode !== '') {
+                try {
+                    Referral::registerReferee((int) $admin->id(), $referralCode);
+                } catch (Throwable $e) {
+                    _log('Referral registerReferee failed: ' . $e->getMessage());
+                }
+            }
+        }
 
         $tenant = ORM::for_table('tbl_tenants')->create();
         $tenant->slug = $slug;
@@ -546,6 +566,8 @@ class Tenant
         $loginUrl = self::dashboardUrl($slug);
         $notification = [
             'business_name' => $businessName,
+            'full_name' => $fullName,
+            'phone_number' => $phoneNumber,
             'slug' => $slug,
             'email' => $email,
             'username' => $username,
@@ -557,7 +579,17 @@ class Tenant
             self::sendProvisionWelcomeNotifications($notification);
         }
         if (class_exists('SuperAdminNotifications')) {
-            SuperAdminNotifications::notifyInstanceCreated((int) $tenant->id(), $businessName, $slug);
+            $alertPayload = [
+                'full_name' => $fullName,
+                'email' => $email,
+                'phone_number' => $phoneNumber,
+                'business_name' => $businessName,
+                'country_code' => $country['code'],
+                'slug' => $slug,
+            ];
+            $tenantId = (int) $tenant->id();
+            $deferTelegram = !empty($options['skip_notifications']);
+            SuperAdminNotifications::notifyInstanceCreated($tenantId, $alertPayload, $deferTelegram);
         }
 
         return [

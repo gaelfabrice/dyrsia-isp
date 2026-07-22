@@ -2,41 +2,88 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>WiFi Haut Débit</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta http-equiv="Cache-Control" content="no-cache">
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;padding:20px}
-.container{max-width:450px;margin:0 auto;background:linear-gradient(145deg,#0f172a,#0a0f1f);border-radius:28px;padding:24px;border:1px solid rgba(16,185,129,.2)}
-.logo{text-align:center;margin-bottom:20px}
-.logo h1{font-size:26px;background:linear-gradient(135deg,#34d399,#10b981);-webkit-background-clip:text;background-clip:text;color:transparent}
-.logo p{font-size:12px;color:#6b7280;margin-top:4px}
-.plans-section-title{font-size:15px;font-weight:700;color:#facc15;margin:16px 0 10px;text-align:center;letter-spacing:.02em}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;padding:clamp(10px,3vw,24px);padding-top:calc(clamp(10px,3vw,24px) + env(safe-area-inset-top,0px));padding-bottom:calc(clamp(10px,3vw,24px) + env(safe-area-inset-bottom,0px));padding-left:calc(clamp(10px,3vw,24px) + env(safe-area-inset-left,0px));padding-right:calc(clamp(10px,3vw,24px) + env(safe-area-inset-right,0px))}
+.container{width:100%;max-width:450px;margin:0 auto;background:linear-gradient(145deg,#0f172a,#0a0f1f);border-radius:clamp(18px,4vw,28px);padding:clamp(14px,4vw,24px);border:1px solid rgba(16,185,129,.2)}
+.logo{text-align:center;margin-bottom:clamp(12px,3vw,20px)}
+.logo h1{font-size:clamp(20px,5.5vw,26px);background:linear-gradient(135deg,#34d399,#10b981);-webkit-background-clip:text;background-clip:text;color:transparent;word-break:break-word}
+.logo p{font-size:clamp(11px,3vw,12px);color:#6b7280;margin-top:4px}
+.plans-section-title{font-size:clamp(13px,3.8vw,15px);font-weight:700;color:#facc15;margin:16px 0 10px;text-align:center;letter-spacing:.02em}
 .plans{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
-.plan{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:all .2s}
+.plan{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:clamp(10px,2.5vw,12px) clamp(12px,3.5vw,16px);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;transition:all .2s;touch-action:manipulation;-webkit-tap-highlight-color:rgba(16,185,129,.25);user-select:none;min-height:44px}
 .plan:hover{background:rgba(16,185,129,.1);border-color:#10b981}
-.plan-name{font-weight:700;color:#facc15}
-.plan-price{color:#fff;font-weight:700}
-.plan-detail{font-size:11px;color:#94a3b8;margin-top:4px}
-.badge{background:#10b98120;color:#6ee7b7;font-size:10px;padding:2px 8px;border-radius:20px;margin-left:8px}
-.input{width:100%;padding:12px 16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:40px;margin-bottom:10px;color:#fff;font-size:14px}
+.plan>div{min-width:0}
+.plan>div:last-child{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:4px;margin-left:auto}
+.plan-name{font-weight:700;color:#facc15;font-size:clamp(13px,3.8vw,15px);word-break:break-word}
+.plan-price{color:#fff;font-weight:700;font-size:clamp(13px,3.8vw,15px);white-space:nowrap}
+.plan-detail{font-size:clamp(10px,2.8vw,11px);color:#94a3b8;margin-top:4px}
+.badge{background:#10b98120;color:#6ee7b7;font-size:10px;padding:2px 8px;border-radius:20px;margin-left:8px;white-space:nowrap}
+.input{width:100%;padding:12px 16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:40px;margin-bottom:10px;color:#fff;font-size:16px;min-height:44px}
 .input:focus{outline:none;border-color:#10b981}
-.btn{width:100%;padding:12px;border:none;border-radius:40px;font-weight:700;cursor:pointer}
+.btn{width:100%;padding:12px;border:none;border-radius:40px;font-weight:700;cursor:pointer;font-size:clamp(13px,3.8vw,15px);min-height:44px;touch-action:manipulation}
 .btn-primary{background:#10b981;color:#fff}
 .btn-secondary{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#a7f3d0;margin-bottom:12px}
 .divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:#4b5563;font-size:11px}
 .divider-line{flex:1;height:1px;background:rgba(255,255,255,.1)}
-.contact{display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:40px;padding:10px;margin:12px 0 4px;text-decoration:none;color:#e5e7eb;font-size:13px;font-weight:600}
+.contact{display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:40px;padding:10px;margin:12px 0 4px;text-decoration:none;color:#e5e7eb;font-size:clamp(12px,3.5vw,13px);font-weight:600;min-height:44px}
 .contact svg{width:18px;height:18px;fill:currentColor;flex-shrink:0}
 .contact:hover{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.35);color:#a7f3d0}
-.footer{text-align:center;margin-top:20px;font-size:10px;color:#4b5563}
+.footer{text-align:center;margin-top:clamp(12px,3vw,20px);font-size:10px;color:#4b5563}
 .error{color:#f87171;font-size:12px;margin-top:8px;display:none}
+.btn,.plan,.contact{position:relative;z-index:2;pointer-events:auto;-webkit-user-select:none;user-select:none}
+.hs-modal{display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:clamp(12px,4vw,20px);padding-bottom:calc(clamp(12px,4vw,20px) + env(safe-area-inset-bottom,0px));overflow-y:auto;-webkit-overflow-scrolling:touch}
+.hs-modal.open{display:flex}
+.hs-modal-box{width:100%;max-width:360px;max-height:90vh;max-height:90dvh;overflow-y:auto;background:#0f172a;border:1px solid rgba(16,185,129,.35);border-radius:20px;padding:clamp(14px,4vw,18px);color:#e5e7eb;margin:auto}
+.hs-modal-box h3{margin:0 0 8px;font-size:clamp(15px,4vw,16px);color:#f8fafc}
+.hs-modal-box p{margin:0 0 12px;font-size:13px;color:#94a3b8;line-height:1.4}
+.hs-modal-box .input{margin-bottom:12px}
+.hs-modal-actions{display:flex;gap:8px}
+.hs-modal-actions .btn{flex:1}
+.hs-modal-box.hs-modal-pay{background:#fff;color:#0f172a;border-color:#e2e8f0;box-shadow:0 20px 50px rgba(15,23,42,.25)}
+.hs-modal-box.hs-modal-pay h3{color:#111827}
+.hs-modal-box.hs-modal-pay p{color:#64748b}
+.hs-modal-box.hs-modal-pay .input{background:#fff;border-color:#cbd5e1;color:#111827;margin-bottom:12px}
+.hs-modal-box.hs-modal-pay .btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff}
+.hs-modal-box.hs-modal-pay .btn-secondary{background:#f1f5f9;border:1px solid #e2e8f0;color:#475569}
+.hs-modal-box.hs-modal-wait,.hs-modal-box.hs-modal-ussd{text-align:center}
+.hs-modal-spinner{display:none;width:38px;height:38px;border:3px solid rgba(16,185,129,.2);border-top-color:#10b981;border-radius:50%;animation:hsSpin .75s linear infinite;margin:14px auto 6px}
+.hs-modal-box.hs-modal-wait .hs-modal-spinner{display:block}
+.hs-ussd-code{font-size:clamp(26px,7vw,34px);font-weight:800;color:#34d399;text-align:center;margin:10px 0 6px;letter-spacing:.05em;word-break:break-word}
+.hs-ussd-hint{font-size:13px;color:#94a3b8;line-height:1.45;margin:0}
+.hs-modal-error{color:#ef4444!important;font-size:12px;margin:-4px 0 10px!important}
+#hsModalHtml:empty{display:none}
+@keyframes hsSpin{to{transform:rotate(360deg)}}
+@media (min-width:768px){
+.container{max-width:480px;padding:28px 32px}
+}
+@media (max-width:340px){
+.badge{display:none}
+.plan{padding:10px 12px}
+}
+@media (max-height:520px) and (orientation:landscape){
+body{padding-top:10px;padding-bottom:10px}
+.logo{margin-bottom:10px}
+.logo h1{font-size:20px}
+.plans-section-title{margin:10px 0 8px}
+.divider{margin:10px 0}
+}
 </style>
 </head>
 <body>
+<!-- Vars MikroTik hors JS : évite de casser tout le script si chap/mac contient des guillemets -->
+<textarea id="mk-identity" style="display:none" aria-hidden="true">$(identity)</textarea>
+<textarea id="mk-mac" style="display:none" aria-hidden="true">$(mac)</textarea>
+<textarea id="mk-ip" style="display:none" aria-hidden="true">$(ip)</textarea>
+<textarea id="mk-chap-id" style="display:none" aria-hidden="true">$(chap-id)</textarea>
+<textarea id="mk-chap-challenge" style="display:none" aria-hidden="true">$(chap-challenge)</textarea>
+<textarea id="mk-error" style="display:none" aria-hidden="true">$(error)</textarea>
+
 <div class="container">
 <div class="logo">
 <h1><span data-hotspot-title>⚡ WiFi PRO</span></h1>
@@ -50,36 +97,215 @@ body{background:#0a0c15;font-family:system-ui,-apple-system,sans-serif;padding:2
 
 <h2 class="plans-section-title" data-hotspot-plans-title>Forfaits Wifi</h2>
 <div class="plans" id="plansList">
-<div style="text-align:center;padding:12px;color:#6b7280">⏳ Chargement...</div>
+<p style="text-align:center;padding:12px;color:#6b7280">⏳ Chargement...</p>
 </div>
 
 <div class="divider"><div class="divider-line"></div><span>Accès compte</span><div class="divider-line"></div></div>
 
-<button type="button" id="voucherBtn" class="btn btn-secondary" style="margin-bottom:10px">🎫 J'ai un code</button>
-<button type="button" id="recoverBtn" class="btn btn-secondary" style="margin-bottom:10px">🔑 Récupérer mon forfait</button>
+<button type="button" id="voucherBtn" class="btn btn-secondary" style="margin-bottom:10px" onclick="window.utiliserVoucher&&window.utiliserVoucher();return false;">🎫 J'ai un code</button>
+<button type="button" id="recoverBtn" class="btn btn-secondary" style="margin-bottom:10px" onclick="window.recupererForfait&&window.recupererForfait();return false;">🔑 Récupérer mon forfait</button>
 
 <form action="$(link-login-only)" method="post" id="loginForm">
 <input type="hidden" name="dst" value="$(link-orig)">
 <input type="text" name="username" id="user" class="input" placeholder="Identifiant">
 <input type="password" name="password" id="pass" class="input" placeholder="Mot de passe">
-<button type="button" id="loginBtn" class="btn btn-primary">🔓 Se connecter</button>
+<button type="button" id="loginBtn" class="btn btn-primary" onclick="window.doHotspotLogin&&window.doHotspotLogin();return false;">🔓 Se connecter</button>
 <div id="errorMsg" class="error"></div>
 </form>
 
 <div class="footer">© <span id="year"></span> Dyrsia • <a href="https://wifizones.org/" target="_blank" style="color:#6ee7b7">wifizones.org</a></div>
 </div>
 
+<div id="hsModal" class="hs-modal" aria-hidden="true">
+  <div class="hs-modal-box">
+    <h3 id="hsModalTitle"></h3>
+    <p id="hsModalText"></p>
+    <div id="hsModalHtml"></div>
+    <div id="hsModalSpinner" class="hs-modal-spinner" aria-hidden="true"></div>
+    <input id="hsModalInput" class="input" type="text" autocomplete="off">
+    <div class="hs-modal-actions" id="hsModalActions">
+      <button type="button" id="hsModalCancel" class="btn btn-secondary" style="margin:0">Annuler</button>
+      <button type="button" id="hsModalOk" class="btn btn-primary">OK</button>
+    </div>
+  </div>
+</div>
+
 <script>
 window.HOTSPOT_INLINE_MD5=true;
-const APP_URL = "http:\/\/10.0.0.2:8080";
-const HOTSPOT_ROUTER_NAME = "$(identity)";
+const APP_URL = "";
+const HOTSPOT_ROUTER_NAME = "";
 const HOTSPOT_EMBEDDED_PLANS = [];
 const HOTSPOT_DNS_NAME = "";
 const HOTSPOT_PAYMENT_GATEWAY = "campay";
+function mkField(id){
+  var el=document.getElementById(id);
+  return el ? String(el.value || el.textContent || '').replace(/^\s+|\s+$/g,'') : '';
+}
+function hotspotRouterName(){
+  var n=String(typeof HOTSPOT_ROUTER_NAME!=='undefined'?HOTSPOT_ROUTER_NAME:'');
+  if(!n || n.indexOf('$(')===0) n=mkField('mk-identity');
+  // Pas de fallback vers un autre routeur (évite les forfaits d'une autre instance).
+  return n || '';
+}
 let CLIENT_MAC = '';
-(function(){const m='$(mac)';if(/^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/i.test(m))CLIENT_MAC=m.toUpperCase();})();
+(function(){
+  var m=mkField('mk-mac');
+  if(/^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/i.test(m))CLIENT_MAC=m.toUpperCase();
+})();
 
-function escHtml(s){return String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function hotspotModalElements(){
+  return{
+    modal:document.getElementById('hsModal'),
+    box:document.querySelector('#hsModal .hs-modal-box'),
+    title:document.getElementById('hsModalTitle'),
+    text:document.getElementById('hsModalText'),
+    html:document.getElementById('hsModalHtml'),
+    spinner:document.getElementById('hsModalSpinner'),
+    input:document.getElementById('hsModalInput'),
+    actions:document.getElementById('hsModalActions'),
+    ok:document.getElementById('hsModalOk'),
+    cancel:document.getElementById('hsModalCancel')
+  };
+}
+var hsModalTimer=null;
+function hotspotModalClose(){
+  clearTimeout(hsModalTimer);
+  hsModalTimer=null;
+  var els=hotspotModalElements();
+  if(els.modal){
+    els.modal.classList.remove('open');
+    els.modal.setAttribute('aria-hidden','true');
+  }
+  if(els.box){
+    els.box.classList.remove('hs-modal-pay','hs-modal-wait','hs-modal-ussd');
+  }
+}
+function hotspotModalShowValidation(els,message){
+  if(!els.text)return;
+  if(message){
+    els.text.textContent=String(message);
+    els.text.classList.add('hs-modal-error');
+  }else{
+    els.text.classList.remove('hs-modal-error');
+  }
+}
+function hotspotModalFire(opts){
+  opts=opts||{};
+  var els=hotspotModalElements();
+  if(!els.modal||!els.box||!els.input||!els.ok||!els.cancel){
+    return Promise.resolve({isConfirmed:false,isDismissed:true,value:null});
+  }
+  return new Promise(function(resolve){
+    clearTimeout(hsModalTimer);
+    hsModalTimer=null;
+    els.box.classList.remove('hs-modal-pay','hs-modal-wait','hs-modal-ussd');
+    if(els.html)els.html.innerHTML='';
+    if(els.spinner)els.spinner.style.display='none';
+    els.text.classList.remove('hs-modal-error');
+    els.ok.onclick=null;
+    els.cancel.onclick=null;
+    els.input.onkeydown=null;
+
+    function finish(result){
+      els.ok.onclick=null;
+      els.cancel.onclick=null;
+      els.input.onkeydown=null;
+      hotspotModalClose();
+      resolve(result);
+    }
+
+    if(opts.input){
+      els.box.classList.add('hs-modal-pay');
+      els.title.textContent=opts.title||'';
+      els.text.textContent=opts.text||'';
+      if(els.html)els.html.innerHTML='';
+      els.input.style.display='block';
+      els.input.type=opts.input==='tel'?'tel':String(opts.input||'text');
+      els.input.placeholder=opts.inputPlaceholder||'';
+      els.input.value=opts.inputValue||'';
+      if(opts.inputAttributes){
+        Object.keys(opts.inputAttributes).forEach(function(key){
+          els.input.setAttribute(key,opts.inputAttributes[key]);
+        });
+      }
+      if(els.actions)els.actions.style.display='flex';
+      els.ok.textContent=opts.confirmButtonText||'OK';
+      els.cancel.textContent=opts.cancelButtonText||'Annuler';
+      els.cancel.style.display=opts.showCancelButton===false?'none':'';
+      els.modal.classList.add('open');
+      els.modal.setAttribute('aria-hidden','false');
+      setTimeout(function(){try{els.input.focus();}catch(e){}},50);
+      if(typeof opts.didOpen==='function'){
+        try{opts.didOpen();}catch(e){}
+      }
+      els.cancel.onclick=function(){finish({isConfirmed:false,isDismissed:true,value:null});};
+      els.ok.onclick=function(){
+        var raw=els.input.value;
+        if(typeof opts.inputValidator==='function'){
+          var err=opts.inputValidator(raw);
+          if(err){hotspotModalShowValidation(els,err);return;}
+        }
+        finish({isConfirmed:true,value:raw});
+      };
+      els.input.onkeydown=function(ev){
+        if(ev.key==='Enter'){
+          ev.preventDefault();
+          els.ok.click();
+        }
+      };
+      return;
+    }
+
+    els.input.style.display='none';
+    els.title.textContent=opts.title||'';
+    els.text.textContent=opts.text||'';
+    if(els.html){
+      if(opts.html){
+        els.html.innerHTML=String(opts.html);
+      }else{
+        els.html.innerHTML='';
+      }
+    }
+
+    var waiting=opts.showConfirmButton===false;
+    if(opts.modalTheme==='ussd'){
+      els.box.classList.add('hs-modal-ussd');
+    }else if(waiting){
+      els.box.classList.add('hs-modal-wait');
+      if(els.spinner&&!opts.html)els.spinner.style.display='block';
+    }
+
+    if(els.actions)els.actions.style.display=waiting?'none':'flex';
+    els.ok.textContent=opts.confirmButtonText||'OK';
+    els.cancel.style.display='none';
+    els.modal.classList.add('open');
+    els.modal.setAttribute('aria-hidden','false');
+
+    if(opts.timer&&opts.timer>0){
+      hsModalTimer=setTimeout(function(){finish({isConfirmed:true});},opts.timer);
+      return;
+    }
+    if(waiting){
+      resolve({isConfirmed:true});
+      return;
+    }
+    els.ok.onclick=function(){finish({isConfirmed:true});};
+  });
+}
+
+function hotspotSwal(){
+  return{
+    fire:function(opts){
+      if(typeof opts==='string'){
+        return hotspotModalFire({title:opts,text:arguments[1]||'',confirmButtonText:'OK'});
+      }
+      return hotspotModalFire(opts||{});
+    },
+    close:hotspotModalClose,
+    getInput:function(){return document.getElementById('hsModalInput');}
+  };
+}
+function escHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 const HOTSPOT_PHONE_LEN = 9;
 function cleanHotspotPhone(value) {
@@ -101,57 +327,190 @@ function bindHotspotPhoneField(el) {
   });
 }
 
-async function api(route,opts){
-  const base=(APP_URL||'').replace(/\/$/,'');
-  const bases=[];
-  if(base)bases.push(base);
-  // Repli proxy local (VPN) uniquement si APP_URL échoue.
-  try{const h=new URL(window.location.origin).hostname;if(/^(10\.|192\.168\.)/.test(h)){const proxy='http://'+h+':8080';if(!bases.includes(proxy))bases.push(proxy);}}catch(e){}
-  let last;
-  for(const b of[...new Set(bases)]){
-    try{
-      const r=await fetch(b+'/index.php?_route=plugin/'+route,opts);
-      if(r.ok||(r.headers.get('content-type')||'').toLowerCase().includes('json'))return r;
-      last=new Error('HTTP '+r.status+' via '+b);
-    }catch(e){last=e;}
-  }
-  throw last||new Error('API injoignable');
+function apiRouteUrl(base,route){
+  let routePath=route;
+  let extraQuery='';
+  const amp=route.indexOf('&');
+  if(amp>=0){routePath=route.slice(0,amp);extraQuery='&'+route.slice(amp+1);}
+  return String(base||'').replace(/\/$/,'')+'/index.php?_route=plugin/'+routePath+extraQuery;
 }
+
+function encodeForm(data){
+  if(typeof URLSearchParams!=='undefined'){
+    try{return new URLSearchParams(data).toString();}catch(e){}
+  }
+  return Object.keys(data||{}).map(function(k){
+    return encodeURIComponent(k)+'='+encodeURIComponent(data[k]==null?'':data[k]);
+  }).join('&');
+}
+
+async function parseApiJson(r){
+  const ct=(r.headers.get('content-type')||'').toLowerCase();
+  const raw=await r.text();
+  const trimmed=raw.trim();
+  if(ct.includes('json')||trimmed.startsWith('{')||trimmed.startsWith('[')){
+    try{return JSON.parse(trimmed||'{}');}catch(e){throw new Error('Réponse JSON invalide du serveur');}
+  }
+  if(trimmed.startsWith('<'))throw new Error('Le serveur a renvoyé une page HTML au lieu de JSON — vérifiez Hotspot API URL / proxy :8080');
+  throw new Error(trimmed.slice(0,120)||('HTTP '+r.status));
+}
+
+async function fetchWithTimeout(url,opts,ms){
+  opts=opts||{};
+  ms=ms||25000;
+  if(typeof AbortController==='undefined'){
+    return fetch(url,opts);
+  }
+  const ctrl=new AbortController();
+  const t=setTimeout(function(){try{ctrl.abort();}catch(e){}},ms);
+  try{
+    return await fetch(url,Object.assign({},opts,{signal:ctrl.signal}));
+  }finally{
+    clearTimeout(t);
+  }
+}
+
+async function api(route,opts){
+  const bases=hotspotApiBases();
+  let last;
+  for(const b of bases){
+    try{
+      const r=await fetchWithTimeout(apiRouteUrl(b,route),opts,25000);
+      const ct=(r.headers.get('content-type')||'').toLowerCase();
+      if(r.ok&&ct.includes('json'))return r;
+      if(r.ok){
+        const peek=await r.clone().text();
+        if(peek.trim().startsWith('{')||peek.trim().startsWith('['))return r;
+        last=new Error('Réponse HTML inattendue via '+b);
+        continue;
+      }
+      if(ct.includes('json')||(r.status>=400&&r.status<500))return r;
+      last=new Error('HTTP '+r.status+' via '+b);
+    }catch(e){last=e&&e.name==='AbortError'?new Error('Délai dépassé via '+b):(e||new Error('échec '+b));}
+  }
+  throw last||new Error('API injoignable ('+bases.join(' | ')+')');
+}
+
+function hotspotApiBases(){
+  const bases=[];
+  const appBase=(APP_URL||'').replace(/\/$/,'');
+  let routerHost='';
+  let onCaptive=false;
+  try{
+    const origin=window.location.origin||'';
+    if(/^https?:/.test(origin)){
+      routerHost=new URL(origin).hostname;
+      onCaptive=/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(routerHost);
+    }
+  }catch(e){}
+  if(/localhost|127\.0\.0\.1|:8082/i.test(window.location.origin||'')){
+    const local=window.location.origin.replace(/\/$/,'');
+    if(local&&!bases.includes(local))bases.push(local);
+  }
+  if(onCaptive&&routerHost){
+    const proxy='http://'+routerHost+':8080';
+    if(!bases.includes(proxy))bases.push(proxy);
+  }
+  if(appBase&&!bases.includes(appBase))bases.push(appBase);
+  return [...new Set(bases.filter(Boolean))];
+}
+
+function plansMatchRouter(plans,routerName){
+  if(!plans||!plans.length)return false;
+  routerName=String(routerName||'').trim().toLowerCase();
+  if(!routerName)return true;
+  return plans.every(function(p){
+    const r=String(p.routerName||p.routername||'').trim().toLowerCase();
+    return !r||r===routerName;
+  });
+}
+
+function handlePlanTap(el){
+  if(!el)return false;
+  try{
+    const planid=String(el.getAttribute('data-plan-id')||el.dataset.planId||'').trim();
+    if(!planid){
+      hotspotSwal().fire('Erreur','Forfait indisponible. Rechargez la page.','error');
+      return false;
+    }
+    payer(
+      el.getAttribute('data-plan-name')||el.dataset.planName||'',
+      el.getAttribute('data-plan-price')||el.dataset.planPrice||'',
+      el.getAttribute('data-plan-currency')||el.dataset.planCurrency||'Fcfa',
+      el.getAttribute('data-plan-validity')||el.dataset.planValidity||'',
+      planid,
+      el.getAttribute('data-router-name')||el.dataset.routerName||hotspotRouterName()
+    );
+  }catch(e){
+    alert('Action forfait: '+(e&&e.message?e.message:e));
+  }
+  return false;
+}
+window.handlePlanTap=handlePlanTap;
 
 function renderPlans(plans){
   const c=document.getElementById('plansList');
-  if(!plans||!plans.length){c.innerHTML='<div style="text-align:center;color:#f87171">Aucun forfait disponible</div>';return;}
-  const rn=HOTSPOT_ROUTER_NAME;
+  if(!plans||!plans.length){c.innerHTML='<div style="text-align:center;color:#f87171">Aucun forfait disponible</div>';c.dataset.plansReady='1';return;}
+  const rn=hotspotRouterName();
   c.innerHTML=plans.map(p=>{
-    const id=p.planid||p.planId||'';
-    const link=p.paymentlink||(APP_URL+'/index.php?_route=plugin/hotspot_pay&routername='+encodeURIComponent(rn)+'&planid='+encodeURIComponent(id)+'&amount='+encodeURIComponent(p.price||''));
-    return`<div class="plan" data-plan-name="${escHtml(p.planname||p.name||'')}" data-plan-price="${escHtml(p.price||'')}" data-plan-currency="${escHtml(p.currency||'Fcfa')}" data-plan-validity="${escHtml(p.validity||'')}" data-plan-id="${escHtml(id)}" data-router-name="${escHtml(rn)}"><div><div class="plan-name">⚡ ${escHtml(p.planname||p.name||'')}</div><div class="plan-detail">⏱️ ${escHtml(p.validity||'')}</div></div><div><span class="plan-price">${escHtml(p.price||'')} ${escHtml(p.currency||'Fcfa')}</span><span class="badge">ILLIMITÉ</span></div></div>`;
+    const id=p.planid||p.planId||p.id||'';
+    const name=p.planname||p.name||p.name_plan||'';
+    const router=p.routerName||p.routername||rn;
+    return`<div class="plan" role="button" tabindex="0" data-plan-name="${escHtml(name)}" data-plan-price="${escHtml(p.price||'')}" data-plan-currency="${escHtml(p.currency||'Fcfa')}" data-plan-validity="${escHtml(p.validity||'')}" data-plan-id="${escHtml(String(id))}" data-router-name="${escHtml(router)}"><div><div class="plan-name">⚡ ${escHtml(name)}</div><div class="plan-detail">⏱️ ${escHtml(p.validity||'')}</div></div><div><span class="plan-price">${escHtml(p.price||'')} ${escHtml(p.currency||'Fcfa')}</span><span class="badge">ILLIMITÉ</span></div></div>`;
   }).join('');
+  c.dataset.plansReady='1';
+}
 
-  // Add click handlers via event delegation
-  c.querySelectorAll('.plan').forEach(el=>{
-    el.addEventListener('click',()=>{
-      const nom=el.dataset.planName;
-      const prix=el.dataset.planPrice;
-      const currency=el.dataset.planCurrency;
-      const validite=el.dataset.planValidity;
-      const planid=el.dataset.planId;
-      const routername=el.dataset.routerName;
-      payer(nom,prix,currency,validite,planid,routername);
-    });
+function bindPlanClicks(){
+  const c=document.getElementById('plansList');
+  if(!c||c.dataset.planClickBound==='1')return;
+  c.dataset.planClickBound='1';
+  c.addEventListener('keydown',function(e){
+    if(e.key!=='Enter'&&e.key!==' ')return;
+    const el=e.target.closest('.plan');
+    if(!el)return;
+    e.preventDefault();
+    handlePlanTap(el);
   });
+}
+
+function isLocalHotspotApiBase(base){
+  try{
+    const u=new URL(base);
+    const host=u.hostname;
+    if(/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.0\.0\.1|localhost)/.test(host))return true;
+    const pageHost=(window.location.hostname||'').toLowerCase();
+    return pageHost!==''&&host.toLowerCase()===pageHost;
+  }catch(e){}
+  return false;
 }
 
 async function loadPlans(){
   const c=document.getElementById('plansList');
-  if(HOTSPOT_EMBEDDED_PLANS&&HOTSPOT_EMBEDDED_PLANS.length){renderPlans(HOTSPOT_EMBEDDED_PLANS);return;}
-  c.innerHTML='<div style="text-align:center;padding:12px;color:#6b7280">⏳ Chargement...</div>';
-  try{
-    const r=await api('hotspot_plan',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'routername='+encodeURIComponent(HOTSPOT_ROUTER_NAME)});
-    const d=await r.json();
-    if(d.data&&d.data.length)renderPlans(d.data);
-    else c.innerHTML='<div style="text-align:center;color:#f87171">'+(d.message||'Aucun forfait disponible')+'</div>';
-  }catch(e){c.innerHTML='<div style="text-align:center;color:#f87171">⚠️ API injoignable</div>';}
+  if(!c)return;
+  bindPlanClicks();
+  const hadPlans=c.querySelector('.plan[data-plan-id]');
+  if(!hadPlans){
+    c.dataset.plansReady='0';
+    c.innerHTML='<div style="text-align:center;padding:12px;color:#6b7280">⏳ Chargement...</div>';
+  }
+  const routerName=hotspotRouterName();
+  const hasEmbedded=HOTSPOT_EMBEDDED_PLANS&&HOTSPOT_EMBEDDED_PLANS.length&&plansMatchRouter(HOTSPOT_EMBEDDED_PLANS,routerName);
+  // Forfaits embarqués au déploiement = source de vérité (évite les forfaits d'un autre routeur via API prod/proxy).
+  if(hasEmbedded){renderPlans(HOTSPOT_EMBEDDED_PLANS);return;}
+  let remotePlans=null;
+  for(const b of hotspotApiBases()){
+    try{
+      const r=await fetch(apiRouteUrl(b,'hotspot_plan'),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'routername='+encodeURIComponent(routerName)});
+      const d=await r.json();
+      if(!d.data||!d.data.length||!plansMatchRouter(d.data,routerName))continue;
+      remotePlans=d.data;
+      if(isLocalHotspotApiBase(b)){renderPlans(d.data);return;}
+    }catch(e){}
+  }
+  if(remotePlans){renderPlans(remotePlans);return;}
+  c.innerHTML='<div style="text-align:center;color:#f87171">Aucun forfait disponible</div>';
+  c.dataset.plansReady='1';
 }
 
 async function poll(ref,max){
@@ -172,119 +531,198 @@ function resetHotspotPasswordChap() {
 function prepareMikrotikLogin(form) {
   if (!form) return false;
   const passwordInput = form.querySelector('input[name="password"]');
-  const chapId = '$(chap-id)';
-  const chapChallenge = '$(chap-challenge)';
-  const hasChap = chapId && chapChallenge && chapId.indexOf('$(') !== 0 && chapChallenge.indexOf('$(') !== 0;
-  if (hasChap && passwordInput && !passwordInput.dataset.chapDone) {
-    if (typeof hexMD5 === 'function') {
-      passwordInput.value = hexMD5(chapId + passwordInput.value + chapChallenge);
-      passwordInput.dataset.chapDone = '1';
+  if (passwordInput) {
+    var plain = String(passwordInput.value || '').trim();
+    // Toujours renvoyer le clair hotspot (http-pap). Ne jamais laisser un hash bcrypt/CHAP.
+    if (!plain || plain.indexOf('$2y$') === 0 || plain.indexOf('$2a$') === 0 || plain.indexOf('$2b$') === 0 || /^[a-f0-9]{32}$/i.test(plain)) {
+      plain = '123456';
     }
+    passwordInput.value = plain;
+    delete passwordInput.dataset.chapDone;
   }
+  // Auth en http-pap : on n'applique PAS le CHAP MD5 (sinon MikroTik reçoit un hash et refuse).
   return true;
 }
 
 function submitHotspotLogin() {
   const f = document.getElementById('loginForm');
-  if (!f) return;
+  if (!f || f.dataset.authBusy === '1') return;
+  f.dataset.authBusy = '1';
   prepareMikrotikLogin(f);
-  f.submit();
+  try { f.submit(); } catch (e) { f.dataset.authBusy = '0'; }
 }
 
 function fillAndSubmitHotspotLogin(username, password) {
   const form = document.getElementById('loginForm');
+  if (!form || form.dataset.authBusy === '1') return;
   const userEl = document.getElementById('user') || document.getElementById('loginUsername');
   const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
   if (userEl) userEl.value = username || '';
   if (passEl) {
-    passEl.value = password || username || '';
+    passEl.value = password || '123456';
     delete passEl.dataset.chapDone;
   }
-  if (!form) return;
-  if (typeof Swal !== 'undefined' && Swal.close) Swal.close();
-  prepareMikrotikLogin(form);
-  form.submit();
+  if (typeof hotspotModalClose === 'function') hotspotModalClose();
+  submitHotspotLogin();
 }
 
 function normalizeHotspotLoginPassword(p){
   p=String(p||'').trim();
+  // Jamais de hash bcrypt / jamais de hash CHAP déjà calculé : toujours le clair hotspot.
   if(!p||p.indexOf('$2y$')===0||p.indexOf('$2a$')===0||p.indexOf('$2b$')===0)return '123456';
+  if(/^[a-f0-9]{32}$/i.test(p))return '123456';
   return p;
 }
-function connecter(user,pass,nom){const loginPass=normalizeHotspotLoginPassword(pass||'123456');Swal.fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});setTimeout(function(){fillAndSubmitHotspotLogin(user,loginPass);},800);}
+function connecter(user,pass,nom){
+  // Mot de passe hotspot unique (clair) — le CHAP MD5 n'est appliqué qu'à la soumission MikroTik.
+  const loginPass='123456';
+  hotspotSwal().fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});
+  setTimeout(function(){fillAndSubmitHotspotLogin(user,loginPass);},800);
+}
 
 async function payer(nom,prix,currency,validite,planid,routername){
-  const {value:phone}=await Swal.fire({title:`💰 ${nom} — ${prix} ${currency||'Fcfa'}`,text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:()=>bindHotspotPhoneField(Swal.getInput()),inputValidator:validateHotspotPhoneLen});
+  const SwalUi=hotspotSwal();
+  planid=String(planid||'').trim();
+  routername=String(routername||hotspotRouterName()||'').trim();
+  if(!planid){SwalUi.fire('Erreur','Forfait invalide (identifiant manquant). Rechargez la page.','error');return;}
+  const phoneResult=await SwalUi.fire({title:'💰 '+(nom||'')+' — '+(prix||'')+' '+(currency||'Fcfa'),text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:function(){bindHotspotPhoneField(SwalUi.getInput&&SwalUi.getInput());},inputValidator:validateHotspotPhoneLen});
+  if(!phoneResult||phoneResult.isDismissed||phoneResult.isConfirmed===false)return;
+  const phone=phoneResult.value;
   if(!phone)return;
+  const msisdn='237'+cleanHotspotPhone(phone);
+  const body=encodeForm({
+    pay:'1',
+    type:'gateways',
+    payment_gateway:HOTSPOT_PAYMENT_GATEWAY||'campay',
+    routername:routername,
+    planid:planid,
+    amount:String(prix||''),
+    plan_name:nom||'',
+    mac_address:CLIENT_MAC||mkField('mk-mac')||'22:12:59:0C:45:58',
+    ip_address:mkField('mk-ip')||'0.0.0.0',
+    msisdn:msisdn,
+    phonenumber:msisdn,
+    ajax:'1'
+  });
   try{
-    const msisdn='237'+cleanHotspotPhone(phone);
-    const body=new URLSearchParams({pay:'1',type:'gateways',payment_gateway:HOTSPOT_PAYMENT_GATEWAY,routername:routername||HOTSPOT_ROUTER_NAME,planid,amount:prix,plan_name:nom,mac_address:CLIENT_MAC||'$(mac)',ip_address:'$(ip)',msisdn,phonenumber:msisdn,ajax:'1'});
-    const r=await api('hotspot_pay',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},body:body.toString()});
-    const d=await r.json();
-    if(!d.ok){Swal.fire('Refusé',d.message||'Erreur paiement','error');return;}
-    Swal.fire({title:'Validez sur votre téléphone',html:'📱 Composez: <b style="color:#10b981;font-size:1.4em">'+(d.ussd_code||'*126#')+'</b><br><small>Ne fermez pas cette page</small>',allowOutsideClick:false,showConfirmButton:false});
+    hotspotModalClose();
+    SwalUi.fire({title:'Paiement en cours…',text:'Contact du serveur Mobile Money…',showConfirmButton:false});
+    const r=await api('hotspot_pay&ajax=1&pay=1',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8',
+        'X-Requested-With':'XMLHttpRequest',
+        'Accept':'application/json'
+      },
+      body:body
+    });
+    const d=await parseApiJson(r);
+    if(!d.ok){SwalUi.fire('Refusé',d.message||'Erreur paiement','error');return;}
+    const ussd=d.ussd_code||'*126#';
+    SwalUi.fire({
+      title:'Validez sur votre téléphone',
+      html:'<div class="hs-ussd-code">'+escHtml(ussd)+'</div><p class="hs-ussd-hint">Validez la demande Mobile Money sur votre téléphone.<br><small>Ne fermez pas cette page.</small></p>',
+      modalTheme:'ussd',
+      showConfirmButton:false
+    });
     const res=await poll(d.reference,60);
-    Swal.close();
-    if(res.status==='paid')connecter(res.voucher_code||res.username,res.password||'123456',nom);
-    else if(res.status==='failed')Swal.fire('Échec',res.message||'Transaction refusée','error');
-    else Swal.fire('En attente','Confirmation non reçue. Si validé, attendez 1 minute.','warning');
-  }catch(e){Swal.fire('Erreur réseau',e.message||'Impossible de contacter le serveur','error');}
+    SwalUi.close();
+    if(res.status==='paid')connecter(res.voucher_code||res.username,'123456',nom);
+    else if(res.status==='failed')SwalUi.fire('Échec',res.message||'Transaction refusée','error');
+    else SwalUi.fire('En attente','Confirmation non reçue. Si validé, attendez 1 minute.','warning');
+  }catch(e){
+    SwalUi.fire('Erreur réseau',(e&&e.message)?e.message:'Impossible de contacter le serveur de paiement','error');
+  }
 }
+window.payer=payer;
 
 async function utiliserVoucher(){
-  const {value:code}=await Swal.fire({title:'🎫 Code voucher',input:'text',inputPlaceholder:'XXXX-XXXX-XXXX',showCancelButton:true,confirmButtonText:'Valider',cancelButtonText:'Annuler',inputValidator:v=>(!v||!v.trim())?'Saisissez votre code':null});
-  if(!code||!code.trim())return;
+  const SwalUi=hotspotSwal();
+  const result=await SwalUi.fire({title:'🎫 Code voucher',input:'text',inputPlaceholder:'XXXX-XXXX-XXXX',showCancelButton:true,confirmButtonText:'Valider',cancelButtonText:'Annuler',inputValidator:function(v){return(!v||!String(v).trim())?'Saisissez votre code':null;}});
+  const code=result&&result.value;
+  if(!code||!String(code).trim())return;
   try{
-    const r=await api('hotspot_voucher_check',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'voucher='+encodeURIComponent(code.trim())});
+    const r=await api('hotspot_voucher_check',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'voucher='+encodeURIComponent(String(code).trim())});
     const d=await r.json();
-    if(d.success)connecter(d.username,d.password||d.username,'Voucher');
-    else Swal.fire('Invalide',d.message||'Code incorrect','error');
-  }catch(e){Swal.fire('Erreur réseau',e.message,'error');}
+    if(d.success)connecter(d.username,'123456','Voucher');
+    else SwalUi.fire('Invalide',d.message||'Code incorrect','error');
+  }catch(e){SwalUi.fire('Erreur réseau',e.message,'error');}
 }
+window.utiliserVoucher=utiliserVoucher;
 
 async function recupererForfait(){
-  const {value:phone}=await Swal.fire({title:'🔑 Récupérer mon forfait',text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Rechercher',didOpen:()=>bindHotspotPhoneField(Swal.getInput()),inputValidator:validateHotspotPhoneLen});
+  const SwalUi=hotspotSwal();
+  const result=await SwalUi.fire({title:'🔑 Récupérer mon forfait',text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Rechercher',didOpen:function(){bindHotspotPhoneField(SwalUi.getInput&&SwalUi.getInput());},inputValidator:validateHotspotPhoneLen});
+  const phone=result&&result.value;
   if(!phone)return;
   try{
-    const r=await api('hotspot_recover_plan',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'phone='+encodeURIComponent(cleanHotspotPhone(phone))});
+    const r=await api('hotspot_recover_plan',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'phone='+encodeURIComponent(cleanHotspotPhone(phone))+'&routername='+encodeURIComponent(hotspotRouterName())});
     const d=await r.json();
-    if(d.success)connecter(d.username,d.password||d.username,'Forfait récupéré');
-    else Swal.fire('Non trouvé',d.message||'Aucun forfait actif','error');
-  }catch(e){Swal.fire('Erreur réseau',e.message,'error');}
+    if(d.success)connecter(d.username,'123456','Forfait récupéré');
+    else SwalUi.fire('Non trouvé',d.message||'Aucun forfait actif','error');
+  }catch(e){SwalUi.fire('Erreur réseau',e.message,'error');}
 }
+window.recupererForfait=recupererForfait;
 
-document.getElementById('loginBtn').addEventListener('click',async()=>{
-  const u=document.getElementById('user').value.trim();
-  const p=document.getElementById('pass').value.trim();
+async function doHotspotLogin(){
+  const form=document.getElementById('loginForm');
+  if(form&&form.dataset.authBusy==='1')return;
+  const userEl=document.getElementById('user');
+  const passEl=document.getElementById('pass');
   const err=document.getElementById('errorMsg');
-  if(!u||!p){err.innerText='Identifiant et mot de passe requis';err.style.display='block';return;}
-  err.style.display='none';
-  try{
-    const r=await api('hotspot_account_check',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'username='+encodeURIComponent(u)+'&password='+encodeURIComponent(p)});
-    const d=await r.json();
-    if(d.success)connecter(d.username,d.password||p,'Connexion');
-    else{err.innerText=d.message||'Identifiants incorrects';err.style.display='block';}
-  }catch(e){
-    const f=document.getElementById('loginForm');
-    if(f&&f.action.indexOf('$(link-login-only)')<0){submitHotspotLogin();}
-    else{err.innerText='Erreur de connexion';err.style.display='block';}
+  const u=userEl?String(userEl.value||'').trim():'';
+  let p=passEl?String(passEl.value||'').trim():'';
+  if(!u||!p){if(err){err.innerText='Identifiant et mot de passe requis';err.style.display='block';}return;}
+  // Toujours le clair hotspot avant soumission MikroTik
+  if(p.indexOf('$2y$')===0||p.indexOf('$2a$')===0||p.indexOf('$2b$')===0||/^[a-f0-9]{32}$/i.test(p)){
+    p='123456';
+    if(passEl){passEl.value=p;delete passEl.dataset.chapDone;}
   }
-});
-
-document.getElementById('voucherBtn').addEventListener('click',function(e){e.preventDefault();utiliserVoucher();});
-document.getElementById('recoverBtn').addEventListener('click',function(e){e.preventDefault();recupererForfait();});
-
-const loginFormEl=document.getElementById('loginForm');
-if(loginFormEl){
-  loginFormEl.addEventListener('submit',function(e){
-    if(!prepareMikrotikLogin(loginFormEl)) e.preventDefault();
-  });
+  if(err)err.style.display='none';
+  // Soumission directe MikroTik (évite double auth via API + form)
+  if(userEl)userEl.value=u;
+  if(passEl)passEl.value='123456';
+  submitHotspotLogin();
 }
+window.doHotspotLogin=doHotspotLogin;
 
-const errorParam='$(error)';
-if(errorParam&&errorParam.indexOf('$(')<0&&errorParam.trim()){const e=document.getElementById('errorMsg');e.innerText=errorParam;e.style.display='block';}
+(function bindHotspotUi(){
+  try{
+    var loginBtn=document.getElementById('loginBtn');
+    if(loginBtn)loginBtn.addEventListener('click',function(e){e.preventDefault();doHotspotLogin();});
+    var voucherBtn=document.getElementById('voucherBtn');
+    if(voucherBtn)voucherBtn.addEventListener('click',function(e){e.preventDefault();utiliserVoucher();});
+    var recoverBtn=document.getElementById('recoverBtn');
+    if(recoverBtn)recoverBtn.addEventListener('click',function(e){e.preventDefault();recupererForfait();});
+    var loginFormEl=document.getElementById('loginForm');
+    if(loginFormEl){
+      loginFormEl.addEventListener('submit',function(e){
+        if(!prepareMikrotikLogin(loginFormEl)) e.preventDefault();
+      });
+    }
+    // Délégation globale : fonctionne même si le HTML des forfaits est régénéré
+    if(!document.documentElement.dataset.hsPlanDelegate){
+      document.documentElement.dataset.hsPlanDelegate='1';
+      document.addEventListener('click',function(e){
+        var plan=e.target&&e.target.closest?e.target.closest('.plan'):null;
+        if(!plan||!document.getElementById('plansList')||!document.getElementById('plansList').contains(plan))return;
+        e.preventDefault();
+        e.stopPropagation();
+        handlePlanTap(plan);
+      },false);
+    }
+    var errorParam=mkField('mk-error');
+    if(errorParam&&errorParam.indexOf('$(')<0&&errorParam){
+      var e=document.getElementById('errorMsg');
+      if(e){e.innerText=errorParam;e.style.display='block';}
+    }
+    var yearEl=document.getElementById('year');
+    if(yearEl)yearEl.innerText=new Date().getFullYear();
+  }catch(err){
+    console&&console.warn&&console.warn('hotspot bind',err);
+  }
+})();
 
-document.getElementById('year').innerText=new Date().getFullYear();
 (function applyHotspotPreviewQuery(){
   try{
     var p=new URLSearchParams(window.location.search);
@@ -306,7 +744,8 @@ document.getElementById('year').innerText=new Date().getFullYear();
     }
   }catch(e){}
 })();
-loadPlans();
+try{bindPlanClicks();}catch(e){}
+try{loadPlans();}catch(e){}
 
 /*
  * A JavaScript implementation of the RSA Data Security, Inc. MD5 Message

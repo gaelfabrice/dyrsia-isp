@@ -131,7 +131,7 @@ class MikrotikHotspot
         $client->sendSync(
             $addRequest
                 ->setArgument('user', $customer['username'])
-                ->setArgument('password', Password::networkCleartext($customer))
+                ->setArgument('password', HotspotCustomer::defaultPassword())
                 ->setArgument('ip', $ip)
                 ->setArgument('mac-address', $mac_address)
         );
@@ -175,12 +175,29 @@ class MikrotikHotspot
 
     function remove_plan($plan)
     {
-        $client = $this->routerClient($plan['routers']);
+        $routerName = trim((string) ($plan['routers'] ?? ''));
+        $mikrotik = $this->info($routerName);
+        if (!$mikrotik) {
+            // Forfait orphelin (routeur renommé/supprimé) : on laisse la suppression DB continuer.
+            _log(
+                'Hotspot remove_plan: routeur introuvable « ' . $routerName . ' » pour forfait « '
+                . trim((string) ($plan['name_plan'] ?? '')) . ' » — profil MikroTik ignoré.',
+                'Hotspot',
+                0
+            );
+
+            return;
+        }
+
+        $client = $this->routerClient($routerName);
         $printRequest = new RouterOS\Request(
             '/ip hotspot user profile print .proplist=.id',
             RouterOS\Query::where('name', $plan['name_plan'])
         );
         $profileID = $client->sendSync($printRequest)->getProperty('.id');
+        if ($profileID === null || $profileID === '') {
+            return;
+        }
         $removeRequest = new RouterOS\Request('/ip/hotspot/user/profile/remove');
         $client->sendSync(
             $removeRequest
@@ -190,25 +207,33 @@ class MikrotikHotspot
 
     function info($name)
     {
-        return ORM::for_table('tbl_routers')->where('name', $name)->find_one();
+        global $admin;
+
+        return Mikrotik::resolveRouterRecord($name, $admin ?? null);
     }
 
     function routerClient($routerName)
     {
         $mikrotik = $this->info($routerName);
         if (!$mikrotik) {
-            throw new Exception(Lang::T('Router not found'));
+            $hint = trim((string) $routerName);
+            throw new Exception(
+                Lang::T('Router not found')
+                . ($hint !== '' ? ' (' . $hint . ')' : '')
+                . ' — vérifiez Réseau → Routeurs et le champ Routeur du forfait.'
+            );
         }
+        $password = Mikrotik::routerPassword($mikrotik['password']);
         return Mikrotik::getClient(
             $mikrotik['ip_address'],
             $mikrotik['username'],
-            $mikrotik['password']
+            $password
         );
     }
 
-    function getClient($ip, $user, $pass)
+    function getClient($ip, $user, $pass, $timeout = 5, $fallback = true, $failOnUnreachable = false)
     {
-        return Mikrotik::getClient($ip, $user, $pass);
+        return Mikrotik::getClient($ip, $user, $pass, $timeout, $fallback, $failOnUnreachable);
     }
 
     function removeHotspotUser($client, $username)
@@ -236,9 +261,10 @@ class MikrotikHotspot
             return null;
         }
 
-        $networkPass = Password::networkCleartext($customer);
-        if ($networkPass === '') {
-            throw new Exception('Mot de passe réseau manquant pour ' . ($customer['username'] ?? ''));
+        // Toujours le mot de passe clair hotspot (123456) — jamais le hash bcrypt.
+        $networkPass = HotspotCustomer::defaultPassword();
+        if (Password::isStoredHash($networkPass) || $networkPass === '') {
+            throw new Exception('Mot de passe réseau invalide pour ' . ($customer['username'] ?? ''));
         }
 
         // ===============================
@@ -307,7 +333,7 @@ class MikrotikHotspot
             $setRequest->setArgument('numbers', $existingUserID);
             $setRequest->setArgument('profile', $plan['name_plan']);
             $setRequest->setArgument('comment', $targetComment);
-            $setRequest->setArgument('password', Password::networkCleartext($customer));
+            $setRequest->setArgument('password', $networkPass);
             if (isset($customer['mac']) && $customer['mac'] != '') {
                 $setRequest->setArgument('mac-address', $customer['mac']);
             }
@@ -322,7 +348,7 @@ class MikrotikHotspot
         $addRequest
             ->setArgument('name', $customer['username'])
             ->setArgument('profile', $plan['name_plan'])
-            ->setArgument('password', Password::networkCleartext($customer))
+            ->setArgument('password', $networkPass)
             ->setArgument('comment', $targetComment);
 
         if (isset($customer['email']) && $customer['email'] != '') {

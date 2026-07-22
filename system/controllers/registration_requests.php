@@ -1,7 +1,7 @@
 <?php
 
 _admin();
-if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+if ($admin['user_type'] !== 'SuperAdmin') {
     _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
 }
 

@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{PORTAL_TITLE}}</title>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -67,6 +66,60 @@
             margin-bottom: 16px;
         }
         .hint { font-size: 0.8rem; color: #64748b; margin-top: 12px; text-align: center; }
+        .status-msg {
+            display: none;
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 14px;
+            font-size: 0.92rem;
+            line-height: 1.45;
+        }
+        .status-msg.show { display: block; }
+        .status-msg.error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #fecaca;
+        }
+        .status-msg.info {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: #bfdbfe;
+        }
+        .status-msg.success {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            color: #a7f3d0;
+        }
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.72);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .overlay.show { display: flex; }
+        .overlay-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 360px;
+            width: 100%;
+            text-align: center;
+        }
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid #334155;
+            border-top-color: #14b8a6;
+            border-radius: 50%;
+            margin: 0 auto 14px;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -76,13 +129,15 @@
         <p class="sub">Votre forfait internet est expiré. Choisissez un forfait et payez par mobile money pour réactiver votre connexion PPPoE.</p>
         <div class="alert">⚠️ Forfait expiré — renouvellement requis pour retrouver l'accès internet.</div>
 
+        <div id="statusMsg" class="status-msg" role="alert"></div>
+
         <label for="pppoeUser">Identifiant PPPoE</label>
         <input id="pppoeUser" type="text" placeholder="ex: client001" value="{{PPPOE_USER}}" autocomplete="username">
 
         <label for="phone">Numéro Mobile Money (9 chiffres)</label>
         <input id="phone" type="tel" maxlength="9" placeholder="677123456" inputmode="numeric">
 
-        <label>Forfaits disponibles</label>
+        <label>Forfaits disponibles <span style="color:#64748b;font-weight:normal">(cliquez pour sélectionner)</span></label>
         <div id="plansBox"><p class="sub">Chargement des forfaits…</p></div>
 
         <label for="gateway">Passerelle de paiement</label>
@@ -92,6 +147,15 @@
         <p class="hint">Après paiement confirmé, votre connexion est réactivée automatiquement (sans redémarrage).</p>
     </div>
 </div>
+
+<div id="waitOverlay" class="overlay" aria-hidden="true">
+    <div class="overlay-box">
+        <div class="spinner"></div>
+        <strong id="waitTitle">Paiement en cours…</strong>
+        <p id="waitText" class="sub" style="margin:10px 0 0">Confirmez sur votre téléphone Mobile Money.</p>
+    </div>
+</div>
+
 <script>
 const APP_URL = {{APP_URL_JSON}};
 const ROUTER_NAME = {{ROUTER_JSON}};
@@ -102,6 +166,28 @@ function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, function (c) {
         return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
     });
+}
+
+function showStatus(text, type) {
+    const el = document.getElementById('statusMsg');
+    el.className = 'status-msg show ' + (type || 'info');
+    el.textContent = text;
+}
+
+function clearStatus() {
+    const el = document.getElementById('statusMsg');
+    el.className = 'status-msg';
+    el.textContent = '';
+}
+
+function showWait(title, text) {
+    document.getElementById('waitTitle').textContent = title || 'Paiement en cours…';
+    document.getElementById('waitText').textContent = text || 'Confirmez sur votre téléphone Mobile Money.';
+    document.getElementById('waitOverlay').classList.add('show');
+}
+
+function hideWait() {
+    document.getElementById('waitOverlay').classList.remove('show');
 }
 
 function renderPlans() {
@@ -122,36 +208,41 @@ function renderPlans() {
             el.classList.add('selected');
             selectedPlan = plans[parseInt(el.getAttribute('data-idx'), 10)];
             document.getElementById('payBtn').disabled = false;
+            clearStatus();
         });
     });
 }
 
 async function loadPlans() {
-    const form = new FormData();
-    form.append('routername', ROUTER_NAME);
-    const res = await fetch(APP_URL + '/index.php?_route=plugin/pppoe_plan', { method: 'POST', body: form });
-    const data = await res.json();
-    if (data.ResultCode === '200' && Array.isArray(data.data)) {
-        plans = data.data;
-        renderPlans();
-    } else {
-        document.getElementById('plansBox').innerHTML = '<p class="sub">' + escapeHtml(data.message || 'Erreur chargement forfaits') + '</p>';
+    if (!APP_URL || !ROUTER_NAME) {
+        showStatus('Configuration portail incomplète (URL ou routeur manquant).', 'error');
+        return;
+    }
+    try {
+        const form = new FormData();
+        form.append('routername', ROUTER_NAME);
+        const res = await fetch(APP_URL + '/index.php?_route=plugin/pppoe_plan', { method: 'POST', body: form });
+        const data = await res.json();
+        if (data.ResultCode === '200' && Array.isArray(data.data)) {
+            plans = data.data;
+            renderPlans();
+        } else {
+            document.getElementById('plansBox').innerHTML = '<p class="sub">' + escapeHtml(data.message || 'Erreur chargement forfaits') + '</p>';
+        }
+    } catch (e) {
+        showStatus('Impossible de charger les forfaits. Vérifiez la connexion au serveur Dyrsia.', 'error');
     }
 }
 
 async function pollPayment(reference) {
-    for (let i = 0; i < 60; i++) {
-        await new Promise(function (r) { setTimeout(r, 3000); });
+    for (let i = 0; i < 45; i++) {
+        await new Promise(function (r) { setTimeout(r, 2000); });
+        document.getElementById('waitText').textContent = 'En attente de confirmation… (' + (i + 1) + '/45)';
         const res = await fetch(APP_URL + '/index.php?_route=plugin/pppoe_verify&format=json&reference=' + encodeURIComponent(reference));
         const data = await res.json();
         if (data.status === 'paid') {
-            await Swal.fire({
-                icon: 'success',
-                title: 'Paiement confirmé',
-                html: 'Votre forfait est réactivé.<br><b>Identifiant :</b> ' + escapeHtml(data.pppoe_username || data.username || '') +
-                    '<br><br>Internet est rétabli automatiquement sur votre connexion PPPoE.',
-                confirmButtonText: 'OK'
-            });
+            hideWait();
+            showStatus('Paiement confirmé ! Forfait réactivé pour « ' + (data.pppoe_username || data.username || '') + ' ». Internet est rétabli.', 'success');
             return;
         }
         if (data.status === 'failed' || data.status === 'cancelled') {
@@ -162,25 +253,30 @@ async function pollPayment(reference) {
 }
 
 document.getElementById('payBtn').addEventListener('click', async function () {
+    clearStatus();
     const user = document.getElementById('pppoeUser').value.trim();
     const phone = document.getElementById('phone').value.replace(/\D/g, '');
     const gateway = document.getElementById('gateway').value;
+
     if (!user) {
-        Swal.fire({ icon: 'error', title: 'Identifiant requis', text: 'Entrez votre identifiant PPPoE.' });
+        showStatus('Entrez votre identifiant PPPoE.', 'error');
+        document.getElementById('pppoeUser').focus();
         return;
     }
     if (phone.length !== 9) {
-        Swal.fire({ icon: 'error', title: 'Numéro invalide', text: 'Entrez 9 chiffres (ex: 677123456).' });
+        showStatus('Numéro invalide : entrez 9 chiffres (ex: 677123456).', 'error');
+        document.getElementById('phone').focus();
         return;
     }
     if (!selectedPlan) {
-        Swal.fire({ icon: 'error', title: 'Forfait requis', text: 'Sélectionnez un forfait.' });
+        showStatus('Sélectionnez un forfait en cliquant dessus avant de payer.', 'error');
         return;
     }
 
     const btn = document.getElementById('payBtn');
     btn.disabled = true;
     btn.textContent = 'Paiement en cours…';
+    showWait('Lancement du paiement…', 'Connexion à CamPay…');
 
     try {
         const payload = new URLSearchParams();
@@ -199,21 +295,22 @@ document.getElementById('payBtn').addEventListener('click', async function () {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
             body: payload.toString()
         });
-        const data = await res.json();
+        const raw = await res.text();
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (parseErr) {
+            throw new Error('Réponse serveur invalide. URL backend : ' + APP_URL);
+        }
         if (!data.ok) {
             throw new Error(data.message || 'Impossible de lancer le paiement');
         }
-        Swal.fire({
-            icon: 'info',
-            title: 'Confirmez sur votre téléphone',
-            text: 'Validez le paiement Mobile Money, puis patientez…',
-            allowOutsideClick: false,
-            showConfirmButton: false,
-            didOpen: function () { Swal.showLoading(); }
-        });
+
+        showWait('Confirmez sur votre téléphone', 'Validez le paiement Mobile Money (USSD), puis patientez…');
         await pollPayment(data.reference);
     } catch (err) {
-        Swal.fire({ icon: 'error', title: 'Erreur', text: err.message || 'Paiement impossible' });
+        hideWait();
+        showStatus(err.message || 'Paiement impossible', 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Payer et réactiver';

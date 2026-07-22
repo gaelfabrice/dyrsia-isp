@@ -73,6 +73,40 @@ switch ($action) {
         $ui->display('admin/superadmin/instances.tpl');
         break;
 
+    case 'notifications':
+        if (!empty(_get('testTg'))) {
+            $sample = SuperAdminNotifications::formatInstanceCreatedTelegram([
+                'full_name' => 'Jean Dupont',
+                'email' => 'admin@isp.com',
+                'business_name' => 'Mombasa Fiber',
+                'country_code' => 'CM',
+                'phone_number' => '677123456',
+                'slug' => 'wizfiber',
+            ]);
+            $result = SuperAdminNotifications::sendTelegramMessage($sample);
+            r2(
+                getUrl('superadmin/notifications'),
+                's',
+                Lang::T('Test Telegram has been send') . '<br>Result: ' . ($result ?: '—')
+            );
+        }
+        $ui->assign('_system_menu', 'superadmin_notifications');
+        $ui->assign('_title', 'Telegram Config');
+        $ui->assign('telegram_settings', SuperAdminNotifications::telegramSettings());
+        $ui->assign('csrf_token', Csrf::generateAndStoreToken());
+        $ui->display('admin/superadmin/notifications.tpl');
+        break;
+
+    case 'notifications-post':
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('superadmin/notifications'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+        }
+        SuperAdminNotifications::saveTelegramSettings(_post('telegram_bot'), _post('telegram_chat_id'));
+        Csrf::generateAndStoreToken();
+        r2(getUrl('superadmin/notifications'), 's', Lang::T('Settings Saved Successfully'));
+        break;
+
     case 'subscription-action':
         $csrf_token = _post('csrf_token');
         if (!Csrf::check($csrf_token)) {
@@ -88,6 +122,43 @@ switch ($action) {
             r2(getUrl('superadmin/admin-subscriptions'), 's', Lang::T('Subscription extended'));
         }
         r2(getUrl('superadmin/admin-subscriptions'), 'e', Lang::T('Invalid request'));
+        break;
+
+    case 'referrals':
+        Referral::ensureSchema();
+        $ui->assign('_title', 'Parrainage — Retraits');
+        $ui->assign('_system_menu', 'superadmin_referrals');
+        $ui->assign('referral_platform_stats', Referral::platformStats());
+        $ui->assign('referral_pending_withdrawals', Referral::allPendingWithdrawals());
+        $ui->assign('referral_all_withdrawals', Referral::allWithdrawals(100));
+        $csrf_token = Csrf::generateAndStoreToken();
+        $ui->assign('csrf_token', $csrf_token);
+        $ui->display('admin/superadmin/referrals.tpl');
+        break;
+
+    case 'referral-action':
+        Referral::ensureSchema();
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('superadmin/referrals'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+        }
+        $withdrawalId = (int) _post('withdrawal_id');
+        $note = trim((string) _post('note'));
+        try {
+            if (_post('do') === 'approve') {
+                Referral::approveWithdrawal($withdrawalId, $note);
+                Csrf::generateAndStoreToken();
+                r2(getUrl('superadmin/referrals'), 's', 'Retrait approuvé avec succès.');
+            }
+            if (_post('do') === 'reject') {
+                Referral::rejectWithdrawal($withdrawalId, $note);
+                Csrf::generateAndStoreToken();
+                r2(getUrl('superadmin/referrals'), 's', 'Retrait rejeté. Le solde a été remboursé.');
+            }
+        } catch (RuntimeException $e) {
+            r2(getUrl('superadmin/referrals'), 'e', $e->getMessage());
+        }
+        r2(getUrl('superadmin/referrals'), 'e', Lang::T('Invalid request'));
         break;
 
     default:

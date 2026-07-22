@@ -16,7 +16,6 @@ class Withdrawal
     const OPERATORS = [
         'orange_momo' => 'Orange Money',
         'mtn_momo' => 'MTN MoMo',
-        'wave' => 'Wave',
     ];
 
     private static $manualGateways = [
@@ -100,7 +99,7 @@ class Withdrawal
         global $config;
         $type = strtolower((string) $type);
         if ($type === 'hotspot') {
-            return (float) ($config['wifizone_withdraw_commission_hotspot'] ?? 15);
+            return (float) ($config['wifizone_withdraw_commission_hotspot'] ?? 10);
         }
         if ($type === 'pppoe') {
             return (float) ($config['wifizone_withdraw_commission_pppoe'] ?? 10);
@@ -241,6 +240,21 @@ class Withdrawal
             ->find_one();
     }
 
+    public static function setProfileLock($adminId, $locked)
+    {
+        self::ensureSchema();
+        $adminId = (int) $adminId;
+        $profile = self::getProfile($adminId);
+        if (!$profile) {
+            throw new Exception('Aucun profil bénéficiaire pour cet administrateur.');
+        }
+        $profile->locked = $locked ? 1 : 0;
+        $profile->updated_at = date('Y-m-d H:i:s');
+        $profile->save();
+
+        return $profile;
+    }
+
     public static function saveProfile($adminId, $data, $forceUnlock = false)
     {
         self::ensureSchema();
@@ -301,6 +315,22 @@ class Withdrawal
             ->find_many();
     }
 
+    public static function profilesForSuperAdmin($limit = 100)
+    {
+        self::ensureSchema();
+
+        return ORM::for_table('wifizone_withdrawal_profiles')
+            ->table_alias('wp')
+            ->select('wp.*')
+            ->select('u.fullname', 'admin_fullname')
+            ->select('u.username', 'admin_username')
+            ->left_outer_join('tbl_users', ['wp.admin_id', '=', 'u.id'], 'u')
+            ->where_raw('(u.id IS NULL OR u.user_type = ?)', ['Admin'])
+            ->order_by_desc('wp.updated_at')
+            ->limit($limit)
+            ->find_many();
+    }
+
     public static function pendingForSuperAdmin()
     {
         self::ensureSchema();
@@ -311,7 +341,12 @@ class Withdrawal
             ->select('r.*')
             ->select('u.fullname', 'admin_fullname')
             ->select('u.username', 'admin_username')
+            ->select('wp.first_name', 'profile_first_name')
+            ->select('wp.last_name', 'profile_last_name')
+            ->select('wp.phone', 'profile_phone')
+            ->select('wp.locked', 'profile_locked')
             ->left_outer_join('tbl_users', ['r.admin_id', '=', 'u.id'], 'u')
+            ->left_outer_join('wifizone_withdrawal_profiles', ['r.admin_id', '=', 'wp.admin_id'], 'wp')
             ->where('r.status', self::STATUS_PENDING)
             ->order_by_asc('r.expires_at')
             ->find_many();

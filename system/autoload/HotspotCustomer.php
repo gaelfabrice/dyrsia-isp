@@ -1,7 +1,9 @@
 <?php
 
 /**
- * Hotspot customer credentials: 10-char username + default password.
+ * Hotspot: username généré + mot de passe clair fixe 123456.
+ * password ET pppoe_password = 123456 en clair (aucun hash).
+ * Même valeur poussée sur MikroTik et renvoyée au portail captif.
  */
 class HotspotCustomer
 {
@@ -10,28 +12,171 @@ class HotspotCustomer
         return '123456';
     }
 
-    /** Mot de passe à utiliser sur le portail captive / MikroTik (pas le hash portail). */
-    public static function loginPassword($customer)
+    /** Applique 123456 en clair sur password + pppoe_password. */
+    public static function applyPlainCredentials($customer, $save = true)
     {
-        $plain = Password::networkCleartext($customer);
-        return $plain !== '' ? $plain : self::defaultPassword();
+        if (!$customer) {
+            return null;
+        }
+        $plain = self::defaultPassword();
+        $customer->password = $plain;
+        $customer->pppoe_password = $plain;
+        if ($save) {
+            $customer->save();
+        }
+
+        return $customer;
     }
 
-    /** Identifiants après paiement hotspot (username + mot de passe réseau). */
-    public static function credentialsFromPayment($trx)
+    public static function networkPassword($customer = null)
     {
-        $username = self::loginUsernameFromPayment($trx);
-        if ($username === '') {
-            $username = trim((string) ($trx->voucher_code ?? ''));
+        return self::defaultPassword();
+    }
+
+    public static function loginPassword($customer = null)
+    {
+        return self::defaultPassword();
+    }
+
+    public static function activationNetworkPassword($customer = null)
+    {
+        return self::defaultPassword();
+    }
+
+    public static function clearActivationNetworkPassword()
+    {
+    }
+
+    public static function prepareForHotspotActivation($customer, $save = true)
+    {
+        if (!$customer) {
+            return ['customer' => null, 'password' => ''];
         }
-        if ($username === '' || $username === '**********') {
-            return ['username' => '', 'password' => self::defaultPassword()];
-        }
-        $customer = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
+        $customer = self::applyPlainCredentials($customer, $save);
 
         return [
-            'username' => $username,
-            'password' => self::loginPassword($customer),
+            'customer' => $customer,
+            'password' => self::defaultPassword(),
+        ];
+    }
+
+    public static function forceMikrotikHotspotPassword($username, $routerName, $password = null)
+    {
+        global $_app_stage;
+
+        $username = trim((string) $username);
+        $routerName = trim((string) $routerName);
+        $password = self::defaultPassword();
+        if ($username === '' || $routerName === '') {
+            return false;
+        }
+        if ($_app_stage === 'Demo') {
+            return true;
+        }
+
+        $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+        if (!$router) {
+            return false;
+        }
+
+        try {
+            $client = Mikrotik::getClient(
+                $router['ip_address'],
+                $router['username'],
+                $router['password'],
+                30,
+                true,
+                true
+            );
+            if (!$client) {
+                return false;
+            }
+
+            $printRequest = new \PEAR2\Net\RouterOS\Request('/ip/hotspot/user/print');
+            $printRequest->setArgument('.proplist', '.id');
+            $printRequest->setQuery(\PEAR2\Net\RouterOS\Query::where('name', $username));
+            $userId = $client->sendSync($printRequest)->getProperty('.id');
+            if ($userId === null || $userId === '') {
+                return false;
+            }
+
+            $setRequest = new \PEAR2\Net\RouterOS\Request('/ip/hotspot/user/set');
+            $setRequest->setArgument('numbers', $userId);
+            $setRequest->setArgument('password', $password);
+            $client->sendSync($setRequest);
+
+            return true;
+        } catch (Throwable $e) {
+            _log('[Hotspot] forceMikrotikHotspotPassword failed: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public static function refreshForDeviceSync($customerId)
+    {
+        $customer = ORM::for_table('tbl_customers')->where('id', (int) $customerId)->find_one();
+        if (!$customer) {
+            return null;
+        }
+        if (trim((string) ($customer->service_type ?? '')) === 'Hotspot') {
+            return self::applyPlainCredentials($customer);
+        }
+
+        return $customer;
+    }
+
+    public static function ensureValidNetworkCredentials($customer, $save = true)
+    {
+        return self::applyPlainCredentials($customer, $save);
+    }
+
+    public static function networkPasswordFromPayment($trx = null, $customer = null)
+    {
+        return self::defaultPassword();
+    }
+
+    public static function storePaymentNetworkPassword($trx, $password = null)
+    {
+        if (!$trx) {
+            return;
+        }
+        $meta = json_decode((string) ($trx->gateway_response ?? '{}'), true);
+        if (!is_array($meta)) {
+            $meta = [];
+        }
+        $meta['network_password'] = self::defaultPassword();
+        $trx->gateway_response = json_encode($meta, JSON_UNESCAPED_UNICODE);
+    }
+
+    public static function resolveCustomerFromPayment($trx)
+    {
+        if (!$trx) {
+            return null;
+        }
+
+        $customer = self::findByPhone($trx->phone_number ?? '');
+        if ($customer) {
+            return self::ensureValidUsername($customer);
+        }
+
+        $code = trim((string) ($trx->voucher_code ?? ''));
+        if ($code !== '' && $code !== '**********' && !self::isMacUsername($code)) {
+            $customer = ORM::for_table('tbl_customers')->where('username', $code)->find_one();
+            if ($customer) {
+                return $customer;
+            }
+        }
+
+        return null;
+    }
+
+    public static function credentialsFromPayment($trx)
+    {
+        $customer = self::resolveCustomerFromPayment($trx);
+
+        return [
+            'username' => $customer ? (string) $customer->username : '',
+            'password' => self::defaultPassword(),
         ];
     }
 
@@ -68,35 +213,18 @@ class HotspotCustomer
 
         $oldUsername = (string) $customer->username;
         $customer->username = self::generateUsername(10);
-        if ($customer->password === $oldUsername || self::isMacUsername((string) $customer->password)) {
-            $plain = self::defaultPassword();
-            $customer->password = Password::_crypt($plain);
-            $customer->pppoe_password = $plain;
-        }
+        self::applyPlainCredentials($customer, false);
         $customer->save();
 
-        $recharges = ORM::for_table('tbl_user_recharges')
-            ->where('customer_id', $customer->id)
-            ->where('username', $oldUsername)
-            ->find_many();
-        foreach ($recharges as $recharge) {
+        foreach (ORM::for_table('tbl_user_recharges')->where('customer_id', $customer->id)->where('username', $oldUsername)->find_many() as $recharge) {
             $recharge->username = $customer->username;
             $recharge->save();
         }
-
-        $transactions = ORM::for_table('tbl_transactions')
-            ->where('user_id', $customer->id)
-            ->where('username', $oldUsername)
-            ->find_many();
-        foreach ($transactions as $transaction) {
+        foreach (ORM::for_table('tbl_transactions')->where('user_id', $customer->id)->where('username', $oldUsername)->find_many() as $transaction) {
             $transaction->username = $customer->username;
             $transaction->save();
         }
-
-        $payments = ORM::for_table('tbl_hotspot_payments')
-            ->where('voucher_code', $oldUsername)
-            ->find_many();
-        foreach ($payments as $payment) {
+        foreach (ORM::for_table('tbl_hotspot_payments')->where('voucher_code', $oldUsername)->find_many() as $payment) {
             $payment->voucher_code = $customer->username;
             $payment->save();
         }
@@ -107,10 +235,7 @@ class HotspotCustomer
     public static function fixAllMacUsernames()
     {
         $fixed = 0;
-        $customers = ORM::for_table('tbl_customers')
-            ->where('service_type', 'Hotspot')
-            ->find_many();
-        foreach ($customers as $customer) {
+        foreach (ORM::for_table('tbl_customers')->where('service_type', 'Hotspot')->find_many() as $customer) {
             if (self::isMacUsername($customer->username)) {
                 self::ensureValidUsername($customer);
                 $fixed++;
@@ -120,9 +245,6 @@ class HotspotCustomer
         return $fixed;
     }
 
-    /**
-     * Match a 9-digit local number against tbl_customers (handles +237 / 237 prefixes).
-     */
     public static function findByPhone($phone)
     {
         $digits = preg_replace('/\D/', '', (string) $phone);
@@ -146,9 +268,7 @@ class HotspotCustomer
             $customer = ORM::for_table('tbl_customers')->where('username', $local)->find_one();
         }
         if (!$customer) {
-            $customer = ORM::for_table('tbl_customers')
-                ->where_like('phonenumber', '%' . $local)
-                ->find_one();
+            $customer = ORM::for_table('tbl_customers')->where_like('phonenumber', '%' . $local)->find_one();
         }
 
         return $customer ?: null;
@@ -158,12 +278,12 @@ class HotspotCustomer
     {
         $formattedPhone = Lang::phoneFormat($phone);
         $customer = self::findByPhone($phone);
+        $plain = self::defaultPassword();
 
         if (!$customer) {
             $customer = ORM::for_table('tbl_customers')->create();
             $customer->username = self::generateUsername(10);
-            $plain = self::defaultPassword();
-            $customer->password = Password::_crypt($plain);
+            $customer->password = $plain;
             $customer->pppoe_password = $plain;
             $customer->fullname = $fullname !== '' ? $fullname : 'Client Hotspot';
             $customer->address = $address !== '' ? $address : 'Hotspot';
@@ -185,6 +305,8 @@ class HotspotCustomer
             if ($formattedPhone !== '' && $customer->phonenumber === '') {
                 $customer->phonenumber = $formattedPhone;
             }
+            $customer->password = $plain;
+            $customer->pppoe_password = $plain;
             $customer->save();
         }
 
@@ -193,23 +315,8 @@ class HotspotCustomer
 
     public static function loginUsernameFromPayment($trx)
     {
-        if (!$trx) {
-            return '';
-        }
-        $code = trim((string) $trx->voucher_code);
-        if ($code !== '' && $code !== '**********' && !self::isMacUsername($code)) {
-            return $code;
-        }
-        $phone = Lang::phoneFormat($trx->phone_number ?? '');
-        $customer = self::findByPhone($trx->phone_number ?? '');
-        if (!$customer && $phone !== '') {
-            $customer = ORM::for_table('tbl_customers')->where('phonenumber', $phone)->find_one();
-        }
-        if ($customer) {
-            $customer = self::ensureValidUsername($customer);
-            return (string) $customer->username;
-        }
+        $customer = self::resolveCustomerFromPayment($trx);
 
-        return '';
+        return $customer ? (string) $customer->username : '';
     }
 }

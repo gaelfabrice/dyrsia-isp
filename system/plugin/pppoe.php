@@ -69,14 +69,68 @@ function pppoe_find_customer_by_login($login)
     return $customer ?: null;
 }
 
-function pppoe_get_plan($planId, $routerName)
+/**
+ * Client expiré (portail captive) ou sans forfait actif valide → peut payer/renouveler.
+ */
+function pppoe_customer_can_renew($customer)
 {
+    if (!$customer) {
+        return false;
+    }
+
+    $customerId = (int) $customer->id;
+    if (trim((string) User::getAttribute('pppoe_expired_ip', $customerId, '')) !== '') {
+        return true;
+    }
+
+    $activePlan = ORM::for_table('tbl_user_recharges')
+        ->where('customer_id', $customerId)
+        ->where('type', 'PPPOE')
+        ->where('status', 'on')
+        ->find_one();
+    if (!$activePlan) {
+        return true;
+    }
+
+    $expiration = trim((string) ($activePlan['expiration'] ?? ''));
+    if ($expiration === '') {
+        return false;
+    }
+    $timePart = trim((string) ($activePlan['time'] ?? '23:59:59'));
+    $expTs = strtotime($expiration . ' ' . $timePart);
+
+    return $expTs !== false && $expTs <= time();
+}
+
+function pppoe_plans_query_for_router($routerName)
+{
+    $routerName = trim((string) $routerName);
+    $empty = ORM::for_table('tbl_plans')
+        ->where('type', 'PPPOE')
+        ->where('enabled', 1)
+        ->where_raw('1 = 0');
+
+    if ($routerName === '' || !class_exists('WifiZoneHotspot')) {
+        return $empty;
+    }
+
+    $ownerId = WifiZoneHotspot::routerAdminId($routerName);
+    if ($ownerId <= 0) {
+        return $empty;
+    }
+
     return ORM::for_table('tbl_plans')
-        ->where('id', (int) $planId)
         ->where('type', 'PPPOE')
         ->where('enabled', 1)
         ->where('routers', $routerName)
-        ->where_not_equal('name_plan', 'EXPIRE')
+        ->where('admin_id', $ownerId)
+        ->where_not_equal('name_plan', 'EXPIRE');
+}
+
+function pppoe_get_plan($planId, $routerName)
+{
+    return pppoe_plans_query_for_router($routerName)
+        ->where('id', (int) $planId)
         ->find_one();
 }
 
@@ -202,12 +256,7 @@ function pppoe_plan()
 
     $routerName = (string) $router['name'];
     $currency = $config['currency_code'] ?? 'XAF';
-    $plans = ORM::for_table('tbl_plans')
-        ->where('type', 'PPPOE')
-        ->where('routers', $routerName)
-        ->where('enabled', 1)
-        ->where_not_equal('name_plan', 'EXPIRE')
-        ->find_many();
+    $plans = pppoe_plans_query_for_router($routerName)->find_many();
 
     $data = [];
     foreach ($plans as $row) {
