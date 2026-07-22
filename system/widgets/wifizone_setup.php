@@ -18,7 +18,7 @@ class wifizone_setup
             'plan' => ORM::for_table('tbl_plans')->where('enabled', 1)->count() > 0,
             'payment' => !empty($config['payment_gateway']),
             'whatsapp' => !empty($config['whatsapp_gateway_url']) && count(glob($UPLOAD_PATH . '/whatsapp/*.nux') ?: []) > 0,
-            'cron' => is_file($UPLOAD_PATH . '/cron_last_run.txt') && (time() - filemtime($UPLOAD_PATH . '/cron_last_run.txt')) < 900,
+            'cron' => WifiZoneOps::isCronHeartbeatFresh(900),
             'reminder' => ($config['user_notification_reminder'] ?? '') !== '' && ($config['user_notification_reminder'] ?? '') !== 'none',
         ];
 

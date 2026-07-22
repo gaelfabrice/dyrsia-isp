@@ -18,11 +18,27 @@ $checks = [
 ];
 
 if ($checks['writable_uploads']) {
-    $cronFile = $uploadPath . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
-    if (is_file($cronFile)) {
-        $mtime = filemtime($cronFile);
-        $checks['cron'] = (time() - $mtime) < 900;
-        $checks['cron_last_run'] = date('c', $mtime);
+    $lastCron = 0;
+    if (is_file($root . '/init.php')) {
+        try {
+            require_once $root . '/init.php';
+            if (class_exists('WifiZoneOps')) {
+                $lastCron = WifiZoneOps::getCronLastRunTimestamp();
+                $checks['cron'] = WifiZoneOps::isCronHeartbeatFresh(900);
+                if ($lastCron > 0) {
+                    $checks['cron_last_run'] = date('c', $lastCron);
+                }
+            }
+        } catch (Throwable $e) {
+        }
+    }
+    if ($lastCron <= 0) {
+        $cronFile = $uploadPath . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
+        if (is_file($cronFile)) {
+            $mtime = filemtime($cronFile);
+            $checks['cron'] = (time() - $mtime) < 900;
+            $checks['cron_last_run'] = date('c', $mtime);
+        }
     }
 }
 

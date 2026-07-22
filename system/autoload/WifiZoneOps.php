@@ -5,6 +5,88 @@
  */
 class WifiZoneOps
 {
+    public const CRON_HEARTBEAT_SETTING = 'wifizone_cron_last_run';
+
+    /**
+     * Timestamp Unix du dernier cron OK (DB partagée, repli fichier local).
+     */
+    public static function getCronLastRunTimestamp(): int
+    {
+        global $UPLOAD_PATH, $config;
+
+        $fromConfig = trim((string) ($config[self::CRON_HEARTBEAT_SETTING] ?? ''));
+        if ($fromConfig !== '') {
+            if (is_numeric($fromConfig)) {
+                return (int) $fromConfig;
+            }
+            $parsed = strtotime($fromConfig);
+            if ($parsed !== false) {
+                return (int) $parsed;
+            }
+        }
+
+        try {
+            $row = ORM::for_table('tbl_appconfig')->where('setting', self::CRON_HEARTBEAT_SETTING)->find_one();
+            if ($row) {
+                $raw = trim((string) ($row->value ?? ''));
+                if ($raw !== '') {
+                    if (is_numeric($raw)) {
+                        return (int) $raw;
+                    }
+                    $parsed = strtotime($raw);
+                    if ($parsed !== false) {
+                        return (int) $parsed;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        $cronFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
+        if (!is_file($cronFile)) {
+            return 0;
+        }
+
+        $raw = trim((string) @file_get_contents($cronFile));
+        if ($raw === '') {
+            return (int) @filemtime($cronFile);
+        }
+        if (is_numeric($raw)) {
+            return (int) $raw;
+        }
+        $parsed = strtotime($raw);
+
+        return $parsed !== false ? (int) $parsed : (int) @filemtime($cronFile);
+    }
+
+    public static function isCronHeartbeatFresh(int $maxAgeSeconds = 3600): bool
+    {
+        $last = self::getCronLastRunTimestamp();
+
+        return $last > 0 && (time() - $last) <= max(60, $maxAgeSeconds);
+    }
+
+    /**
+     * Heartbeat cron : MySQL (Render / multi-conteneurs) + fichier (VPS legacy).
+     */
+    public static function recordCronHeartbeat(): void
+    {
+        global $UPLOAD_PATH;
+
+        $now = time();
+        @file_put_contents($UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt', (string) $now);
+        try {
+            WifiZoneSecurity::persistConfigValue(self::CRON_HEARTBEAT_SETTING, (string) $now);
+            global $config;
+            if (is_array($config)) {
+                $config[self::CRON_HEARTBEAT_SETTING] = (string) $now;
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+    }
+
     public static function runMainCron()
     {
         global $UPLOAD_PATH, $config;
@@ -16,7 +98,7 @@ class WifiZoneOps
             echo "Removed {$purged} macOS metadata file(s).\n";
         }
 
-        file_put_contents($UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt', date('c'));
+        self::recordCronHeartbeat();
 
         WifiZonePayment::processPendingQueue(30);
         self::alertFailedPayments();
@@ -181,12 +263,11 @@ class WifiZoneOps
             return;
         }
 
-        $cronFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
-        if (!is_file($cronFile)) {
+        $last = self::getCronLastRunTimestamp();
+        if ($last <= 0) {
             return;
         }
-
-        $age = time() - filemtime($cronFile);
+        $age = time() - $last;
         if ($age <= 900) {
             return;
         }

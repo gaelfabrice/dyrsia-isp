@@ -1,4 +1,5 @@
 config.php
+system/install/appconfig.production.json
 .env
 .env.*
 !.env.example

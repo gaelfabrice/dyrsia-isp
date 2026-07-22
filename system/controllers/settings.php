@@ -263,7 +263,11 @@ switch ($action) {
                 r2(getUrl('settings/app') . '#collapseTelegramNotification', 'e', Lang::T('You cannot perform this action in Demo mode'));
             }
             $result = Message::sendTelegram(Lang::T('wifizones Test Telegram'));
-            r2(getUrl('settings/app') . '#collapseTelegramNotification', 's', Lang::T('Test Telegram has been send') . '<br>Result: ' . $result);
+            r2(
+                getUrl('settings/app') . '#collapseTelegramNotification',
+                Message::isTelegramSuccess($result) ? 's' : 'e',
+                Message::isTelegramSuccess($result) ? 'Succès' : 'Échec'
+            );
         }
 
         $UPLOAD_URL_PATH = str_replace($root_path, '', $UPLOAD_PATH);

@@ -37,6 +37,17 @@ class Message
         }
     }
 
+    /** True when Telegram Bot API returned {"ok":true,...}. */
+    public static function isTelegramSuccess($response)
+    {
+        if ($response === false || $response === null || $response === '') {
+            return false;
+        }
+        $data = json_decode((string) $response, true);
+
+        return is_array($data) && !empty($data['ok']);
+    }
+
 
     public static function sendSMS($phone, $txt)
     {

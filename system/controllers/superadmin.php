@@ -86,8 +86,8 @@ switch ($action) {
             $result = SuperAdminNotifications::sendTelegramMessage($sample);
             r2(
                 getUrl('superadmin/notifications'),
-                's',
-                Lang::T('Test Telegram has been send') . '<br>Result: ' . ($result ?: '—')
+                Message::isTelegramSuccess($result) ? 's' : 'e',
+                Message::isTelegramSuccess($result) ? 'Succès' : 'Échec'
             );
         }
         $ui->assign('_system_menu', 'superadmin_notifications');

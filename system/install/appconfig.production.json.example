@@ -1,0 +1,18 @@
+{
+    "campay_username": "",
+    "campay_password": "",
+    "campay_environment": "prod",
+    "campay_currency": "XAF",
+    "payment_gateway": "campay",
+    "smtp_host": "mail.example.com",
+    "smtp_port": "587",
+    "smtp_user": "support@example.com",
+    "smtp_pass": "",
+    "smtp_ssltls": "tls",
+    "mail_from": "support@example.com",
+    "mail_reply_to": "support@example.com",
+    "telegram_bot": "",
+    "telegram_target_id": "",
+    "superadmin_telegram_bot": "",
+    "superadmin_telegram_chat_id": ""
+}

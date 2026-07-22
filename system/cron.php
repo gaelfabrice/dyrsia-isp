@@ -93,7 +93,7 @@ fclose($lock);
 unlink($lockFile);
 
 $timestampFile = "$UPLOAD_PATH/cron_last_run.txt";
-file_put_contents($timestampFile, time());
+WifiZoneOps::recordCronHeartbeat();
 
 run_hook('cronjob_end'); #HOOK
 echo "Cron job finished and completed successfully.\n";

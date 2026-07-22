@@ -56,13 +56,8 @@ class DashboardCommand
         ];
         $dataUsage['combined_mb'] = round($dataUsage['download_mb'] + $dataUsage['upload_mb'], 1);
 
-        $cronLastRun = 0;
-        $cronFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
-        if (file_exists($cronFile)) {
-            $raw = trim((string) file_get_contents($cronFile));
-            $cronLastRun = is_numeric($raw) ? (int) $raw : strtotime($raw);
-        }
-        $cronStale = ($cronLastRun <= 0) || (time() - $cronLastRun > 3600);
+        $cronLastRun = WifiZoneOps::getCronLastRunTimestamp();
+        $cronStale = !WifiZoneOps::isCronHeartbeatFresh(3600);
 
         $totalActive = $serviceStats['hotspot_active'] + $serviceStats['pppoe_active'];
         $totalExpired = $serviceStats['hotspot_expired'] + $serviceStats['pppoe_expired'];

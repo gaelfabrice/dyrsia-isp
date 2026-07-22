@@ -452,7 +452,7 @@ class Tenant
     }
 
     /**
-     * @param array{skip_notifications?: bool} $options
+     * @param array{defer_notifications?: bool} $options
      * @return array{tenant: object, admin: object, password: string, notification?: array}
      */
     public static function provision($businessName, $slug, $email, $signupIntent = 'demo', $countryCode = '', array $options = [])
@@ -573,9 +573,13 @@ class Tenant
             'username' => $username,
             'password' => $password,
             'login_url' => $loginUrl,
+            'country_code' => $country['code'],
+            'country_name' => $country['name'],
+            'signup_intent' => $signupIntent,
+            'instance_address' => $slug . self::domainSuffix(),
         ];
 
-        if (empty($options['skip_notifications'])) {
+        if (empty($options['defer_notifications'])) {
             self::sendProvisionWelcomeNotifications($notification);
         }
         if (class_exists('SuperAdminNotifications')) {
@@ -588,7 +592,7 @@ class Tenant
                 'slug' => $slug,
             ];
             $tenantId = (int) $tenant->id();
-            $deferTelegram = !empty($options['skip_notifications']);
+            $deferTelegram = !empty($options['defer_notifications']);
             SuperAdminNotifications::notifyInstanceCreated($tenantId, $alertPayload, $deferTelegram);
         }
 
@@ -603,81 +607,17 @@ class Tenant
     /** Email + Telegram après création d'instance (peut être appelé en différé). */
     public static function sendProvisionWelcomeNotifications(array $data): void
     {
-        $businessName = (string) ($data['business_name'] ?? '');
-        $slug = (string) ($data['slug'] ?? '');
         $email = (string) ($data['email'] ?? '');
         $username = (string) ($data['username'] ?? '');
-        $password = (string) ($data['password'] ?? '');
-        $loginUrl = (string) ($data['login_url'] ?? '');
         if ($email === '' || $username === '') {
             return;
         }
 
-        $brandName = 'ISP DYRSIA';
-        $safeBusinessName = htmlspecialchars($businessName, ENT_QUOTES, 'UTF-8');
-        $safeSlug = htmlspecialchars($slug, ENT_QUOTES, 'UTF-8');
-        $safeUsername = htmlspecialchars($username, ENT_QUOTES, 'UTF-8');
-        $safePassword = htmlspecialchars($password, ENT_QUOTES, 'UTF-8');
-        $safeLoginUrl = htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8');
-        $year = date('Y');
-        $body = <<<HTML
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{$brandName} — Instance prête</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: linear-gradient(145deg, #0b1120 0%, #111827 100%); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, sans-serif; min-height: 100vh; padding: 2rem; color: #f8fafc; }
-        .card { max-width: 620px; width: 100%; margin: 0 auto; background: rgba(18, 25, 45, 0.92); border-radius: 2.5rem; border: 1px solid rgba(56, 189, 248, 0.2); box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.5); overflow: hidden; }
-        .header-glow { background: linear-gradient(135deg, #0a2b3e 0%, #0b1120 100%); padding: 1.8rem 2rem; border-bottom: 1px solid rgba(56, 189, 248, 0.3); }
-        .logo-badge { display: flex; align-items: center; gap: 0.75rem; justify-content: space-between; flex-wrap: wrap; }
-        h1 { font-size: 1.9rem; font-weight: 700; color: #ffffff; letter-spacing: -0.3px; }
-        .ready-badge { background: rgba(34, 197, 94, 0.12); padding: 0.3rem 1rem; border-radius: 100px; font-size: 0.85rem; font-weight: 500; color: #4ade80; border: 1px solid rgba(74, 222, 128, 0.3); }
-        .content { padding: 2rem 2rem 1.8rem; }
-        .welcome-text { color: #cbd5e6; font-size: 1.05rem; margin-bottom: 2rem; line-height: 1.4; border-left: 3px solid #38bdf8; padding-left: 1rem; }
-        .creds-grid { background: #0f172ad9; border-radius: 1.5rem; padding: 1.5rem; margin: 1.5rem 0; border: 1px solid #1e2a47; }
-        .cred-row { display: flex; justify-content: space-between; align-items: baseline; padding: 0.75rem 0; border-bottom: 1px dashed #1e2a4a; gap: 1rem; }
-        .cred-row:last-child { border-bottom: none; }
-        .cred-label { font-weight: 500; color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        .cred-value { font-family: 'SF Mono', 'Fira Code', monospace; font-weight: 600; color: #f0f9ff; background: #00000030; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.9rem; word-break: break-all; text-align: right; }
-        .btn-dashboard { display: block; text-align: center; background: linear-gradient(95deg, #2563eb, #38bdf8); padding: 0.9rem 1.8rem; border-radius: 60px; text-decoration: none; font-weight: 600; color: white; box-shadow: 0 8px 20px -8px #2563eb80; font-size: 1rem; }
-        .secure-note { font-size: 0.75rem; text-align: center; color: #5f7f9e; margin-top: 1.5rem; }
-        .footer { background: #030712cc; border-top: 1px solid rgba(56, 189, 248, 0.2); padding: 1.2rem 2rem; text-align: center; font-size: 0.8rem; color: #6c86a3; font-weight: 450; letter-spacing: 0.3px; }
-        @media (max-width: 500px) { body { padding: 1rem; } .creds-grid { padding: 1rem; } .cred-row { flex-direction: column; gap: 0.4rem; } .cred-value { text-align: left; } }
-    </style>
-</head>
-<body>
-<div class="card">
-    <div class="header-glow">
-        <div class="logo-badge">
-            <h1>{$brandName}</h1>
-            <div class="ready-badge">✓ INSTANCE ACTIVE</div>
-        </div>
-    </div>
-    <div class="content">
-        <div class="welcome-text">
-            ✦ Votre environnement ISP a été créé avec succès.<br>
-            Interface ultra-rapide, prête pour la production.
-        </div>
-        <div class="creds-grid">
-            <div class="cred-row"><span class="cred-label">🏢 Business</span><span class="cred-value">{$safeBusinessName}</span></div>
-            <div class="cred-row"><span class="cred-label">🌐 Subdomain</span><span class="cred-value">{$safeSlug}</span></div>
-            <div class="cred-row"><span class="cred-label">👤 Username</span><span class="cred-value">{$safeUsername}</span></div>
-            <div class="cred-row"><span class="cred-label">🔐 Password</span><span class="cred-value">{$safePassword}</span></div>
-        </div>
-        <a href="{$safeLoginUrl}" class="btn-dashboard">🚀 Accéder au dashboard administrateur</a>
-        <div class="secure-note">🔒 Identifiants sécurisés — copiez et conservez ce mot de passe</div>
-    </div>
-    <div class="footer">© ISP DYRSIA — Powered by Groupe Dyrsia - {$year}</div>
-</div>
-</body>
-</html>
-HTML;
+        $subject = 'DYRSIA — Confirmation de création de votre instance ISP';
+        $body = self::buildProvisionWelcomeEmailHtml($data);
         $emailSent = false;
         try {
-            $emailSent = (bool) Message::sendEmail($email, 'ISP DYRSIA — Instance prête', $body, null, true);
+            $emailSent = (bool) Message::sendEmail($email, $subject, $body, null, true);
         } catch (Exception $e) {
             if (function_exists('_log')) {
                 _log('Tenant provisioning email failed: ' . $e->getMessage());
@@ -690,12 +630,154 @@ HTML;
         if (!$emailSent && function_exists('_log')) {
             _log('Tenant provisioning: email non envoyé à ' . $email . ' (vérifiez SMTP ou mail() sur le serveur)');
         }
+
+        $businessName = (string) ($data['business_name'] ?? '');
+        $slug = (string) ($data['slug'] ?? '');
+        $password = (string) ($data['password'] ?? '');
+        $loginUrl = (string) ($data['login_url'] ?? '');
         try {
             Message::sendTelegram(
                 "Nouvelle instance ISP\nBusiness: {$businessName}\nSlug: {$slug}\nEmail: {$email}\nUsername: {$username}\nPassword: {$password}\nURL: {$loginUrl}"
             );
         } catch (Throwable $e) {
         }
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function buildProvisionWelcomeEmailHtml(array $data): string
+    {
+        $businessName = (string) ($data['business_name'] ?? '');
+        $slug = (string) ($data['slug'] ?? '');
+        $email = (string) ($data['email'] ?? '');
+        $username = (string) ($data['username'] ?? '');
+        $password = (string) ($data['password'] ?? '');
+        $loginUrl = (string) ($data['login_url'] ?? '');
+        $fullName = trim((string) ($data['full_name'] ?? ''));
+        $phoneNumber = (string) ($data['phone_number'] ?? '');
+        $countryName = (string) ($data['country_name'] ?? '');
+        $instanceAddress = (string) ($data['instance_address'] ?? $slug);
+        $planLabel = self::provisionPlanLabel((string) ($data['signup_intent'] ?? 'demo'));
+
+        $nameParts = preg_split('/\s+/', $fullName) ?: [];
+        $firstName = $nameParts[0] !== '' ? $nameParts[0] : $fullName;
+
+        $esc = static function ($value) {
+            return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+        };
+
+        $brandName = 'ISP DYRSIA';
+        $year = date('Y');
+        $safeFirstName = $esc($firstName);
+        $safeBusinessName = $esc($businessName);
+        $safeSlug = $esc($slug);
+        $safeInstanceAddress = $esc($instanceAddress);
+        $safeCountry = $esc($countryName);
+        $safePlan = $esc($planLabel);
+        $safeEmail = $esc($email);
+        $safePhone = $esc($phoneNumber);
+        $safeUsername = $esc($username);
+        $safePassword = $esc($password);
+        $safeLoginUrl = $esc($loginUrl);
+
+        $infoRow = static function ($label, $value) {
+            return '<div class="info-row"><span class="info-label">' . $label . '</span><span class="info-value">' . $value . '</span></div>';
+        };
+
+        $instanceRows = implode('', [
+            $infoRow('Entreprise', $safeBusinessName),
+            $infoRow('Sous-domaine', $safeSlug),
+            $infoRow('Adresse instance', $safeInstanceAddress),
+            $infoRow('Pays', $safeCountry),
+            $infoRow('Forfait', $safePlan),
+            $infoRow('E-mail admin', '<a href="mailto:' . $safeEmail . '" style="color:#7dd3fc;text-decoration:none;">' . $safeEmail . '</a>'),
+            $infoRow('Téléphone', $safePhone),
+        ]);
+
+        return <<<HTML
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{$brandName} — Confirmation instance ISP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: linear-gradient(145deg, #0b1120 0%, #111827 100%); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, sans-serif; min-height: 100vh; padding: 2rem 1rem; color: #f8fafc; }
+        .card { max-width: 640px; width: 100%; margin: 0 auto; background: rgba(18, 25, 45, 0.95); border-radius: 2rem; border: 1px solid rgba(56, 189, 248, 0.22); box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.55); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #0a2b3e 0%, #0b1120 100%); padding: 1.6rem 2rem; border-bottom: 1px solid rgba(56, 189, 248, 0.28); display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+        h1 { font-size: 1.85rem; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+        .badge { background: rgba(34, 197, 94, 0.14); padding: 0.35rem 1rem; border-radius: 999px; font-size: 0.82rem; font-weight: 600; color: #4ade80; border: 1px solid rgba(74, 222, 128, 0.35); white-space: nowrap; }
+        .content { padding: 2rem; }
+        .intro { color: #cbd5e1; font-size: 1.02rem; line-height: 1.55; margin-bottom: 1.8rem; }
+        .intro strong { color: #f8fafc; }
+        .section-title { color: #38bdf8; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 0.85rem; }
+        .info-grid, .creds-grid { background: #0f172ad9; border-radius: 1.25rem; padding: 1.1rem 1.35rem; border: 1px solid #1e2a47; margin-bottom: 1.6rem; }
+        .info-row { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: 0.72rem 0; border-bottom: 1px dashed #24324f; }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; flex: 0 0 42%; }
+        .info-value { font-size: 0.92rem; font-weight: 600; color: #f0f9ff; text-align: right; word-break: break-word; }
+        .cred-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.85rem 0; border-bottom: 1px dashed #24324f; }
+        .cred-row:last-child { border-bottom: none; }
+        .cred-label { font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+        .cred-value { font-family: 'SF Mono', 'Fira Code', monospace; font-weight: 600; color: #f0f9ff; background: #00000035; padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.9rem; word-break: break-all; }
+        .btn { display: block; text-align: center; background: linear-gradient(95deg, #2563eb, #38bdf8); padding: 0.95rem 1.8rem; border-radius: 999px; text-decoration: none; font-weight: 600; color: #fff !important; box-shadow: 0 8px 20px -8px #2563eb80; font-size: 1rem; margin-top: 0.4rem; }
+        .note { font-size: 0.82rem; color: #94a3b8; line-height: 1.5; margin-top: 1.4rem; text-align: center; }
+        .direct-link { font-size: 0.78rem; color: #64748b; margin-top: 0.9rem; text-align: center; word-break: break-all; }
+        .direct-link a { color: #7dd3fc; text-decoration: none; }
+        .footer { background: #030712cc; border-top: 1px solid rgba(56, 189, 248, 0.2); padding: 1.1rem 2rem; text-align: center; font-size: 0.8rem; color: #6c86a3; }
+        @media (max-width: 520px) {
+            body { padding: 1rem 0.5rem; }
+            .content { padding: 1.35rem; }
+            .info-row, .cred-row { flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+            .info-value { text-align: left; }
+        }
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="header">
+        <h1>{$brandName}</h1>
+        <div class="badge">✓ INSTANCE CRÉÉE</div>
+    </div>
+    <div class="content">
+        <p class="intro">
+            Bonjour {$safeFirstName},<br><br>
+            Votre instance ISP <strong>{$safeBusinessName}</strong> a été créée avec succès.
+            Conservez cet e-mail&nbsp;: il contient vos informations de connexion administrateur.
+        </p>
+        <div class="section-title">Informations de l'instance</div>
+        <div class="info-grid">{$instanceRows}</div>
+        <div class="section-title">Identifiants de connexion</div>
+        <div class="creds-grid">
+            <div class="cred-row"><span class="cred-label">Nom d'utilisateur</span><span class="cred-value">{$safeUsername}</span></div>
+            <div class="cred-row"><span class="cred-label">Mot de passe</span><span class="cred-value">{$safePassword}</span></div>
+        </div>
+        <a href="{$safeLoginUrl}" class="btn">Se connecter à l'administration</a>
+        <p class="note">🔒 Important&nbsp;: ce mot de passe est généré automatiquement. Vous pouvez le modifier à tout moment depuis <strong>Paramètres → Changer le mot de passe</strong>. Vous pouvez aussi mettre à jour votre nom d'utilisateur et vos informations personnelles depuis <strong>Mon compte</strong>.</p>
+        <p class="direct-link">Accès direct au tableau de bord&nbsp;: <a href="{$safeLoginUrl}">{$safeLoginUrl}</a></p>
+    </div>
+    <div class="footer">© ISP DYRSIA — Powered by Groupe Dyrsia - {$year}</div>
+</div>
+</body>
+</html>
+HTML;
+    }
+
+    private static function provisionPlanLabel($signupIntent)
+    {
+        $intent = class_exists('AdminSubscription')
+            ? AdminSubscription::normalizeSignupIntent($signupIntent)
+            : strtolower(trim((string) $signupIntent));
+
+        if ($intent === 'demo') {
+            $days = class_exists('AdminSubscription') ? AdminSubscription::demoTrialDays() : 5;
+
+            return 'Mode Démo (' . $days . ' jours)';
+        }
+
+        return class_exists('AdminSubscription')
+            ? AdminSubscription::planLabel($intent)
+            : ucfirst($intent);
     }
 
     public static function loginAdmin($adminId)

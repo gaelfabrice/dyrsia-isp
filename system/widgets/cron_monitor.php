@@ -6,10 +6,9 @@ class cron_monitor
     {
         global $UPLOAD_PATH,$ui;
 
-        $timestampFile = "$UPLOAD_PATH/cron_last_run.txt";
-        if (file_exists($timestampFile)) {
-            $lastRunTime = file_get_contents($timestampFile);
-            $ui->assign('run_date', date('Y-m-d h:i:s A', $lastRunTime));
+        $lastRun = WifiZoneOps::getCronLastRunTimestamp();
+        if ($lastRun > 0) {
+            $ui->assign('run_date', date('Y-m-d h:i:s A', $lastRun));
         }
 
         return $ui->fetch('widget/cron_monitor.tpl');

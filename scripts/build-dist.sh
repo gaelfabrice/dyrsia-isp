@@ -33,7 +33,15 @@ if [ -d "$ROOT_DIR/ui/ui/templates/mikrotik_hotspot" ]; then
   cp "$ROOT_DIR/ui/ui/templates/mikrotik_hotspot/"*.png "$STAGING/system/uploads/mikrotik_hotspot/" 2>/dev/null || true
 fi
 
-mkdir -p "$STAGING/system/uploads"
+mkdir -p "$STAGING/system/uploads" "$STAGING/system/install"
+
+if [ -f "$ROOT_DIR/system/install/appconfig.production.json" ]; then
+  cp "$ROOT_DIR/system/install/appconfig.production.json" "$STAGING/system/install/appconfig.production.json"
+  echo "Included production appconfig defaults (Campay / SMTP / Telegram)."
+elif [ -f "$ROOT_DIR/system/install/appconfig.production.json.example" ]; then
+  cp "$ROOT_DIR/system/install/appconfig.production.json.example" "$STAGING/system/install/appconfig.production.json.example"
+  echo "Warning: no appconfig.production.json — run: php scripts/export-production-appconfig.php" >&2
+fi
 
 rm -rf \
   "$STAGING/tests" \

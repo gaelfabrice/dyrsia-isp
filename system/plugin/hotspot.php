@@ -1938,7 +1938,11 @@
                 r2(U . 'plugin/hotspot_config#collapseHotspotTg', 'e', Lang::T('You cannot perform this action in Demo mode'));
             }
             $result = Message::sendTelegram(Lang::T('wifizones Test Telegram'));
-            r2(U . 'plugin/hotspot_config#collapseHotspotTg', 's', Lang::T('Test Telegram has been send') . '<br>Result: ' . $result);
+            r2(
+                U . 'plugin/hotspot_config#collapseHotspotTg',
+                Message::isTelegramSuccess($result) ? 's' : 'e',
+                Message::isTelegramSuccess($result) ? 'Succès' : 'Échec'
+            );
         }
 
         $ui->assign('notify_tg_ok', !empty($config['telegram_bot']) && !empty($config['telegram_target_id']));

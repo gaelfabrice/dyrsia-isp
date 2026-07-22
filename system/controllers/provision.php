@@ -87,7 +87,7 @@ switch ($do) {
                 $signupIntent,
                 $countryCode,
                 [
-                    'skip_notifications' => $isAjax,
+                    'defer_notifications' => $isAjax,
                     'full_name' => $fullName,
                     'phone_number' => $phoneNumber,
                     'referral_code' => $referralCode,
@@ -119,7 +119,16 @@ switch ($do) {
                     'username' => $result['admin']->username,
                     'password' => $result['password'],
                     'signup_intent' => $signupIntent,
-                ]);
+                ], 200, false);
+                provision_finish_request();
+                try {
+                    Tenant::sendProvisionWelcomeNotifications($result['notification']);
+                } catch (Throwable $e) {
+                    if (function_exists('_log')) {
+                        _log('Provision welcome email failed: ' . $e->getMessage());
+                    }
+                }
+                exit;
             }
             r2($redirect, 's', $flash);
         } catch (InvalidArgumentException $e) {

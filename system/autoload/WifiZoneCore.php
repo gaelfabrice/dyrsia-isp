@@ -11,6 +11,7 @@ class WifiZoneCore
         self::installSchema();
         self::ensureUsersLoginTokenColumn();
         self::ensureConfig();
+        self::applyProductionAppconfig();
         self::applyLocaleDefaults();
         self::applyBrandDefaults();
         self::applyBandwidthDefaults();
@@ -334,6 +335,29 @@ class WifiZoneCore
         }
     }
 
+    /**
+     * Apply Campay / SMTP / Telegram defaults shipped in dist (system/install/appconfig.production.json).
+     */
+    public static function applyProductionAppconfig()
+    {
+        $path = __DIR__ . '/../install/appconfig.production.json';
+        if (!is_readable($path)) {
+            return;
+        }
+
+        $data = json_decode((string) file_get_contents($path), true);
+        if (!is_array($data)) {
+            return;
+        }
+
+        foreach ($data as $key => $value) {
+            if (!is_string($key) || $key === '' || str_starts_with($key, '_')) {
+                continue;
+            }
+            self::setConfig($key, (string) $value);
+        }
+    }
+
     public static function ensureConfig()
     {
         $defaults = [
@@ -384,10 +408,7 @@ class WifiZoneCore
         }
         global $UPLOAD_PATH;
         $checks['writable_uploads'] = is_writable($UPLOAD_PATH);
-        $cronFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'cron_last_run.txt';
-        if (file_exists($cronFile)) {
-            $checks['cron_marker'] = (time() - filemtime($cronFile)) < 900;
-        }
+        $checks['cron_marker'] = WifiZoneOps::isCronHeartbeatFresh(900);
         return $checks;
     }
 
