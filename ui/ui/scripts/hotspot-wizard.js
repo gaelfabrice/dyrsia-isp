@@ -1093,7 +1093,6 @@
             ['Numéro contact', val('hotspot_contact_phone')],
             ['Routeur', labelForSelect('hotspot_login_router') || getPersistedRouterName() || '—'],
             ['Affichage cartes', labelForSelect('hotspot_card_display')],
-            ['Architecture', 'Dual-bridge (Hotspot ≠ PPPoE)'],
             ['Ports Hotspot', val('hotspot_bridge_ports') || 'wlan1,ether3']
         ];
         rows = rows.concat([

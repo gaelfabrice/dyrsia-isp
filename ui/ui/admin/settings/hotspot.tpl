@@ -39,7 +39,7 @@
     {assign var=hs_idle value=$_c['hotspot_idle_timeout']|default:'00:10:00'}
     {assign var=hs_keepalive value=$_c['hotspot_keepalive_timeout']|default:'00:00:30'}
     {assign var=hs_address_per_mac value=$_c['hotspot_address_per_mac']|default:'1'}
-    {assign var=hs_login value=','|cat:($_c['hotspot_login_methods']|default:'http-chap,mac-cookie')|cat:','}
+    {assign var=hs_login value=','|cat:($_c['hotspot_login_methods']|default:'http-chap,http-pap,mac-cookie')|cat:','}
     {assign var=hs_use_radius value=$_c['hotspot_use_radius']|default:'1'}
     {assign var=ps_gateway value=$_c['pppoe_setup_gateway']|default:'10.10.10.1/24'}
     {assign var=ps_vlan_id value=$_c['pppoe_setup_vlan_id']|default:'20'}
@@ -575,18 +575,8 @@
                                     </select>
                                 </div>
                             </div>
-                            <hr style="margin:20px 0;">
-                            <div class="form-group">
-                                <label class="col-md-3 control-label">Architecture</label>
-                                <div class="col-md-9">
-                                    <p class="help-block" style="margin-top:7px;">
-                                        <strong>Dual-bridge</strong> : Hotspot sur <code>bridge-hotspot</code> (Wi‑Fi / ports dédiés),
-                                        PPPoE sur <code>bridge-pppoe</code> via l’assistant PPPoE — services séparés, sans VLAN trunk.
-                                    </p>
-                                    <input type="hidden" name="lan_trunk_enabled" value="0">
-                                    <input type="hidden" name="pppoe_setup_on_hotspot" value="0">
-                                </div>
-                            </div>
+                            <input type="hidden" name="lan_trunk_enabled" value="0">
+                            <input type="hidden" name="pppoe_setup_on_hotspot" value="0">
                             <div class="form-group">
                                 <label class="col-md-3 control-label">Ports Hotspot (bridge)</label>
                                 <div class="col-md-9">

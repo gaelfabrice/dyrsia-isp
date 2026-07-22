@@ -616,24 +616,27 @@ class MobileMoneyGateway
         const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
         if (passEl) delete passEl.dataset.chapDone;
     }
+    function normalizeHotspotPlainPassword(value) {
+        var p = String(value || '').replace(/^\s+|\s+$/g, '');
+        if (!p || p.indexOf('$2y$') === 0 || p.indexOf('$2a$') === 0 || p.indexOf('$2b$') === 0) return '123456';
+        if (/^[a-f0-9]{32}$/i.test(p)) return '123456';
+        return p;
+    }
     function prepareMikrotikLogin(form) {
         if (!form) return false;
         const passwordInput = form.querySelector('input[name="password"]');
-        const chapId = '$(chap-id)';
-        const chapChallenge = '$(chap-challenge)';
-        const hasChap = chapId && chapChallenge && chapId.indexOf('$(') !== 0 && chapChallenge.indexOf('$(') !== 0;
-        if (hasChap && passwordInput && !passwordInput.dataset.chapDone) {
-            if (typeof hexMD5 === 'function') {
-                passwordInput.value = hexMD5(chapId + passwordInput.value + chapChallenge);
-                passwordInput.dataset.chapDone = '1';
-            }
+        if (passwordInput) {
+            passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
+            delete passwordInput.dataset.chapDone;
         }
         return true;
     }
     function submitHotspotLogin() {
         const f = document.getElementById('loginForm');
         if (!f) return;
-        prepareMikrotikLogin(f);
+        if (!prepareMikrotikLogin(f)) {
+            return;
+        }
         f.submit();
     }
     function fillAndSubmitHotspotLogin(username, password) {
@@ -686,6 +689,34 @@ class MobileMoneyGateway
             return $html;
         }
 
+        public static function replaceHotspotPrepareMikrotikLogin($html)
+        {
+            $replacement = trim(self::buildPrepareMikrotikLoginJs());
+            if ($replacement === '') {
+                return $html;
+            }
+
+            if (preg_match('/function resetHotspotPasswordChap\s*\([\s\S]*?function fillAndSubmitHotspotLogin\s*\([^)]*\)\s*\{[\s\S]*?\n\}/', $html)) {
+                return preg_replace(
+                    '/function resetHotspotPasswordChap\s*\([\s\S]*?function fillAndSubmitHotspotLogin\s*\([^)]*\)\s*\{[\s\S]*?\n\}/',
+                    $replacement,
+                    $html,
+                    1
+                ) ?? $html;
+            }
+
+            if (strpos($html, 'function prepareMikrotikLogin') !== false) {
+                return preg_replace(
+                    '/function prepareMikrotikLogin\s*\(form\)\s*\{[\s\S]*?\n\}/',
+                    trim(preg_replace('/^[\s\S]*(?=function prepareMikrotikLogin)/', '', $replacement)),
+                    $html,
+                    1
+                ) ?? $html;
+            }
+
+            return $html;
+        }
+
         public static function patchModernHotspotChapLogin($html)
         {
             if (strpos($html, 'window.HOTSPOT_INLINE_MD5') === false) {
@@ -693,6 +724,7 @@ class MobileMoneyGateway
             }
 
             $html = self::injectHotspotMd5Js($html);
+            $html = self::replaceHotspotPrepareMikrotikLogin($html);
 
             if (strpos($html, 'function prepareMikrotikLogin') === false) {
                 $html = preg_replace(

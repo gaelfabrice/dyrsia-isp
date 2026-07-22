@@ -528,19 +528,21 @@ function resetHotspotPasswordChap() {
   if (passEl) delete passEl.dataset.chapDone;
 }
 
+function normalizeHotspotPlainPassword(value) {
+  var p = String(value || '').replace(/^\s+|\s+$/g, '');
+  if (!p || p.indexOf('$2y$') === 0 || p.indexOf('$2a$') === 0 || p.indexOf('$2b$') === 0) return '123456';
+  if (/^[a-f0-9]{32}$/i.test(p)) return '123456';
+  return p;
+}
+
 function prepareMikrotikLogin(form) {
   if (!form) return false;
   const passwordInput = form.querySelector('input[name="password"]');
   if (passwordInput) {
-    var plain = String(passwordInput.value || '').trim();
-    // Toujours renvoyer le clair hotspot (http-pap). Ne jamais laisser un hash bcrypt/CHAP.
-    if (!plain || plain.indexOf('$2y$') === 0 || plain.indexOf('$2a$') === 0 || plain.indexOf('$2b$') === 0 || /^[a-f0-9]{32}$/i.test(plain)) {
-      plain = '123456';
-    }
-    passwordInput.value = plain;
+    passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
     delete passwordInput.dataset.chapDone;
   }
-  // Auth en http-pap : on n'applique PAS le CHAP MD5 (sinon MikroTik reçoit un hash et refuse).
+  // Auth HTTP PAP : mot de passe en clair (profil MikroTik = http-chap,http-pap,mac-cookie).
   return true;
 }
 
@@ -548,7 +550,10 @@ function submitHotspotLogin() {
   const f = document.getElementById('loginForm');
   if (!f || f.dataset.authBusy === '1') return;
   f.dataset.authBusy = '1';
-  prepareMikrotikLogin(f);
+  if (!prepareMikrotikLogin(f)) {
+    f.dataset.authBusy = '0';
+    return;
+  }
   try { f.submit(); } catch (e) { f.dataset.authBusy = '0'; }
 }
 

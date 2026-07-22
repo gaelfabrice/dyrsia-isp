@@ -1376,14 +1376,15 @@ switch ($action) {
                     ]);
                     exit;
                 }
+                $routerPass = Mikrotik::routerPassword($mikrotik['password']);
                 $client = Mikrotik::getClient(
                     $mikrotik['ip_address'],
                     $mikrotik['username'],
-                    $mikrotik['password'],
-                    8,
+                    $routerPass,
+                    12,
                     true,
                     true,
-                    8
+                    12
                 );
                 if (!$client) {
                     echo json_encode([
@@ -1407,26 +1408,44 @@ switch ($action) {
                 echo json_encode(Mikrotik::fetchHotspotSetupSnapshot($client, $preferredHotspot, true));
             } catch (Throwable $e) {
                 $endpoint = Mikrotik::parseEndpoint($mikrotik['ip_address']);
-                $message = Mikrotik::classifyConnectionError(
-                    $e,
-                    $endpoint['host'],
-                    $endpoint['port'],
-                    $mikrotik['name'],
-                    $mikrotik['username']
-                );
+                $detail = trim((string) $e->getMessage());
+                $isConnectionError = stripos($detail, 'mikrotik') !== false
+                    || stripos($detail, 'routeros') !== false
+                    || stripos($detail, 'tcp injoignable') !== false
+                    || stripos($detail, 'connexion') !== false
+                    || stripos($detail, 'credential') !== false
+                    || stripos($detail, 'password') !== false;
+                $message = $isConnectionError
+                    ? Mikrotik::classifyConnectionError(
+                        $e,
+                        $endpoint['host'],
+                        $endpoint['port'],
+                        $mikrotik['name'],
+                        $mikrotik['username']
+                    )
+                    : ($detail !== '' ? $detail : 'Erreur pendant la synchronisation hotspot.');
                 echo json_encode([
                     'ok' => false,
                     'message' => $message . ' Le routeur reste sélectionné — réessayez.',
                 ]);
             } catch (Exception $e) {
                 $endpoint = Mikrotik::parseEndpoint($mikrotik['ip_address']);
-                $message = Mikrotik::classifyConnectionError(
-                    $e,
-                    $endpoint['host'],
-                    $endpoint['port'],
-                    $mikrotik['name'],
-                    $mikrotik['username']
-                );
+                $detail = trim((string) $e->getMessage());
+                $isConnectionError = stripos($detail, 'mikrotik') !== false
+                    || stripos($detail, 'routeros') !== false
+                    || stripos($detail, 'tcp injoignable') !== false
+                    || stripos($detail, 'connexion') !== false
+                    || stripos($detail, 'credential') !== false
+                    || stripos($detail, 'password') !== false;
+                $message = $isConnectionError
+                    ? Mikrotik::classifyConnectionError(
+                        $e,
+                        $endpoint['host'],
+                        $endpoint['port'],
+                        $mikrotik['name'],
+                        $mikrotik['username']
+                    )
+                    : ($detail !== '' ? $detail : 'Erreur pendant la synchronisation hotspot.');
                 echo json_encode([
                     'ok' => false,
                     'message' => $message . ' Le routeur reste sélectionné — réessayez.',
@@ -1916,7 +1935,7 @@ HTML;
                 if (strpos($html, 'function prepareMikrotikLogin') === false) {
                     $html = str_replace(
                         '/* ===== CONNEXION ===== */',
-                        "/* ===== CONNEXION ===== */\n    function prepareMikrotikLogin(form) {\n        if (!form) return false;\n        const passwordInput = form.querySelector('input[name=\"password\"]');\n        const chapId = '$(chap-id)';\n        const chapChallenge = '$(chap-challenge)';\n        const hasChap = chapId && chapChallenge && chapId.indexOf('$(') !== 0 && chapChallenge.indexOf('$(') !== 0;\n        if (hasChap && passwordInput && !passwordInput.dataset.chapDone) {\n            if (typeof hexMD5 === 'function') {\n                passwordInput.value = hexMD5(chapId + passwordInput.value + chapChallenge);\n                passwordInput.dataset.chapDone = '1';\n            }\n        }\n        return true;\n    }",
+                        "/* ===== CONNEXION ===== */\n    function prepareMikrotikLogin(form) {\n        if (!form) return false;\n        const passwordInput = form.querySelector('input[name=\"password\"]');\n        if (passwordInput) {\n            var plain = String(passwordInput.value || '').trim();\n            if (!plain || plain.indexOf('$2y$') === 0 || /^[a-f0-9]{32}$/i.test(plain)) plain = '123456';\n            passwordInput.value = plain;\n            delete passwordInput.dataset.chapDone;\n        }\n        return true;\n    }",
                         $html
                     );
                 }
@@ -2019,7 +2038,7 @@ HTML;
                 $_POST['pppoe_setup_router'] = $hotspotRouter;
             }
             if (empty($_POST['hotspot_login_methods'])) {
-                $_POST['hotspot_login_methods'] = ['http-chap', 'mac-cookie'];
+                $_POST['hotspot_login_methods'] = ['http-chap', 'http-pap', 'mac-cookie'];
             }
             if (trim((string) ($_POST['hotspot_cookie_lifetime'] ?? '')) === '') {
                 $_POST['hotspot_cookie_lifetime'] = '1d 00:00:00';

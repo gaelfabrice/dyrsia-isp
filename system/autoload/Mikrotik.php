@@ -6900,7 +6900,7 @@ class Mikrotik
                 'hotspot_smtp_server' => '0.0.0.0',
                 'hotspot_dns_server' => '8.8.8.8',
                 'hotspot_dns_name' => '',
-                'hotspot_login_methods' => 'http-chap,mac-cookie',
+                'hotspot_login_methods' => 'http-chap,http-pap,mac-cookie',
                 'hotspot_cookie_lifetime' => '1d 00:00:00',
                 'hotspot_idle_timeout' => '00:10:00',
                 'hotspot_address_per_mac' => '1',
@@ -7230,7 +7230,7 @@ class Mikrotik
         $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
         $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
         $masquerade = !empty($config['hotspot_masquerade']) && (string) $config['hotspot_masquerade'] !== '0';
-        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-chap,mac-cookie'));
+        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-chap,http-pap,mac-cookie'));
         $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
         $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
         $addressPerMac = trim((string) ($config['hotspot_address_per_mac'] ?? '1'));
@@ -7979,6 +7979,11 @@ class Mikrotik
         return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
     }
 
+    private static function isWlanInterfaceName($name)
+    {
+        return preg_match('/^wlan/i', trim((string) $name)) === 1;
+    }
+
     private static function isVlanInterfaceName($name)
     {
         return preg_match('/^vlan/i', trim((string) $name)) === 1;
@@ -8096,22 +8101,45 @@ class Mikrotik
             $normalized = ['http-chap', 'http-pap', 'mac-cookie'];
         }
 
-        return implode(',', $normalized);
+        return self::orderHotspotLoginByMethods($normalized);
     }
 
     /**
-     * Hotspot auth via RADIUS : http-chap + mac-cookie uniquement (pas cookie/http-pap legacy).
+     * Ordre stable login-by : HTTP CHAP, HTTP PAP, MAC COOKIE.
+     *
+     * @param array<int, string> $methods
+     */
+    private static function orderHotspotLoginByMethods(array $methods)
+    {
+        $order = ['http-chap', 'http-pap', 'mac-cookie'];
+        $picked = [];
+        foreach ($order as $method) {
+            if (in_array($method, $methods, true)) {
+                $picked[] = $method;
+            }
+        }
+        foreach ($methods as $method) {
+            if (!in_array($method, $picked, true)) {
+                $picked[] = $method;
+            }
+        }
+
+        return implode(',', $picked);
+    }
+
+    /**
+     * Hotspot + RADIUS : conserver HTTP PAP pour login en clair sur login.html.
      */
     private static function normalizeHotspotLoginByForRadius($loginMethods)
     {
         $methods = array_filter(explode(',', self::normalizeHotspotLoginBy($loginMethods)));
-        $allowed = ['http-chap', 'mac-cookie'];
+        $allowed = ['http-chap', 'http-pap', 'mac-cookie'];
         $filtered = array_values(array_intersect($methods, $allowed));
         if ($filtered === []) {
-            return 'http-chap,mac-cookie';
+            return 'http-chap,http-pap,mac-cookie';
         }
 
-        return implode(',', $filtered);
+        return self::orderHotspotLoginByMethods($filtered);
     }
 
     public static function hotspotRadiusEnabled(array $configLocal)
@@ -9044,7 +9072,7 @@ class Mikrotik
 
         $loginBy = trim((string) $loginMethods);
         if ($loginBy === '') {
-            $loginBy = $useRadius ? 'http-chap,mac-cookie' : self::normalizeHotspotLoginBy('http-pap,mac-cookie');
+            $loginBy = $useRadius ? 'http-chap,mac-cookie' : self::normalizeHotspotLoginBy('http-chap,http-pap,mac-cookie');
         }
 
         $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
@@ -9273,6 +9301,197 @@ class Mikrotik
         }
 
         return 'ether1';
+    }
+
+    /**
+     * Liste les interfaces physiques (ether/sfp) du routeur.
+     *
+     * @param array<int, array<string, mixed>> $interfaces
+     * @return array<int, string>
+     */
+    public static function detectRouterPhysicalPorts(array $interfaces)
+    {
+        $physical = [];
+        foreach ($interfaces as $iface) {
+            if (!is_array($iface)) {
+                continue;
+            }
+            $type = strtolower(trim((string) ($iface['type'] ?? '')));
+            $name = trim((string) ($iface['name'] ?? ''));
+            if ($name === '' || $name === 'lo') {
+                continue;
+            }
+            if (in_array($type, ['ether', 'sfp', 'sfp-sfpplus', 'sfpplus', 'bond'], true)
+                || preg_match('/^ether/i', $name)) {
+                $physical[] = $name;
+            }
+        }
+        usort($physical, static function ($a, $b) {
+            return strnatcasecmp($a, $b);
+        });
+
+        return array_values(array_unique($physical));
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $interfaces
+     * @return array<int, string>
+     */
+    public static function detectRouterWirelessPorts(array $interfaces)
+    {
+        $wireless = [];
+        foreach ($interfaces as $iface) {
+            if (!is_array($iface)) {
+                continue;
+            }
+            $type = strtolower(trim((string) ($iface['type'] ?? '')));
+            $name = trim((string) ($iface['name'] ?? ''));
+            if ($name === '' || $name === 'lo') {
+                continue;
+            }
+            if ($type === 'wlan' || preg_match('/^wlan/i', $name)) {
+                $wireless[] = $name;
+            }
+        }
+        usort($wireless, static function ($a, $b) {
+            return strnatcasecmp($a, $b);
+        });
+
+        return array_values(array_unique($wireless));
+    }
+
+    /**
+     * Ports LAN suggérés pour le bridge trunk (hors WAN).
+     *
+     * @param array<int, array<string, mixed>> $interfaces
+     * @param array<string, array<int, string>> $bridgePorts
+     * @param array<int, string> $physicalPorts
+     * @param array<int, string> $wirelessPorts
+     * @return array<int, string>
+     */
+    private static function suggestRouterLanBridgePorts(
+        array $interfaces,
+        array $bridgePorts,
+        array $physicalPorts,
+        array $wirelessPorts,
+        $wanInterface
+    ) {
+        $wanInterface = trim((string) $wanInterface);
+        $isWan = static function ($portName) use ($wanInterface) {
+            return $wanInterface !== '' && strcasecmp(trim((string) $portName), $wanInterface) === 0;
+        };
+
+        $bridgePriority = ['bridge-lan', 'bridge-hotspot', 'bridge-pppoe'];
+        foreach ($bridgePriority as $bridgeName) {
+            if (empty($bridgePorts[$bridgeName])) {
+                continue;
+            }
+            $ports = array_values(array_filter($bridgePorts[$bridgeName], static function ($port) use ($isWan) {
+                return !$isWan($port);
+            }));
+            if (!empty($ports)) {
+                usort($ports, static function ($a, $b) {
+                    return strnatcasecmp($a, $b);
+                });
+
+                return $ports;
+            }
+        }
+
+        foreach ($bridgePorts as $ports) {
+            if (!is_array($ports) || empty($ports)) {
+                continue;
+            }
+            $filtered = array_values(array_filter($ports, static function ($port) use ($isWan) {
+                return !$isWan($port);
+            }));
+            if (!empty($filtered)) {
+                usort($filtered, static function ($a, $b) {
+                    return strnatcasecmp($a, $b);
+                });
+
+                return $filtered;
+            }
+        }
+
+        $candidates = array_merge($physicalPorts, $wirelessPorts);
+        $candidates = array_values(array_filter($candidates, static function ($port) use ($isWan) {
+            return !$isWan($port);
+        }));
+        if (empty($candidates) && !empty($physicalPorts)) {
+            foreach ($physicalPorts as $port) {
+                if (!$isWan($port)) {
+                    $candidates[] = $port;
+                }
+            }
+        }
+        if (empty($candidates)) {
+            foreach ($physicalPorts as $port) {
+                if (strcasecmp($port, 'ether1') !== 0) {
+                    $candidates[] = $port;
+                }
+            }
+        }
+        usort($candidates, static function ($a, $b) {
+            return strnatcasecmp($a, $b);
+        });
+
+        return array_values(array_unique($candidates));
+    }
+
+    /**
+     * Enrichit le snapshot assistant Hotspot/PPPoE (ports WAN/LAN, trunk).
+     */
+    public static function applyRouterPortSuggestions(array &$snapshot, $client, $lightweight = false)
+    {
+        $interfaces = is_array($snapshot['interfaces'] ?? null) ? $snapshot['interfaces'] : [];
+        $bridgePorts = is_array($snapshot['bridge_ports'] ?? null) ? $snapshot['bridge_ports'] : [];
+        $physical = self::detectRouterPhysicalPorts($interfaces);
+        $wireless = self::detectRouterWirelessPorts($interfaces);
+
+        if ($lightweight || !$client) {
+            $wan = self::guessWanInterfaceFromPhysicalPorts($physical);
+        } else {
+            $wan = self::normalizeRouterWanInterface(self::resolveWanOutInterface($client));
+            if ($wan === 'ether1' && !in_array('ether1', $physical, true) && !empty($physical)) {
+                $wan = self::guessWanInterfaceFromPhysicalPorts($physical);
+            }
+        }
+
+        $portBridgeMap = is_array($snapshot['port_bridge_map'] ?? null) ? $snapshot['port_bridge_map'] : [];
+        if (empty($portBridgeMap) && !empty($bridgePorts)) {
+            foreach ($bridgePorts as $bridge => $ports) {
+                if (!is_array($ports)) {
+                    continue;
+                }
+                foreach ($ports as $portName) {
+                    $portBridgeMap[(string) $portName] = (string) $bridge;
+                }
+            }
+        }
+
+        $lanPorts = self::suggestRouterLanBridgePorts($interfaces, $bridgePorts, $physical, $wireless, $wan);
+        $trunkMembers = array_values(array_unique(array_merge($physical, $wireless)));
+
+        $snapshot['physical_ports'] = $physical;
+        $snapshot['wireless_ports'] = $wireless;
+        $snapshot['physical_port_count'] = count($physical);
+        $snapshot['wireless_port_count'] = count($wireless);
+        $snapshot['wan_interface'] = $wan;
+        $snapshot['lan_ports'] = $lanPorts;
+        $snapshot['lan_port_count'] = count($lanPorts);
+        $snapshot['trunk_member_ports'] = $trunkMembers;
+        $snapshot['port_bridge_map'] = $portBridgeMap;
+
+        if (!isset($snapshot['suggested']) || !is_array($snapshot['suggested'])) {
+            $snapshot['suggested'] = self::lanTrunkDefaults();
+        }
+        if (!empty($lanPorts)) {
+            $snapshot['suggested']['lan_trunk_bridge_ports'] = implode(',', $lanPorts);
+        }
+        if ($wan !== '') {
+            $snapshot['suggested']['lan_wan_interface'] = $wan;
+        }
     }
 
     /**
