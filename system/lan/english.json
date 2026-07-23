@@ -1752,5 +1752,6 @@
     "Add_or_subtract_days_from_the_current_expiry__Leave_empty_to_use_the_date_above_": "Add or subtract days from the current expiry. Leave empty to use the date above.",
     "Data_Not_Found": "Data Not Found",
     "Mobile_Money": "Mobile Money",
-    "Please_confirm_the_payment_on_your_mobile_device__then_click_Check_Status_": "Please confirm the payment on your mobile device, then click Check Status."
+    "Please_confirm_the_payment_on_your_mobile_device__then_click_Check_Status_": "Please confirm the payment on your mobile device, then click Check Status.",
+    "Subscription_extended": "Subscription extended"
 }
