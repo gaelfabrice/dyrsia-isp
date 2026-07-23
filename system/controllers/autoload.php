@@ -25,6 +25,16 @@ function autoload_scoped_router_query($admin)
     return $query;
 }
 
+function autoload_scoped_customer_query($admin)
+{
+    $query = ORM::for_table('tbl_customers');
+    if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
+        $query->where('created_by', (int) ($admin['id'] ?? 0));
+    }
+
+    return $query;
+}
+
 switch ($action) {
     case 'router-pools':
         header('Content-Type: application/json; charset=utf-8');
@@ -209,18 +219,22 @@ switch ($action) {
         }
         break;
     case 'customer_select2':
-
-        $s = addslashes(_get('s'));
-        if (empty($s)) {
-            $c = ORM::for_table('tbl_customers')->limit(30)->find_many();
-        } else {
-            $c = ORM::for_table('tbl_customers')->where_raw("(`username` LIKE '%$s%' OR `fullname` LIKE '%$s%' OR `phonenumber` LIKE '%$s%' OR `email` LIKE '%$s%')")->limit(30)->find_many();
+        $s = trim((string) (_get('s') ?: ''));
+        $query = autoload_scoped_customer_query($admin);
+        if ($s !== '') {
+            $like = '%' . $s . '%';
+            $query->where_raw(
+                '(`username` LIKE ? OR `fullname` LIKE ? OR `phonenumber` LIKE ? OR `email` LIKE ?)',
+                [$like, $like, $like, $like]
+            );
         }
-        header('Content-Type: application/json');
+        $c = $query->limit(30)->find_many();
+        header('Content-Type: application/json; charset=utf-8');
+        $json = [];
         foreach ($c as $cust) {
             $json[] = [
-                'id' => $cust['id'],
-                'text' => $cust['username'] . ' - ' . $cust['fullname'] . ' - ' . $cust['email']
+                'id' => (int) $cust['id'],
+                'text' => $cust['username'] . ' - ' . $cust['fullname'] . ' - ' . $cust['email'],
             ];
         }
         echo json_encode(['results' => $json]);
