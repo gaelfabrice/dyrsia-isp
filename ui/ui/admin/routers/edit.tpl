@@ -57,8 +57,8 @@
                         <div class="col-md-6">
                             <input type="text" class="form-control" id="description" name="description"
                                 value="{$d['description']|escape:'html'}" maxlength="17"
-                                placeholder="18:FD:74:CB:CB:BA" pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$" required>
-                            <p class="help-block">Adresse MAC du routeur MikroTik (System → RouterBOARD ou interface ether1).</p>
+                                placeholder="18:FD:74:CB:CB:BA ou 18FD74CBCBBA" autocomplete="off">
+                            <p class="help-block">Format accepté : <code>AA:BB:CC:DD:EE:FF</code> ou 12 caractères hex. Visible dans Winbox : System → RouterBOARD.</p>
                         </div>
                     </div>
                     <div class="form-group">
@@ -147,6 +147,39 @@
         {/if}
         {literal}
         }
+
+        (function () {
+            var macField = document.getElementById('description');
+            var form = document.querySelector('form[action*="routers/edit-post"]');
+            if (!macField || !form) {
+                return;
+            }
+
+            function normalizeMacInput(value) {
+                var raw = String(value || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+                if (raw.length > 12) {
+                    raw = raw.substring(0, 12);
+                }
+                if (raw.length !== 12) {
+                    return raw;
+                }
+                return raw.match(/.{1,2}/g).join(':');
+            }
+
+            function applyMacFieldFormat() {
+                var formatted = normalizeMacInput(macField.value);
+                if (formatted.length === 17) {
+                    macField.value = formatted;
+                }
+            }
+
+            macField.addEventListener('input', function () {
+                macField.value = normalizeMacInput(macField.value);
+            });
+            macField.addEventListener('blur', applyMacFieldFormat);
+            form.addEventListener('submit', applyMacFieldFormat);
+            applyMacFieldFormat();
+        })();
     </script>
 {/literal}
 {include file="sections/footer.tpl"}

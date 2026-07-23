@@ -409,7 +409,7 @@ switch ($action) {
             $description = router_fetch_mac_from_device($ip_address, $username, $password, 6);
         }
         if ($description === '') {
-            $msg .= 'Adresse MAC requise (format AA:BB:CC:DD:EE:FF). Testez la connexion pour la récupérer automatiquement.<br>';
+            $msg .= 'Adresse MAC requise (ex. 18:FD:74:CB:CB:BA). Testez la connexion pour la récupérer automatiquement.<br>';
         } else {
             $macConflict = router_find_mac_conflict($description);
             if ($macConflict !== '') {
@@ -477,8 +477,11 @@ switch ($action) {
                 $msg .= Lang::T('All field is required') . '<br>';
             }
         }
+        if ($description === '' && ($enabled || _post('testIt'))) {
+            $description = router_fetch_mac_from_device($ip_address, $username, $password, 6);
+        }
         if ($description === '') {
-            $msg .= 'Adresse MAC requise (format AA:BB:CC:DD:EE:FF).<br>';
+            $msg .= 'Adresse MAC requise (ex. 18:FD:74:CB:CB:BA). Saisissez-la manuellement ou testez la connexion pour la récupérer.<br>';
         } else {
             $macConflict = router_find_mac_conflict($description, (int) _post('id'));
             if ($macConflict !== '') {

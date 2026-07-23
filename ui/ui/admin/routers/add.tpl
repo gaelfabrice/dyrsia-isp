@@ -25,8 +25,8 @@
                     <div class="col-md-6 router-field">
                         <label>Adresse Mac *</label>
                         <input type="text" class="form-control" id="description" name="description" maxlength="17"
-                            placeholder="18:FD:74:CB:CB:BA" pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$" required>
-                        <p class="help-block" style="margin-top:6px;">Remplie automatiquement après un test de connexion réussi, ou saisie manuelle.</p>
+                            placeholder="18:FD:74:CB:CB:BA ou 18FD74CBCBBA" autocomplete="off">
+                        <p class="help-block" style="margin-top:6px;">Format accepté : <code>AA:BB:CC:DD:EE:FF</code> ou 12 caractères hex sans séparateur. Remplie automatiquement après un test réussi.</p>
                     </div>
                 </div>
             </div>
@@ -114,17 +114,35 @@
                 field.addEventListener('change', resetTest);
             }
         });
+
         var macField = document.getElementById('description');
+
+        function normalizeMacInput(value) {
+            var raw = String(value || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+            if (raw.length > 12) {
+                raw = raw.substring(0, 12);
+            }
+            if (raw.length !== 12) {
+                return raw;
+            }
+            return raw.match(/.{1,2}/g).join(':');
+        }
+
+        function applyMacFieldFormat() {
+            if (!macField) {
+                return;
+            }
+            var formatted = normalizeMacInput(macField.value);
+            if (formatted.length === 17) {
+                macField.value = formatted;
+            }
+        }
+
         if (macField) {
             macField.addEventListener('input', function () {
-                var raw = macField.value.replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
-                if (raw.length > 12) {
-                    raw = raw.substring(0, 12);
-                }
-                if (raw.length === 12) {
-                    macField.value = raw.match(/.{1,2}/g).join(':');
-                }
+                macField.value = normalizeMacInput(macField.value);
             });
+            macField.addEventListener('blur', applyMacFieldFormat);
         }
 
         testButton.addEventListener('click', function () {
@@ -239,6 +257,7 @@
         });
 
         document.querySelector('.router-card form').addEventListener('submit', function (event) {
+            applyMacFieldFormat();
             if (!testPassed) {
                 event.preventDefault();
             }
