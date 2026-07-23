@@ -26,6 +26,12 @@ services:
         sync: false
       - key: DB_PASSWORD
         sync: false
+      - key: BACKUP_AUTO
+        value: "yes"
+      - key: BACKUP_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: BACKUP_TELEGRAM_CHAT_ID
+        sync: false
 
   - type: cron
     name: dyrsia-cron
@@ -80,3 +86,18 @@ services:
           type: web
           name: dyrsia-isp
           envVarKey: DB_PASSWORD
+      - key: BACKUP_AUTO
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: BACKUP_AUTO
+      - key: BACKUP_TELEGRAM_BOT_TOKEN
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: BACKUP_TELEGRAM_BOT_TOKEN
+      - key: BACKUP_TELEGRAM_CHAT_ID
+        fromService:
+          type: web
+          name: dyrsia-isp
+          envVarKey: BACKUP_TELEGRAM_CHAT_ID

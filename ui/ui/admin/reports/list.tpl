@@ -253,6 +253,23 @@ body.theme-light .ra-table th { background: #f8fafc; }
     color: var(--ra-text);
     vertical-align: middle;
 }
+.ra-table td:first-child,
+.ra-table th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--ra-card) !important;
+    color: var(--ra-text) !important;
+    box-shadow: 4px 0 8px rgba(2, 6, 23, 0.08);
+}
+.ra-table td:first-child strong,
+.ra-table th:first-child strong {
+    color: var(--ra-heading) !important;
+}
+body.theme-light .ra-table td:first-child,
+body.theme-light .ra-table th:first-child {
+    box-shadow: 4px 0 8px rgba(15, 23, 42, 0.06);
+}
 .ra-table tr:last-child td { border-bottom: 0; }
 .ra-table tr:hover td { background: rgba(37,99,235,0.04); }
 
@@ -456,7 +473,7 @@ body.theme-light .ra-pagination .pagination > li > span { background: #f8fafc !i
                     {if $d|@count gt 0}
                     {foreach $d as $ds}
                     <tr>
-                        <td><strong>{$ds.username}</strong></td>
+                        <td><strong>{$ds['username']|default:''|escape}</strong></td>
                         <td>{if $ds.fullname}{$ds.fullname}{else}—{/if}</td>
                         <td>{if $ds.address}{$ds.address}{else}—{/if}</td>
                         <td>{if $ds.phonenumber}{$ds.phonenumber}{else}—{/if}</td>

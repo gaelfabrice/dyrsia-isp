@@ -119,6 +119,7 @@ class WifiZoneOps
         self::runGenieacsSyncIfDue();
         self::runCustomerMonitorIfDue();
         self::runDailyLegacyCronIfDue();
+        self::runDailyTelegramBackupIfDue();
         self::processBackupJobs();
         self::alertCronHealth();
 
@@ -202,6 +203,24 @@ class WifiZoneOps
         echo "Daily legacy cron (data usage)…\n";
         exec(escapeshellarg($php) . ' ' . escapeshellarg($script) . ' 2>&1', $output, $code);
         touch($stamp);
+    }
+
+    public static function runDailyTelegramBackupIfDue()
+    {
+        global $UPLOAD_PATH;
+
+        if (!Message::isBackupAutoEnabled()) {
+            return;
+        }
+
+        $stamp = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'backup_telegram_last_run.txt';
+        if (is_file($stamp) && trim((string) file_get_contents($stamp)) === date('Y-m-d')) {
+            return;
+        }
+
+        echo "Daily Telegram DB backup…\n";
+        $result = WifiZoneBackup::runScheduledTelegramBackup(false);
+        echo json_encode($result) . "\n";
     }
 
     public static function processBackupJobs()

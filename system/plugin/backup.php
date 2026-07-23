@@ -153,6 +153,8 @@ function backup_add($is_CLi = false)
                                 . $e->getMessage()
                         );
                     }
+                } elseif (!empty($config['backup_telegram_upload'])) {
+                    backup_sendToTelegram($backupFile);
                 }
                 r2(U . 'plugin/backup_list', 's', Lang::T("Database backup created successfully."));
             } else {
@@ -466,6 +468,8 @@ function backup_cron(): void
                 // Cloud upload
                 if (isset($config['cloud_upload']) && $config['cloud_upload']) {
                     backup_uploadToCloud($latestBackupFile);
+                } elseif (!empty($config['backup_telegram_upload'])) {
+                    backup_sendToTelegram($latestBackupFile);
                 }
 
                 _log(Lang::T("$backupType backup completed successfully"));
@@ -650,50 +654,47 @@ function backup_uploadToCloud(string $filePath): void
     }
 
     // Send to Telegram if configured
-    if (!empty($config['telegram_bot']) && ($config['backup_telegram_upload'] ?? 0) == 1) {
-        $botToken = $config['telegram_bot'];
-        if (!empty($config['backup_telegram_chatId'])) {
-            $chatId = $config['backup_telegram_chatId'];
-        } elseif (!empty($config['telegram_target_id'])) {
-            $chatId = $config['telegram_target_id'];
-        }
-
-        // Create CURLFile object
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mimeType = finfo_file($finfo, $filePath);
-        $cFile = new \CURLFile($filePath, $mimeType, $fileName);
-
-        // Setup Telegram API request
-        $telegram_url = "https://api.telegram.org/bot$botToken/sendDocument";
-        $telegram_data = [
-            'chat_id' => $chatId,
-            'document' => $cFile,
-            'caption' => "Database Backup: $fileName"
-        ];
-
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $telegram_url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $telegram_data);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-
-        $response = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-
-        curl_close($ch);
-        finfo_close($finfo);
-
-        if ($status !== 200) {
-            _log(Lang::T("Telegram backup upload failed: ") . $error . " - " . $response);
-            sendTelegram(Lang::T("Failed to send backup file via Telegram"));
-        } else {
-            _log(Lang::T("Backup file sent via Telegram successfully"));
-            sendTelegram(Lang::T("Backup file sent via Telegram successfully"));
-        }
+    if (!empty($config['backup_telegram_upload'])) {
+        backup_sendToTelegram($filePath);
     }
+}
+
+function backup_sendToTelegram(string $filePath): void
+{
+    global $config;
+
+    if (!is_file($filePath)) {
+        throw new \RuntimeException("File not found: $filePath");
+    }
+
+    if (empty($config['backup_telegram_upload']) && !Message::isBackupAutoEnabled()) {
+        return;
+    }
+
+    $fileName = basename($filePath);
+    $chatId = trim((string) ($config['backup_telegram_chatId'] ?? ''));
+    if ($chatId === '') {
+        $chatId = null;
+    }
+
+    $sizeMb = round(filesize($filePath) / 1024 / 1024, 2);
+    if ($sizeMb > WifiZoneBackup::TELEGRAM_MAX_MB) {
+        _log(Lang::T('Telegram backup upload skipped: file too large') . " ({$sizeMb} MB)");
+        Message::sendTelegram(Lang::T('Backup file too large for Telegram') . " ({$sizeMb} MB): {$fileName}", $chatId);
+        return;
+    }
+
+    $caption = Lang::T('Database Backup') . ": {$fileName}\n" . date('Y-m-d H:i:s') . " — {$sizeMb} MB";
+    $response = Message::sendTelegramDocument($filePath, $caption, $chatId);
+
+    if (!Message::isTelegramSuccess($response)) {
+        _log(Lang::T('Telegram backup upload failed'));
+        Message::sendTelegram(Lang::T('Failed to send backup file via Telegram'));
+        return;
+    }
+
+    _log(Lang::T('Backup file sent via Telegram successfully'));
+    Message::sendTelegram(Lang::T('Backup file sent via Telegram successfully'));
 }
 function backup_upload_form(): void
 {

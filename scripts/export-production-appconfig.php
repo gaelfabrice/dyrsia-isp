@@ -28,6 +28,12 @@ $keys = [
     'telegram_target_id',
     'superadmin_telegram_bot',
     'superadmin_telegram_chat_id',
+    'backup_auto',
+    'backup_backup_time',
+    'backup_clear_old',
+    'backup_retain_count',
+    'backup_telegram_upload',
+    'backup_telegram_chatId',
 ];
 
 $out = [];

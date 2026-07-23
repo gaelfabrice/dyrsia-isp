@@ -264,6 +264,65 @@
         </div>
     </div>
 
+    {if $_admin['user_type'] eq 'SuperAdmin'}
+    <div class="wz-cc-card wz-visitor-card">
+        <div class="wz-cc-card-title">
+            <span><i class="fa fa-globe"></i> {Lang::T('Visitor Logs')}</span>
+            <span class="wz-visitor-stats">
+                {Lang::T('Visitors today')}: <strong>{$visitor_stats.today|default:0}</strong>
+                · {Lang::T('Humans')}: <span class="wz-badge-active">{$visitor_stats.humans_today|default:0}</span>
+                · {Lang::T('Bots')}: <span class="wz-badge-expired">{$visitor_stats.bots_today|default:0}</span>
+            </span>
+        </div>
+        {if $visitor_logs|@count > 0}
+        <div class="wz-visitor-table-wrap">
+            <table class="wz-voucher-table wz-visitor-table">
+                <thead>
+                    <tr>
+                        <th>{Lang::T('Time')}</th>
+                        <th>IP</th>
+                        <th>{Lang::T('Country')}</th>
+                        <th>{Lang::T('City')}</th>
+                        <th>{Lang::T('Visited link')}</th>
+                        <th>{Lang::T('Type')}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {foreach $visitor_logs as $visit}
+                    <tr>
+                        <td><span class="wz-kpi-sub">{$visit.time_ago|escape}</span></td>
+                        <td><code>{$visit.ip|escape}</code></td>
+                        <td>{$visit.country|default:'—'|escape}</td>
+                        <td>{$visit.city|default:'—'|escape}</td>
+                        <td class="wz-visitor-path" title="{$visit.visited_path|escape}">{$visit.visited_route|escape}</td>
+                        <td>
+                            {if $visit.visitor_type eq 'bot'}
+                            <span class="wz-badge-expired">{Lang::T('Bot')}</span>
+                            {else}
+                            <span class="wz-badge-active">{Lang::T('Visitor')}</span>
+                            {/if}
+                        </td>
+                    </tr>
+                    {/foreach}
+                </tbody>
+            </table>
+        </div>
+        <div class="wz-pagination">
+            {if $visitor_current_page > 1}<a class="wz-page-btn" href="{$dashboard_visitor_base_url}&visitor_page={$visitor_prev_page}&log_page={$dashboard_log_page|default:1}"><i class="fa fa-chevron-left"></i> Prev</a>{/if}
+            {foreach $visitor_pagination_pages as $page}
+            <a class="wz-page-btn {if $page.active}active{/if}" href="{$dashboard_visitor_base_url}&visitor_page={$page.num}&log_page={$dashboard_log_page|default:1}">{$page.num}</a>
+            {/foreach}
+            {if $visitor_current_page < $visitor_total_pages}<a class="wz-page-btn" href="{$dashboard_visitor_base_url}&visitor_page={$visitor_next_page}&log_page={$dashboard_log_page|default:1}">Next <i class="fa fa-chevron-right"></i></a>{/if}
+        </div>
+        <div class="wz-log-meta">
+            {$visitor_total_entries|default:0} entries · Page {$visitor_current_page|default:1} / {$visitor_total_pages|default:1}
+        </div>
+        {else}
+        <p class="wz-cc-empty">{Lang::T('No visitor logs yet')}</p>
+        {/if}
+    </div>
+    {/if}
+
     <div class="wz-cc-card">
         <div class="wz-cc-card-title"><i class="fa fa-history"></i> Activity Log</div>
         {if $activity_logs|@count > 0}
@@ -283,11 +342,11 @@
             </div>
             {/foreach}
             <div class="wz-pagination">
-                {if $current_page > 1}<a class="wz-page-btn" href="{$dashboard_log_base_url}&log_page={$prev_page}"><i class="fa fa-chevron-left"></i> Prev</a>{/if}
+                {if $current_page > 1}<a class="wz-page-btn" href="{$dashboard_log_base_url}&log_page={$prev_page}&visitor_page={$dashboard_visitor_page|default:1}"><i class="fa fa-chevron-left"></i> Prev</a>{/if}
                 {foreach $pagination_pages as $page}
-                <a class="wz-page-btn {if $page.active}active{/if}" href="{$dashboard_log_base_url}&log_page={$page.num}">{$page.num}</a>
+                <a class="wz-page-btn {if $page.active}active{/if}" href="{$dashboard_log_base_url}&log_page={$page.num}&visitor_page={$dashboard_visitor_page|default:1}">{$page.num}</a>
                 {/foreach}
-                {if $current_page < $total_pages}<a class="wz-page-btn" href="{$dashboard_log_base_url}&log_page={$next_page}">Next <i class="fa fa-chevron-right"></i></a>{/if}
+                {if $current_page < $total_pages}<a class="wz-page-btn" href="{$dashboard_log_base_url}&log_page={$next_page}&visitor_page={$dashboard_visitor_page|default:1}">Next <i class="fa fa-chevron-right"></i></a>{/if}
             </div>
             <div class="wz-log-meta">
                 {$total_entries|default:0} entries · Page {$current_page|default:1} / {$total_pages|default:1}

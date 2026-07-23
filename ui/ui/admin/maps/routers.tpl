@@ -1,86 +1,78 @@
 {include file="sections/header.tpl"}
 
 
-<form id="site-search" method="post" action="{Text::url('')}routers/maps">
-    <input type="hidden" name="_route" value="routers/maps">
+<form id="site-search" method="get" action="{Text::url('maps/routers')}">
+    <input type="hidden" name="_route" value="maps/routers">
     <div class="input-group">
         <div class="input-group-addon">
             <span class="fa fa-search"></span>
         </div>
-        <input type="text" name="name" class="form-control" value="{$name}" placeholder="{Lang::T('Search')}...">
+        <input type="text" name="name" class="form-control" value="{$name|escape}" placeholder="{Lang::T('Search')}...">
         <div class="input-group-btn">
             <button class="btn btn-success" type="submit">{Lang::T('Search')}</button>
         </div>
     </div>
 </form>
 
-<!-- Map container div -->
-<div id="map" class="well" style="width: '100%'; height: 70vh; margin: 20px auto"></div>
-
-{include file="pagination.tpl"}
+<div id="map" class="well" style="width: 100%; height: 70vh; margin: 20px auto"></div>
 
 {literal}
-    <script>
-        function getLocation() {
-            if (window.location.protocol == "https:" && navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(showPosition);
-            } else {
-                setupMap(51.505, -0.09);
-            }
-        }
+<script>
+(function () {
+    var routers = {/literal}{$d|json_encode}{literal};
+    var mapCenter = {/literal}{$map_center|json_encode}{literal};
+    var routerEditUrl = '{/literal}{Text::url('routers/edit/')}{literal}';
 
-        function showPosition(position) {
-            setupMap(position.coords.latitude, position.coords.longitude);
-        }
-
-        function setupMap(lat, lon) {
-            var map = L.map('map').setView([lat, lon], 9);
-            var group = L.featureGroup().addTo(map);
-
-            var routers = {/literal}{$d|json_encode}{literal} || [];
-
-            L.tileLayer('https://{s}.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga', {
-            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-                maxZoom: 20
+    function initMap() {
+        var map = L.map('map');
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         }).addTo(map);
 
-        routers.forEach(function(router) {
-            var name = router.name;
-            var info = router.description;
-            var coordinates = router.coordinates;
-            if (!coordinates) {
+        var group = L.featureGroup().addTo(map);
+
+        routers.forEach(function (router) {
+            var lat = parseFloat(router.lat);
+            var lng = parseFloat(router.lng);
+            if (isNaN(lat) || isNaN(lng)) {
                 return;
             }
-            // Create a popup for the marker
-            var popupContent = "<strong>Name</strong>: " + name + "<br>" +
-                "<strong>Info</strong>: " + info + "<br>" +
-                "<a href='{/literal}{Text::url('routers/edit/')}{literal}"+ router.id +"'>More Info</a> &bull; " +
-                "<a href='https://www.google.com/maps/dir//" + coordinates +
-                "' target='maps'>Get Direction</a><br>";
 
-            // Add marker to map
-            if (router.enabled == 1) {
-                var circle = L.circle(coordinates.split(","), router.coverage * 1, {
-                    color: 'blue',
-                    fillOpacity: 0.1
-                }).addTo(map);
-            } else {
-                var circle = L.circle(coordinates.split(","), router.coverage * 1, {
-                    color: 'red',
+            var coordsText = lat + ',' + lng;
+            var popupContent =
+                '<strong>{/literal}{Lang::T('Name')}{literal}</strong>: ' + (router.name || '-') + '<br>' +
+                '<strong>{/literal}{Lang::T('Description')}{literal}</strong>: ' + (router.description || '-') + '<br>' +
+                '<a href="' + routerEditUrl + router.id + '">{/literal}{Lang::T('Edit')}{literal}</a> &bull; ' +
+                '<a href="https://www.google.com/maps/dir//' + coordsText + '" target="_blank" rel="noopener">{/literal}{Lang::T('Get_Directions')}{literal}</a>';
+
+            var color = router.enabled == 1 ? 'blue' : 'red';
+            if (router.coverage > 0) {
+                L.circle([lat, lng], {
+                    radius: router.coverage * 1,
+                    color: color,
                     fillOpacity: 0.1
                 }).addTo(map);
             }
-            var marker = L.marker(coordinates.split(",")).addTo(group);
-            marker.bindTooltip(name, { permanent: true }).bindPopup(popupContent);
+
+            L.marker([lat, lng]).addTo(group)
+                .bindTooltip(router.name || ('#' + router.id), { permanent: routers.length <= 20 })
+                .bindPopup(popupContent);
         });
 
         if (group.getLayers().length > 0) {
-            map.fitBounds(group.getBounds());
+            map.fitBounds(group.getBounds().pad(0.15));
+        } else {
+            map.setView([mapCenter.lat, mapCenter.lng], mapCenter.zoom || 6);
         }
-        }
-        window.onload = function() {
-            getLocation();
-        }
-    </script>
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initMap);
+    } else {
+        initMap();
+    }
+})();
+</script>
 {/literal}
 {include file="sections/footer.tpl"}

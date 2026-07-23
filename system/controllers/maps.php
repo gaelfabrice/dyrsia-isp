@@ -29,63 +29,84 @@ function map_scoped_router_query($admin)
 
 switch ($action) {
     case 'customer':
-        if(!empty(_req('search'))){
-            $search = _req('search');
-            $query = ORM::for_table('tbl_customers')->whereRaw("coordinates != '' AND fullname LIKE '%$search%' OR username LIKE '%$search%' OR email LIKE '%$search%' OR phonenumber LIKE '%$search%'")->order_by_desc('fullname');
-            $c = Paginator::findMany($query, ['search' => $search], 50);
-        }else{
-            $query = ORM::for_table('tbl_customers')->where_not_equal('coordinates','');
-            $c = Paginator::findMany($query, ['search'=>''], 50);
-        }
-        $customerData = [];
+        $search = trim((string) _req('search'));
+        $mapData = MapGeo::buildCustomerMapData($admin, $search);
 
-        foreach ($c as $customer) {
-            if (!empty($customer->coordinates)) {
-                $customerData[] = [
-                    'id' => $customer->id,
-                    'name' => $customer->fullname,
-                    'balance' => $customer->balance,
-                    'address' => $customer->address,
-                    'direction' => $customer->coordinates,
-                    'info' => Lang::T("Username") . ": " . $customer->username .  " - "  . Lang::T("Full Name") . ": " . $customer->fullname . " - "  . Lang::T("Email") . ": " . $customer->email . " - "  . Lang::T("Phone") . ": " . $customer->phonenumber . " - "  . Lang::T("Service Type") . ": " . $customer->service_type,
-                    'coordinates' => '[' . $customer->coordinates . ']',
-                ];
-            }
-        }
         $ui->assign('search', $search);
-        $ui->assign('customers', $customerData);
+        $ui->assign('map_points', $mapData['points']);
+        $ui->assign('map_center', $mapData['center']);
+        $ui->assign('customers_without_coords', $mapData['without_coords']);
+        $ui->assign('map_stats', $mapData['stats']);
         $ui->assign('_title', Lang::T('Customer Geo Location Information'));
         $ui->display('admin/maps/customers.tpl');
         break;
+
     case 'routers':
-            $name = _post('name');
-            $query = map_scoped_router_query($admin)->where_not_equal('coordinates', '')->order_by_desc('id');
-            $query->selects(['id', 'name', 'coordinates', 'description', 'coverage', 'enabled']);
-            if ($name != '') {
-                $query->where_like('name', '%' . $name . '%');
+        $name = trim((string) _req('name'));
+        $query = map_scoped_router_query($admin)->where_not_equal('coordinates', '')->order_by_desc('id');
+        $query->selects(['id', 'name', 'coordinates', 'description', 'coverage', 'enabled']);
+        if ($name !== '') {
+            $query->where_like('name', '%' . $name . '%');
+        }
+        $routers = [];
+        foreach ($query->find_many() as $router) {
+            $coords = MapGeo::parseCoordinates($router->coordinates);
+            if (!$coords) {
+                continue;
             }
-            $d = Paginator::findMany($query, ['name' => $name], '20', '', true);
-            $ui->assign('name', $name);
-            $ui->assign('d', $d);
-            $ui->assign('_title', Lang::T('Routers Geo Location Information'));
-            $ui->display('admin/maps/routers.tpl');
-            break;
-    /*   ODPs Geo Location  */
-    /*  Added by ItsLiLxyzx  */
+            $routers[] = [
+                'id' => (int) $router->id,
+                'name' => (string) $router->name,
+                'description' => (string) $router->description,
+                'coverage' => (float) $router->coverage,
+                'enabled' => (int) $router->enabled,
+                'lat' => $coords['lat'],
+                'lng' => $coords['lng'],
+                'coordinates' => $coords['lat'] . ',' . $coords['lng'],
+            ];
+        }
+
+        $ui->assign('name', $name);
+        $ui->assign('d', $routers);
+        $ui->assign('map_center', MapGeo::centerFromPoints($routers));
+        $ui->assign('_title', Lang::T('Routers Geo Location Information'));
+        $ui->display('admin/maps/routers.tpl');
+        break;
+
     case 'odp':
-            $name = _post('name');
-            $query = ORM::for_table('tbl_odps')->where_not_equal('coordinates', '')->order_by_desc('id');
-            $query->selects(['id', 'name', 'port_amount', 'coordinates', 'address', 'attenuation', 'coverage']);
-            if ($name != '') {
-                $query->where_like('name', '%' . $name . '%');
+        $name = trim((string) _req('name'));
+        $query = ORM::for_table('tbl_odps')->where_not_equal('coordinates', '')->order_by_desc('id');
+        $query->selects(['id', 'name', 'port_amount', 'coordinates', 'address', 'attenuation', 'coverage']);
+        if ($name !== '') {
+            $query->where_like('name', '%' . $name . '%');
+        }
+        $odps = [];
+        foreach ($query->find_many() as $odp) {
+            $coords = MapGeo::parseCoordinates($odp->coordinates);
+            if (!$coords) {
+                continue;
             }
-            $d = Paginator::findMany($query, ['name' => $name], '20', '', true);
-            $ui->assign('name', $name);
-            $ui->assign('d', $d);
-            $ui->assign('_title', Lang::T('ODP Geo Location Information'));
-            $ui->display('admin/maps/odps.tpl');
-            break;
+            $odps[] = [
+                'id' => (int) $odp->id,
+                'name' => (string) $odp->name,
+                'port_amount' => (int) $odp->port_amount,
+                'attenuation' => (string) $odp->attenuation,
+                'address' => (string) $odp->address,
+                'coverage' => (float) $odp->coverage,
+                'lat' => $coords['lat'],
+                'lng' => $coords['lng'],
+                'coordinates' => $coords['lat'] . ',' . $coords['lng'],
+            ];
+        }
+
+        $ui->assign('name', $name);
+        $ui->assign('d', $odps);
+        $ui->assign('map_center', MapGeo::centerFromPoints($odps));
+        $ui->assign('_title', Lang::T('ODP Geo Location Information'));
+        $ui->display('admin/maps/odps.tpl');
+        break;
+
     default:
-        r2(getUrl('map/customer'), 'e', 'action not defined');
+        r2(getUrl('maps/customer'), 'e', 'action not defined');
         break;
 }

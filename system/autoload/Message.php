@@ -48,6 +48,110 @@ class Message
         return is_array($data) && !empty($data['ok']);
     }
 
+    /**
+     * Credentials for daily DB backup delivery (env overrides app config).
+     *
+     * @return array{bot:string,chat:string}
+     */
+    public static function resolveBackupTelegramCredentials()
+    {
+        global $config;
+
+        $bot = trim((string) (getenv('BACKUP_TELEGRAM_BOT_TOKEN') ?: ''));
+        if ($bot === '') {
+            $bot = trim((string) ($config['telegram_bot'] ?? ''));
+        }
+
+        $chat = trim((string) (getenv('BACKUP_TELEGRAM_CHAT_ID') ?: ''));
+        if ($chat === '') {
+            $chat = trim((string) ($config['backup_telegram_chatId'] ?? ''));
+        }
+        if ($chat === '') {
+            $chat = trim((string) ($config['telegram_target_id'] ?? ''));
+        }
+
+        return ['bot' => $bot, 'chat' => $chat];
+    }
+
+    public static function isBackupAutoEnabled()
+    {
+        global $config;
+
+        $env = strtolower(trim((string) (getenv('BACKUP_AUTO') ?: '')));
+        if (in_array($env, ['1', 'yes', 'true', 'on'], true)) {
+            return true;
+        }
+
+        return !empty($config['backup_auto']);
+    }
+
+    /**
+     * Send a file to Telegram (sendDocument API).
+     */
+    public static function sendTelegramDocument($filePath, $caption = '', $chatId = null, $botToken = null)
+    {
+        if (!is_file($filePath)) {
+            return false;
+        }
+
+        $resolved = self::resolveBackupTelegramCredentials();
+        if ($botToken === null || $botToken === '') {
+            $botToken = $resolved['bot'];
+        }
+        if ($chatId === null || $chatId === '') {
+            $chatId = $resolved['chat'];
+        }
+
+        if ($botToken === '' || $chatId === '') {
+            return false;
+        }
+
+        $fileName = basename($filePath);
+        $mimeType = 'application/octet-stream';
+        if (function_exists('finfo_open')) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo) {
+                $detected = finfo_file($finfo, $filePath);
+                if (is_string($detected) && $detected !== '') {
+                    $mimeType = $detected;
+                }
+                finfo_close($finfo);
+            }
+        }
+
+        $cFile = new \CURLFile($filePath, $mimeType, $fileName);
+        $payload = [
+            'chat_id' => $chatId,
+            'document' => $cFile,
+        ];
+        if ($caption !== '') {
+            $payload['caption'] = $caption;
+        }
+
+        $ch = curl_init('https://api.telegram.org/bot' . $botToken . '/sendDocument');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_CONNECTTIMEOUT => 30,
+            CURLOPT_TIMEOUT => 600,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+
+        $response = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false || $status !== 200) {
+            error_log('Message::sendTelegramDocument failed (HTTP ' . $status . '): ' . $error . ' ' . $response);
+            return false;
+        }
+
+        return $response;
+    }
+
 
     public static function sendSMS($phone, $txt)
     {

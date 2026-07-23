@@ -28,6 +28,9 @@ Voir `.env.example` et `config.sample.php` :
 | `APP_KEY` | Cookies / signatures |
 | `CRON_TOKEN` | Appel HTTP sécurisé de `cron.php` |
 | `HEALTH_TOKEN` | `/health.php` monitoring |
+| `BACKUP_AUTO` | `yes` — sauvegarde MySQL quotidienne |
+| `BACKUP_TELEGRAM_BOT_TOKEN` | Bot Telegram pour envoi du dump |
+| `BACKUP_TELEGRAM_CHAT_ID` | Chat / groupe de destination |
 | `DB_*` | Connexion MySQL |
 | `APP_TIMEZONE` | `Africa/Douala` (GenieACS cron) |
 

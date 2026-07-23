@@ -1,86 +1,79 @@
 {include file="sections/header.tpl"}
 
 
-<form id="site-search" method="post" action="{Text::url('')}odp/maps">
-    <input type="hidden" name="_route" value="odp/maps">
+<form id="site-search" method="get" action="{Text::url('maps/odp')}">
+    <input type="hidden" name="_route" value="maps/odp">
     <div class="input-group">
         <div class="input-group-addon">
             <span class="fa fa-search"></span>
         </div>
-        <input type="text" name="name" class="form-control" value="{$name}" placeholder="{Lang::T('Search')}...">
+        <input type="text" name="name" class="form-control" value="{$name|escape}" placeholder="{Lang::T('Search')}...">
         <div class="input-group-btn">
             <button class="btn btn-success" type="submit">{Lang::T('Search')}</button>
         </div>
     </div>
 </form>
 
-<!-- Map container div -->
-<div id="map" class="well" style="width: '100%'; height: 70vh; margin: 20px auto"></div>
-
-{include file="pagination.tpl"}
+<div id="map" class="well" style="width: 100%; height: 70vh; margin: 20px auto"></div>
 
 {literal}
-    <script>
-        function getLocation() {
-            if (window.location.protocol == "https:" && navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(showPosition);
-            } else {
-                setupMap(51.505, -0.09);
-            }
-        }
+<script>
+(function () {
+    var odps = {/literal}{$d|json_encode}{literal};
+    var mapCenter = {/literal}{$map_center|json_encode}{literal};
+    var odpEditUrl = '{/literal}{Text::url('odp/edit/')}{literal}';
 
-        function showPosition(position) {
-            setupMap(position.coords.latitude, position.coords.longitude);
-        }
-
-        function setupMap(lat, lon) {
-            var map = L.map('map').setView([lat, lon], 9);
-            var group = L.featureGroup().addTo(map);
-
-            var odps = {/literal}{$d|json_encode}{literal} || [];
-
-            L.tileLayer('https://{s}.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga', {
-            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-                maxZoom: 20
+    function initMap() {
+        var map = L.map('map');
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         }).addTo(map);
 
-        odps.forEach(function(odp) {
-            var name = odp.name;
-            var port_amount = odp.port_amount;
-            var attenuation = odp.attenuation;
-            var coordinates = odp.coordinates;
-            var address = odp.address;
-            var coverage = odp.coverage;
-            if (!coordinates) {
+        var group = L.featureGroup().addTo(map);
+
+        odps.forEach(function (odp) {
+            var lat = parseFloat(odp.lat);
+            var lng = parseFloat(odp.lng);
+            if (isNaN(lat) || isNaN(lng)) {
                 return;
             }
-            // Create a popup for the marker
-            var popupContent = "<strong>Name</strong>: " + name + "<br>" +
-                "<strong>Port Amount</strong>: " + port_amount + "<br>" +
-                "<strong>Attenuation</strong>: " + attenuation + "<br>" +
-                "<strong>Address</strong>: " + address + "<br>" +
-                "<strong>Coverage</strong>: " + coverage + " meters<br>" +
-                "<strong>Coordinates</strong>: " + coordinates + "<br>" +
-                "<a href='{/literal}{Text::url('odp/edit/')}{literal}"+ odp.id +"'>More Info</a> &bull; " +
-                "<a href='https://www.google.com/maps/dir//" + coordinates +
-                "' target='maps'>Get Direction</a><br>";
 
-            var circle = L.circle(coordinates.split(","), odp.coverage * 1, {
-                color: 'blue',
-                fillOpacity: 0.1
-            }).addTo(map);
+            var coordsText = lat + ',' + lng;
+            var popupContent =
+                '<strong>{/literal}{Lang::T('Name')}{literal}</strong>: ' + (odp.name || '-') + '<br>' +
+                '<strong>{/literal}{Lang::T('Port_Amount')}{literal}</strong>: ' + (odp.port_amount || '-') + '<br>' +
+                '<strong>{/literal}{Lang::T('Address')}{literal}</strong>: ' + (odp.address || '-') + '<br>' +
+                '<strong>{/literal}{Lang::T('Coverage')}{literal}</strong>: ' + (odp.coverage || '0') + ' m<br>' +
+                '<a href="' + odpEditUrl + odp.id + '">{/literal}{Lang::T('Edit')}{literal}</a> &bull; ' +
+                '<a href="https://www.google.com/maps/dir//' + coordsText + '" target="_blank" rel="noopener">{/literal}{Lang::T('Get_Directions')}{literal}</a>';
 
-            var marker = L.marker(coordinates.split(",")).addTo(group);
-            marker.bindTooltip(name, { permanent: true }).bindPopup(popupContent);
+            if (odp.coverage > 0) {
+                L.circle([lat, lng], {
+                    radius: odp.coverage * 1,
+                    color: 'blue',
+                    fillOpacity: 0.1
+                }).addTo(map);
+            }
+
+            L.marker([lat, lng]).addTo(group)
+                .bindTooltip(odp.name || ('#' + odp.id), { permanent: odps.length <= 20 })
+                .bindPopup(popupContent);
         });
 
         if (group.getLayers().length > 0) {
-            map.fitBounds(group.getBounds());
+            map.fitBounds(group.getBounds().pad(0.15));
+        } else {
+            map.setView([mapCenter.lat, mapCenter.lng], mapCenter.zoom || 6);
         }
-        }
-        window.onload = function() {
-            getLocation();
-        }
-    </script>
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initMap);
+    } else {
+        initMap();
+    }
+})();
+</script>
 {/literal}
 {include file="sections/footer.tpl"}

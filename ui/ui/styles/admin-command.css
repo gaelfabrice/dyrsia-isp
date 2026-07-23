@@ -718,3 +718,29 @@ body.wz-command.theme-light .wz-log-message { color: #334155; }
     body.wz-command:not(.sidebar-open) .pull-right-container,
     body.wz-command:not(.sidebar-open) .wz-brand-text { display: none !important; }
 }
+
+.wz-visitor-stats {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--wz-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+.wz-visitor-table-wrap {
+    overflow-x: auto;
+}
+.wz-visitor-table code {
+    font-size: 12px;
+    background: rgba(30, 41, 59, 0.45);
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+.wz-visitor-path {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+}

@@ -138,6 +138,10 @@ if (!$isBackgroundRequest && isset($_SESSION['notify'])) {
     unset($_SESSION['ntype']);
 }
 
+if (class_exists('VisitorLog')) {
+    VisitorLog::maybeRecord($routes, $isBackgroundRequest);
+}
+
 Tenant::restoreFromSession();
 $currentTenant = Tenant::current();
 Tenant::applyLocaleConfig($currentTenant);

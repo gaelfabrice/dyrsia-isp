@@ -139,8 +139,10 @@ $ui->assign('current_date', $current_date);
 $ui->assign('tipeUser', $tipeUser);
 
 $logPage = isset($_GET['log_page']) ? max((int) $_GET['log_page'], 1) : 1;
+$visitorPage = isset($_GET['visitor_page']) ? max((int) $_GET['visitor_page'], 1) : 1;
 $command = DashboardCommand::gather($admin);
 $activity = DashboardCommand::activityLogs($admin, $logPage, 10);
+$visitorFeed = VisitorLog::dashboardFeed($admin, $visitorPage, 15);
 foreach ($command as $key => $value) {
     $ui->assign($key, $value);
 }
@@ -148,6 +150,12 @@ $ui->assign('dashboard_log_base_url', getUrl('dashboard'));
 foreach ($activity as $key => $value) {
     $ui->assign($key, $value);
 }
+foreach ($visitorFeed as $key => $value) {
+    $ui->assign($key, $value);
+}
+$ui->assign('dashboard_visitor_base_url', getUrl('dashboard'));
+$ui->assign('dashboard_log_page', $logPage);
+$ui->assign('dashboard_visitor_page', $visitorPage);
 $versionFile = dirname(__DIR__, 2) . '/version.json';
 $appVersion = '2025.3.20';
 if (is_readable($versionFile)) {
