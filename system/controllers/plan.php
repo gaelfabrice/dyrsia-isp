@@ -65,6 +65,25 @@ function plan_list_apply_filters($query, $admin, $search, $router, $plan, $type,
     return $query;
 }
 
+function plan_assign_recharge_payment_ui($ui, $admin, $planType = '')
+{
+    PlanRechargePayment::assignRechargeUi($ui, $admin, $planType);
+}
+
+function plan_json_response(array $payload, int $statusCode = 200): void
+{
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    if (!headers_sent()) {
+        http_response_code($statusCode);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 function plan_list_base_query($admin, $search, $router, $plan, $type, $status = null, $withSelect = true)
 {
     $query = ORM::for_table('tbl_user_recharges')
@@ -165,12 +184,7 @@ switch ($action) {
         if (isset($routes['2']) && !empty($routes['2'])) {
             $ui->assign('cust', ORM::for_table('tbl_customers')->find_one($routes['2']));
         }
-        $usings = explode(',', $config['payment_usings']);
-        $usings = array_filter(array_unique($usings));
-        if (count($usings) == 0) {
-            $usings[] = Lang::T('Cash');
-        }
-        $ui->assign('usings', $usings);
+        plan_assign_recharge_payment_ui($ui, $admin);
         run_hook('view_recharge'); #HOOK
         $ui->display('admin/plan/recharge.tpl');
         break;
@@ -183,6 +197,7 @@ switch ($action) {
         $server = _post('server');
         $planId = _post('plan');
         $using = _post('using');
+        $planType = _post('plan_type');
 
         $msg = '';
         if ($id_customer == '' or $server == '' or $planId == '' or $using == '') {
@@ -190,6 +205,16 @@ switch ($action) {
         }
 
         if ($msg == '') {
+            $planRow = ORM::for_table('tbl_plans')->find_one($planId);
+            if ($planRow) {
+                $planType = (string) $planRow['type'];
+            }
+            try {
+                PlanRechargePayment::assertPppoePaymentAllowed($using, $admin['user_type'], $planType);
+            } catch (InvalidArgumentException $e) {
+                r2(getUrl('plan/recharge'), 'e', $e->getMessage());
+            }
+
             $gateway = 'Recharge';
             $channel = $admin['fullname'];
             $cust = User::_info($id_customer);
@@ -235,15 +260,20 @@ switch ($action) {
                 $zero = 1;
                 $gateway = 'Recharge Zero';
             }
-            $usings = explode(',', $config['payment_usings']);
-            $usings = array_filter(array_unique($usings));
-            if (count($usings) == 0) {
-                $usings[] = Lang::T('Cash');
+            if ($using === PlanRechargePayment::METHOD_CASH) {
+                $gateway = 'Cash';
             }
+            if (PlanRechargePayment::isMobileMoneyMethod($using)) {
+                if (!MobileMoneyGateway::isConfigured()) {
+                    r2(getUrl('plan/recharge'), 'e', Lang::T('Payment gateway not configured. Please contact admin'));
+                }
+                $gateway = PlanRechargePayment::gatewayLabel();
+            }
+
+            plan_assign_recharge_payment_ui($ui, $admin, $planType);
             if ($tax_enable === 'yes') {
                 $ui->assign('tax', $tax);
             }
-            $ui->assign('usings', $usings);
             $ui->assign('bills', $bills);
             $ui->assign('add_cost', $add_cost);
             $ui->assign('cust', $cust);
@@ -253,10 +283,51 @@ switch ($action) {
             $ui->assign('using', $using);
             $ui->assign('plan', $plan);
             $ui->assign('add_inv', $add_inv);
+            $ui->assign('recharge_total', $using === 'zero' ? 0 : $total_cost);
+            $ui->assign('is_mobile_money_recharge', PlanRechargePayment::isMobileMoneyMethod($using) && strtoupper((string) $planType) === 'PPPOE');
+            $ui->assign('csrf_token', Csrf::generateAndStoreToken());
             $ui->display('admin/plan/recharge-confirm.tpl');
         } else {
             r2(getUrl('plan/recharge'), 'e', $msg);
         }
+        break;
+
+    case 'recharge-momo-collect':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Agent', 'Sales'])) {
+            plan_json_response(['ok' => false, 'message' => Lang::T('You do not have permission to access this page')], 403);
+        }
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            plan_json_response(['ok' => false, 'message' => Lang::T('Invalid or Expired CSRF Token') . '.'], 403);
+        }
+        Csrf::generateAndStoreToken();
+
+        $id_customer = (int) _post('id_customer');
+        $server = trim(_post('server'));
+        $planId = (int) _post('plan');
+        $phone = trim(_post('phone'));
+
+        try {
+            $result = PlanRechargePayment::collectOrResumePayment($admin, $id_customer, $planId, $server, $phone);
+            if (!empty($result['ok']) && !empty($result['status']) && $result['status'] === 'paid') {
+                plan_json_response($result, 200);
+            }
+            if (!empty($result['pending'])) {
+                plan_json_response($result, 200);
+            }
+            plan_json_response($result, !empty($result['ok']) ? 200 : 422);
+        } catch (Throwable $e) {
+            plan_json_response(['ok' => false, 'message' => $e->getMessage()], 422);
+        }
+        break;
+
+    case 'recharge-momo-status':
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Agent', 'Sales'])) {
+            plan_json_response(['ok' => false, 'message' => Lang::T('You do not have permission to access this page')], 403);
+        }
+        $paymentId = (int) _get('payment_id');
+        $result = PlanRechargePayment::checkMobileStatus($paymentId, $admin);
+        plan_json_response($result, 200);
         break;
 
     case 'recharge-post':
@@ -286,8 +357,24 @@ switch ($action) {
             $msg .= Lang::T('All field is required') . '<br>';
         }
 
+        if (PlanRechargePayment::isMobileMoneyMethod($using)) {
+            r2(getUrl('plan/recharge'), 'e', Lang::T('Use the Mobile Money payment modal to complete this recharge.'));
+        }
+
         if ($msg == '') {
+            $planRow = ORM::for_table('tbl_plans')->find_one($planId);
+            if ($planRow) {
+                try {
+                    PlanRechargePayment::assertPppoePaymentAllowed($using, $admin['user_type'], (string) $planRow['type']);
+                } catch (InvalidArgumentException $e) {
+                    r2(getUrl('plan/recharge'), 'e', $e->getMessage());
+                }
+            }
+
             $gateway = ucwords($using);
+            if ($using === PlanRechargePayment::METHOD_CASH) {
+                $gateway = 'Cash';
+            }
             $channel = $admin['fullname'];
             $cust = User::_info($id_customer);
             list($bills, $add_cost) = User::getBills($id_customer);
@@ -332,7 +419,7 @@ switch ($action) {
                 $gateway = 'Recharge Zero';
             }
             
-            // ===== Admin Wallet Balance Check =====
+            // ===== Admin Wallet Balance Check (cash / zero — not Mobile Money) =====
 $current_admin_id = $admin['id'];
 
 if ($admin['user_type'] != 'SuperAdmin') {

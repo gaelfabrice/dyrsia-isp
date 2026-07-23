@@ -73,7 +73,21 @@ switch ($action) {
         die();
     case 'server':
         $d = autoload_scoped_router_query($admin)->where('enabled', '1')->find_many();
+        $jenis = trim((string) (_post('jenis') ?: ''));
+        $showRadius = !empty($config['radius_enable']);
+        if ($showRadius) {
+            $radiusPlans = ORM::for_table('tbl_plans')->where('is_radius', 1);
+            if ($jenis !== '') {
+                $radiusPlans->where('type', $jenis);
+            }
+            if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'], true)) {
+                $rootId = !empty($admin['root']) ? (int) $admin['root'] : (int) $admin['id'];
+                $radiusPlans->where('admin_id', $rootId);
+            }
+            $showRadius = (int) $radiusPlans->count() > 0;
+        }
         $ui->assign('d', $d);
+        $ui->assign('show_radius', $showRadius);
 
         $ui->display('admin/autoload/server.tpl');
         break;

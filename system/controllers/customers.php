@@ -463,7 +463,13 @@ switch ($action) {
                 $tax = 0;
             }
             list($bills, $add_cost) = User::getBills($id_customer);
-            if ($using == 'balance' && $config['enable_balance'] == 'yes') {
+            $total_cost = $plan['price'] + $add_cost + $tax;
+            $planType = strtoupper((string) ($plan['type'] ?? ''));
+            $using = ($planType === 'PPPOE')
+                ? PlanRechargePayment::defaultPppoeUsingForAdmin($admin['user_type'])
+                : PlanRechargePayment::METHOD_CASH;
+
+            if ($using === 'balance' && $config['enable_balance'] == 'yes') {
                 if (!$cust) {
                     r2(getUrl('plan/recharge'), 'e', Lang::T('Customer not found'));
                 }
@@ -479,16 +485,20 @@ switch ($action) {
                 $zero = 1;
                 $gateway = 'Recharge Zero';
             }
-            $usings = explode(',', $config['payment_usings']);
-            $usings = array_filter(array_unique($usings));
-            if (count($usings) == 0) {
-                $usings[] = Lang::T('Cash');
+            if ($using === PlanRechargePayment::METHOD_CASH) {
+                $gateway = 'Cash';
+            }
+            if (PlanRechargePayment::isMobileMoneyMethod($using)) {
+                if (!MobileMoneyGateway::isConfigured()) {
+                    r2(getUrl('customers/view/') . $id_customer, 'e', Lang::T('Payment gateway not configured. Please contact admin'));
+                }
+                $gateway = PlanRechargePayment::gatewayLabel();
             }
             $abills = User::getAttributes("Bill");
             if ($tax_enable === 'yes') {
                 $ui->assign('tax', $tax);
             }
-            $ui->assign('usings', $usings);
+            PlanRechargePayment::assignRechargeUi($ui, $admin, $planType);
             $ui->assign('abills', $abills);
             $ui->assign('bills', $bills);
             $ui->assign('add_cost', $add_cost);
@@ -498,15 +508,16 @@ switch ($action) {
             $ui->assign('server', $b['routers']);
             $ui->assign('plan', $plan);
 			$ui->assign('add_inv', $add_inv);
-			// এখানে লজিকটি দিন (confirm পেজ দেখানোর ঠিক আগে)
-if ($admin['user_type'] != 'SuperAdmin') { // সুপার অ্যাডমিনের ব্যালেন্স কাটার দরকার না থাকলে
+            $ui->assign('using', $using);
+            $ui->assign('recharge_total', PlanRechargePayment::isMobileMoneyMethod($using) ? $total_cost : ($using === 'zero' ? 0 : $total_cost));
+            $ui->assign('is_mobile_money_recharge', PlanRechargePayment::isMobileMoneyMethod($using) && $planType === 'PPPOE');
+
+            if (!PlanRechargePayment::isMobileMoneyMethod($using) && $admin['user_type'] != 'SuperAdmin') {
     $admin_wallet = ORM::for_table('admin_wallet')->where('admin_id', $admin['id'])->find_one();
     if ($admin_wallet) {
         if ($admin_wallet->balance < $plan['price']) {
-            // ব্যালেন্স কম থাকলে রিচার্জ পেজেই আটকে দিবে, কনফার্ম করতে দিবে না
             r2(getUrl('customers/view/') . $id_customer, 'e', 'Admin Wallet Insufficient Balance. Current: ' . $admin_wallet->balance);
         }
-        // টাকা কাটার আসল কোডটি রিচার্জ সাকসেসফুল হওয়ার ফাংশনে থাকা উচিত
     } else {
         r2(getUrl('customers/view/') . $id_customer, 'e', 'Admin Wallet not found!');
     }

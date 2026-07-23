@@ -1700,6 +1700,9 @@
     "Your_account_has_been_approved": "Your account has been approved",
     "Request_approved_and_customer_created": "Request approved and customer created",
     "View_report": "View report",
+    "Recent Payments": "Recent Payments",
+    "Payment": "Payment",
+    "No payments recorded yet": "No payments recorded yet",
     "Rate_must_be_a_number": "Rate must be a number",
     "System": "System",
     "PPPoE system EXPIRE plan cannot be deleted": "The PPPoE EXPIRE system plan cannot be deleted",
@@ -1747,5 +1750,7 @@
     "Edit_Expiry": "Edit Expiry",
     "Adjust_Expiry": "Adjust Expiry",
     "Add_or_subtract_days_from_the_current_expiry__Leave_empty_to_use_the_date_above_": "Add or subtract days from the current expiry. Leave empty to use the date above.",
-    "Data_Not_Found": "Data Not Found"
+    "Data_Not_Found": "Data Not Found",
+    "Mobile_Money": "Mobile Money",
+    "Please_confirm_the_payment_on_your_mobile_device__then_click_Check_Status_": "Please confirm the payment on your mobile device, then click Check Status."
 }

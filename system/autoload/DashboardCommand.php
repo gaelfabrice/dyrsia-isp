@@ -96,7 +96,70 @@ class DashboardCommand
             'data_usage' => $dataUsage,
             'cron_last_run' => $cronLastRun,
             'cron_stale' => $cronStale,
+            'recent_payments' => self::recentPayments($admin)['recent_payments'],
         ];
+    }
+
+    /** @return array{recent_payments: list<array<string, mixed>>} */
+    public static function recentPayments($admin, int $limit = 10): array
+    {
+        $isScoped = ($admin['user_type'] ?? '') !== 'SuperAdmin';
+        $adminId = (int) ($admin['id'] ?? 0);
+
+        if (DemoShowcase::isActive($admin)) {
+            return ['recent_payments' => self::demoRecentPayments()];
+        }
+
+        $query = ORM::for_table('tbl_transactions')
+            ->where_in('type', ['Hotspot', 'PPPOE'])
+            ->where_gt('price', 0)
+            ->order_by_desc('id')
+            ->limit(max(1, $limit));
+        if ($isScoped) {
+            $query->where('admin_id', $adminId);
+        }
+
+        $payments = [];
+        foreach ($query->find_many() as $trx) {
+            $datetime = trim((string) $trx->recharged_on . ' ' . ($trx->recharged_time ?: '00:00:00'));
+            $payments[] = [
+                'id' => (int) $trx->id,
+                'invoice' => (string) ($trx->invoice ?? ''),
+                'username' => (string) ($trx->username ?? ''),
+                'plan_name' => (string) ($trx->plan_name ?? ''),
+                'price' => (float) ($trx->price ?? 0),
+                'method' => (string) ($trx->method ?? ''),
+                'type' => (string) ($trx->type ?? ''),
+                'recharged_on' => (string) ($trx->recharged_on ?? ''),
+                'time_ago' => self::timeAgo($datetime),
+                'url' => getUrl('plan/view/' . (int) $trx->id),
+            ];
+        }
+
+        return ['recent_payments' => $payments];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private static function demoRecentPayments(): array
+    {
+        $methods = ['CamPay - MTN', 'CamPay - Orange', 'Cash - Admin'];
+        $rows = [];
+        for ($i = 0; $i < 6; $i++) {
+            $rows[] = [
+                'id' => 90000 + $i,
+                'invoice' => 'INV-DEMO-' . (1000 + $i),
+                'username' => 'client' . str_pad((string) ($i + 1), 3, '0', STR_PAD_LEFT),
+                'plan_name' => $i % 2 === 0 ? 'PPPoE 10 Mbps' : 'Hotspot 24h',
+                'price' => (float) mt_rand(500, 15000),
+                'method' => $methods[$i % count($methods)],
+                'type' => $i % 2 === 0 ? 'PPPOE' : 'Hotspot',
+                'recharged_on' => date('Y-m-d'),
+                'time_ago' => ($i + 1) . 'm',
+                'url' => '#',
+            ];
+        }
+
+        return $rows;
     }
 
     public static function activityLogs($admin, int $page = 1, int $perPage = 5): array
@@ -212,6 +275,7 @@ class DashboardCommand
             ],
             'cron_last_run' => time() - 300,
             'cron_stale' => false,
+            'recent_payments' => self::demoRecentPayments(),
         ];
     }
 

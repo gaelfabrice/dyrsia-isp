@@ -73,75 +73,63 @@ $(document).ready(function () {
 
 //auto load plans data - recharge user
 $(function () {
-	$('input[type=radio]').change(function () {
+	function rechargeJenis() {
 		if ($('#Hot').is(':checked')) {
-			$.ajax({
-				type: "POST",
-				dataType: "html",
-				url: appUrl + "/?_route=autoload/server",
-				success: function (msg) {
-					$("#server").html(msg);
-				}
-			});
-
-			$("#server").change(getAjaxAlamat);
-			function getAjaxAlamat() {
-				var server = $("#server").val();
-				$.ajax({
-					type: "POST",
-					dataType: "html",
-					url: appUrl + "/?_route=autoload/plan",
-					data: "jenis=Hotspot&server=" + server,
-					success: function (msg) {
-						$("#plan").html(msg);
-					}
-				});
-			};
-
-		} else if ($('#POE').is(':checked')) {
-			$.ajax({
-				type: "POST",
-				dataType: "html",
-				url: appUrl + "/?_route=autoload/server",
-				success: function (msg) {
-					$("#server").html(msg);
-				}
-			});
-			$("#server").change(function () {
-				var server = $("#server").val();
-				$.ajax({
-					type: "POST",
-					dataType: "html",
-					url: appUrl + "/?_route=autoload/plan",
-					data: "jenis=PPPOE&server=" + server,
-					success: function (msg) {
-						$("#plan").html(msg);
-					}
-				});
-			});
-		} else {
-			$.ajax({
-				type: "POST",
-				dataType: "html",
-				url: appUrl + "/?_route=autoload/server",
-				success: function (msg) {
-					$("#server").html(msg);
-				}
-			});
-			$("#server").change(function () {
-				var server = $("#server").val();
-				$.ajax({
-					type: "POST",
-					dataType: "html",
-					url: appUrl + "/?_route=autoload/plan",
-					data: "jenis=VPN&server=" + server,
-					success: function (msg) {
-						$("#plan").html(msg);
-					}
-				});
-			});
+			return 'Hotspot';
 		}
+		if ($('#POE').is(':checked')) {
+			return 'PPPOE';
+		}
+		return 'VPN';
+	}
+
+	function loadRechargeServers() {
+		$.ajax({
+			type: "POST",
+			dataType: "html",
+			url: appUrl + "/?_route=autoload/server",
+			data: { jenis: rechargeJenis() },
+			success: function (msg) {
+				$("#server").html(msg);
+			}
+		});
+	}
+
+	function loadRechargePlans() {
+		var server = $("#server").val();
+		if (!server) {
+			return;
+		}
+		$.ajax({
+			type: "POST",
+			dataType: "html",
+			url: appUrl + "/?_route=autoload/plan",
+			data: { jenis: rechargeJenis(), server: server },
+			success: function (msg) {
+				$("#plan").html(msg);
+			}
+		});
+	}
+
+	$('input[name="type"]').on('change.rechargeRouters', function () {
+		if (!$('#server').length || !$('#plan').length) {
+			return;
+		}
+		if (!$('#Hot').length && !$('#POE').length && !$('#VPN').length) {
+			return;
+		}
+		loadRechargeServers();
+		$("#server").off('change.rechargePlans').on('change.rechargePlans', loadRechargePlans);
+		$("#plan").html("<option value=''>Select Plans</option>");
 	});
+
+	// Recharge page: type par défaut (souvent PPPoE) — charger les routeurs sans clic radio
+	if ($('#server[data-type="server"]').length) {
+		var $initialRechargeType = $('input[name="type"]:checked');
+		if ($initialRechargeType.length) {
+			$initialRechargeType.trigger('change');
+		}
+	}
 });
 
 

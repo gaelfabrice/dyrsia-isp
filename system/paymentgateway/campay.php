@@ -269,6 +269,23 @@ function campay_payment_notification()
         exit();
     }
 
+    if (preg_match('/^PPPOE-RCH-(\d+)/', (string) $externalRef, $rchMatch) || class_exists('PlanRechargePayment')) {
+        if (class_exists('PlanRechargePayment')) {
+            PlanRechargePayment::ensureSchema();
+            $planRecharge = ORM::for_table('wifizone_plan_recharge_payments')
+                ->where('gateway_reference', $reference)
+                ->find_one();
+            if (!$planRecharge && preg_match('/^PPPOE-RCH-(\d+)/', (string) $externalRef, $rchMatch)) {
+                $planRecharge = ORM::for_table('wifizone_plan_recharge_payments')->find_one((int) $rchMatch[1]);
+            }
+            if ($planRecharge) {
+                PlanRechargePayment::handleGatewayWebhook($reference, $status, $data);
+                _log("CamPay Webhook: PPPoE plan recharge handled for $reference");
+                exit();
+            }
+        }
+    }
+
     $adminPayment = ORM::for_table('admin_subscription_payments')
         ->where('reference', $reference)
         ->where('status', 'pending')
@@ -595,4 +612,136 @@ function campay_admin_subscription_webhook($paymentId, $reference, $status, $dat
         AdminSubscription::markPaymentFailed((int) $paymentId);
         _log("CamPay ISP Subscription: Payment failed for payment #$paymentId");
     }
+}
+
+function campay_plan_recharge_collect_data($ctx, $admin, $phone)
+{
+    global $config;
+
+    campay_validate_config();
+
+    $token = campay_get_token();
+    if (!$token) {
+        return ['ok' => false, 'message' => Lang::T('Payment gateway authentication failed. Please try again.')];
+    }
+
+    $baseUrl = ($config['campay_environment'] === 'prod')
+        ? 'https://www.campay.net/api'
+        : 'https://demo.campay.net/api';
+
+    $phone = preg_replace('/[^0-9]/', '', (string) $phone);
+    if (strlen($phone) === 9) {
+        $phone = '237' . $phone;
+    } elseif (!preg_match('/^237/', $phone)) {
+        $phone = '237' . ltrim($phone, '0');
+    }
+
+    $amountError = campay_validate_collect_amount($phone, $ctx['amount']);
+    if ($amountError) {
+        return ['ok' => false, 'message' => $amountError];
+    }
+
+    $payload = [
+        'amount' => (int) $ctx['amount'],
+        'currency' => $config['campay_currency'] ?: 'XAF',
+        'from' => $phone,
+        'description' => $ctx['plan_label'] . ' PPPoE - ' . ($config['CompanyName'] ?? 'DYRSIA'),
+        'external_reference' => $ctx['external_ref'],
+    ];
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $baseUrl . '/collect/',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Token ' . $token,
+        ],
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        return ['ok' => false, 'message' => Lang::T('Connection error. Please try again.')];
+    }
+
+    $result = json_decode($response, true);
+    if ($httpCode !== 200 || empty($result['reference'])) {
+        $errorMsg = $result['message'] ?? $result['detail'] ?? $response;
+
+        return ['ok' => false, 'message' => Lang::T('Failed to initiate payment.') . ' ' . $errorMsg];
+    }
+
+    $operator = (string) ($result['operator'] ?? '');
+    $ussd = (string) ($result['ussd_code'] ?? '');
+    if ($operator === '' || $ussd === '') {
+        $info = MobileMoneyGateway::operatorInfoForPhone($phone, 'campay');
+        if ($operator === '') {
+            $operator = $info['operator'];
+        }
+        if ($ussd === '') {
+            $ussd = $info['ussd'];
+        }
+    }
+
+    return [
+        'ok' => true,
+        'reference' => (string) $result['reference'],
+        'operator' => $operator,
+        'ussd' => $ussd,
+        'phone' => $phone,
+        'amount' => (int) $ctx['amount'],
+    ];
+}
+
+function campay_plan_recharge_check_status($payment, $admin)
+{
+    global $config;
+
+    $reference = trim((string) $payment->gateway_reference);
+    if ($reference === '') {
+        return ['status' => 'PENDING'];
+    }
+
+    $token = campay_get_token();
+    if (!$token) {
+        return ['status' => 'PENDING'];
+    }
+
+    $baseUrl = ($config['campay_environment'] === 'prod')
+        ? 'https://www.campay.net/api'
+        : 'https://demo.campay.net/api';
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $baseUrl . '/transaction/' . urlencode($reference) . '/',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Token ' . $token,
+        ],
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode !== 200) {
+        return ['status' => 'PENDING'];
+    }
+
+    $result = json_decode($response, true);
+
+    return [
+        'status' => strtoupper((string) ($result['status'] ?? 'PENDING')),
+        'operator' => (string) ($result['operator'] ?? ''),
+        'raw' => $result,
+    ];
 }

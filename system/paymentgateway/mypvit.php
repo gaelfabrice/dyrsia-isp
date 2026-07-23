@@ -925,6 +925,68 @@ function mypvit_admin_subscription_webhook($paymentId, $reference, $status, $dat
     }
 }
 
+function mypvit_plan_recharge_collect_data($ctx, $admin, $phone)
+{
+    mypvit_validate_config();
+
+    $phone = MyPVitGateway::formatPhone($phone);
+    $amountError = MyPVitGateway::validateAmount($ctx['amount']);
+    if ($amountError) {
+        return ['ok' => false, 'message' => $amountError];
+    }
+
+    $paymentId = (int) $ctx['payment']->id;
+    $reference = MyPVitGateway::makeReference('PPPOERCH', $paymentId);
+    $payload = [
+        'amount' => (float) $ctx['amount'],
+        'product' => substr((string) $ctx['plan_label'], 0, 30),
+        'reference' => $reference,
+        'service' => 'RESTFUL',
+        'callback_url_code' => MyPVitGateway::configValue('mypvit_callback_url_code'),
+        'customer_account_number' => $phone,
+        'merchant_operation_account_code' => MyPVitGateway::configValue('mypvit_operation_account_code'),
+        'transaction_type' => 'PAYMENT',
+        'owner_charge' => 'MERCHANT',
+        'operator_code' => MyPVitGateway::detectOperator($phone),
+        'free_info' => substr('RCH' . $paymentId, 0, 15),
+    ];
+
+    $init = MyPVitGateway::initiatePayment($payload);
+    if (!$init['ok']) {
+        return ['ok' => false, 'message' => $init['message']];
+    }
+
+    $ussdInfo = MobileMoneyGateway::operatorInfoForPhone($phone, 'mypvit');
+
+    return [
+        'ok' => true,
+        'reference' => (string) ($init['reference_id'] ?: $reference),
+        'operator' => $ussdInfo['operator'],
+        'ussd' => $ussdInfo['ussd'],
+        'phone' => $phone,
+        'amount' => (float) $ctx['amount'],
+    ];
+}
+
+function mypvit_plan_recharge_check_status($payment, $admin)
+{
+    $reference = trim((string) $payment->gateway_reference);
+    if ($reference === '') {
+        return ['status' => 'PENDING'];
+    }
+
+    $result = MyPVitGateway::fetchStatus($reference, '');
+    if ($result['http_code'] !== 200 || !is_array($result['json'])) {
+        return ['status' => 'PENDING'];
+    }
+
+    return [
+        'status' => MyPVitGateway::mapStatus($result['json']['status'] ?? 'PENDING'),
+        'operator' => (string) ($result['json']['operator'] ?? ''),
+        'raw' => $result['json'],
+    ];
+}
+
 function mypvit_secret_delivery()
 {
     $payload = @file_get_contents('php://input');

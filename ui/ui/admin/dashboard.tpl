@@ -197,6 +197,46 @@
 
     <div class="wz-cc-grid-2">
         <div class="wz-cc-card">
+            <div class="wz-cc-card-title">
+                <span><i class="fa fa-money"></i> {Lang::T('Recent Payments')}</span>
+                <a href="{Text::url('reports')}" class="wz-du-more">{Lang::T('View_report')} <i class="fa fa-arrow-right"></i></a>
+            </div>
+            {if $recent_payments|@count > 0}
+            <table class="wz-voucher-table wz-payments-table">
+                <thead>
+                    <tr>
+                        <th>{Lang::T('Customer')}</th>
+                        <th>{Lang::T('Plan')}</th>
+                        <th>{Lang::T('Payment')}</th>
+                        <th>{Lang::T('Amount')}</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {foreach $recent_payments as $pay}
+                    <tr>
+                        <td>
+                            <strong>{$pay.username|escape}</strong>
+                            <div class="wz-kpi-sub">{$pay.time_ago|escape}</div>
+                        </td>
+                        <td>{$pay.plan_name|escape}</td>
+                        <td><span class="wz-badge-active">{$pay.method|escape}</span></td>
+                        <td><strong>{$currency|default:'XAF'} {$pay.price|number_format:0}</strong></td>
+                        <td class="text-right">
+                            {if $pay.url && $pay.url neq '#'}
+                            <a href="{$pay.url|escape}" class="btn btn-default btn-xs"><i class="fa fa-file-text-o"></i></a>
+                            {/if}
+                        </td>
+                    </tr>
+                    {/foreach}
+                </tbody>
+            </table>
+            {else}
+            <p class="wz-cc-empty">{Lang::T('No payments recorded yet')}</p>
+            {/if}
+        </div>
+
+        <div class="wz-cc-card">
             <div class="wz-cc-card-title"><i class="fa fa-bell"></i> {Lang::T('Notification')}</div>
             <div class="wz-service-row">{Lang::T('Email Notification')}: <span class="wz-badge-{if $notification_status.email|default:false}active{else}warning{/if}">{if $notification_status.email|default:false}{Lang::T('Enabled')}{else}{Lang::T('Not configured')}{/if}</span></div>
             <div class="wz-service-row">{Lang::T('Sms notification')}: <span class="wz-badge-{if $notification_status.sms|default:false}active{else}warning{/if}">{if $notification_status.sms|default:false}{Lang::T('Enabled')}{else}{Lang::T('Not configured')}{/if}</span></div>

@@ -20,7 +20,7 @@
 <script src="{$app_url}/ui/ui/scripts/plugins/select2.min.js"></script>
 <script src="{$app_url}/ui/ui/scripts/pace.min.js"></script>
 <script src="{$app_url}/ui/ui/summernote/summernote.min.js"></script>
-<script src="{$app_url}/ui/ui/scripts/custom.js?2025.2.5"></script>
+<script src="{$app_url}/ui/ui/scripts/custom.js?2026.07.23"></script>
 {if $_c['router_check'] == '1'}
 <style>
     #router-alert-toasts {

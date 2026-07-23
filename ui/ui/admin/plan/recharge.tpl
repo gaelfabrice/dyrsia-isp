@@ -5,7 +5,8 @@
         <div class="panel panel-primary panel-hovered panel-stacked mb30">
             <div class="panel-heading">{Lang::T('Recharge Account')}</div>
             <div class="panel-body">
-                <form class="form-horizontal" method="post" role="form" action="{Text::url('')}plan/recharge-confirm">
+                <form class="form-horizontal" method="post" role="form" action="{Text::url('')}plan/recharge-confirm" id="plan-recharge-form">
+                    <input type="hidden" name="plan_type" id="plan_type" value="">
                     <div class="form-group">
                         <label class="col-md-2 control-label">{Lang::T('Select Account')}</label>
                         <div class="col-md-6">
@@ -24,7 +25,7 @@
                         <div class="col-md-6">
                             <label><input type="radio" id="Hot" name="type" value="Hotspot">
                                 {Lang::T('Hotspot Plans')}</label>
-                            <label><input type="radio" id="POE" name="type" value="PPPOE">
+                            <label><input type="radio" id="POE" name="type" value="PPPOE" checked>
                                 {Lang::T('PPPOE Plans')}</label>
                             <label><input type="radio" id="VPN" name="type" value="VPN"> {Lang::T('VPN Plans')}</label>
                         </div>
@@ -49,19 +50,9 @@
                     <div class="form-group">
                         <label class="col-md-2 control-label">{Lang::T('Using')}</label>
                         <div class="col-md-6">
-                            <select name="using" class="form-control">
-                                {foreach $usings as $using}
-                                    <option value="{trim($using)}">{trim(ucWords($using))}</option>
-                                {/foreach}
-                                {if $_c['enable_balance'] eq 'yes'}
-                                    <option value="balance">{Lang::T('Customer Balance')}</option>
-                                {/if}
-                                {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
-                                    <option value="zero">{$_c['currency_code']} 0</option>
-                                {/if}
-                            </select>
+                            <select name="using" id="recharge_using" class="form-control"></select>
                         </div>
-                        <p class="help-block col-md-4">{Lang::T('Postpaid Recharge for the first time use')}
+                        <p class="help-block col-md-4" id="recharge_using_help">{Lang::T('Postpaid Recharge for the first time use')}
                             {$_c['currency_code']} 0</p>
                     </div>
                     <div class="form-group">
@@ -77,5 +68,18 @@
         </div>
     </div>
 </div>
+
+<script>
+window.PLAN_RECHARGE_UI = {
+    pppoeOptions: {$pppoe_payment_options|@json_encode nofilter},
+    legacyOptions: {$legacy_usings|@json_encode nofilter},
+    enableBalance: {if $_c['enable_balance'] eq 'yes'}true{else}false{/if},
+    isSuperAdmin: {if $is_superadmin_recharge}true{else}false{/if},
+    balanceLabel: {Lang::T('Customer Balance')|@json_encode nofilter},
+    zeroLabel: {($_c['currency_code']|cat:' 0')|@json_encode nofilter},
+    gatewayLabel: {$mobile_gateway_label|@json_encode nofilter}
+};
+</script>
+<script src="{$app_url}/ui/ui/scripts/plan-recharge.js?v=1"></script>
 
 {include file="sections/footer.tpl"}
