@@ -24,7 +24,7 @@ class top_widget
             ->where_not_equal('method', 'Recharge Balance - Administrator');
 
         if ($isAdmin) {
-            $iday_q->where('admin_id', $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($iday_q, $adminId);
         }
 
         $iday = $iday_q->sum('price') ?: '0.00';
@@ -39,7 +39,7 @@ class top_widget
             ->where_lte('recharged_on', $current_date);
 
         if ($isAdmin) {
-            $imonth_q->where('admin_id', $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($imonth_q, $adminId);
         }
 
         $imonth = $imonth_q->sum('price') ?: '0.00';
@@ -51,7 +51,7 @@ class top_widget
             ->where('status', 'on');
 
         if ($isAdmin) {
-            $u_act_q->where('admin_id', $adminId);
+            $u_act_q = AdminScope::applyRechargesQuery($u_act_q, $admin);
         }
 
         $u_act = $u_act_q->count();
@@ -62,7 +62,7 @@ class top_widget
         $u_all_q = ORM::for_table('tbl_user_recharges');
 
         if ($isAdmin) {
-            $u_all_q->where('admin_id', $adminId);
+            $u_all_q = AdminScope::applyRechargesQuery($u_all_q, $admin);
         }
 
         $u_all = $u_all_q->count();
@@ -87,7 +87,7 @@ class top_widget
             ->distinct();
 
         if ($isAdmin) {
-            $h_query->where('admin_id', $adminId);
+            $h_query = AdminScope::applyRechargesQuery($h_query, $admin);
         }
 
         $h_ids = $h_query->find_array();
@@ -103,7 +103,7 @@ class top_widget
             ->distinct();
 
         if ($isAdmin) {
-            $p_query->where('admin_id', $adminId);
+            $p_query = AdminScope::applyRechargesQuery($p_query, $admin);
         }
 
         $p_ids = $p_query->find_array();
@@ -118,7 +118,7 @@ class top_widget
             ->where('type', 'Hotspot');
 
         if ($isAdmin) {
-            $h_act_q->where('admin_id', $adminId);
+            $h_act_q = AdminScope::applyRechargesQuery($h_act_q, $admin);
         }
 
         $h_act = $h_act_q->count();
@@ -131,7 +131,7 @@ class top_widget
             ->where('type', 'PPPoE');
 
         if ($isAdmin) {
-            $p_act_q->where('admin_id', $adminId);
+            $p_act_q = AdminScope::applyRechargesQuery($p_act_q, $admin);
         }
 
         $p_act = $p_act_q->count();
@@ -144,7 +144,7 @@ class top_widget
             ->where('type', 'Hotspot');
 
         if ($isAdmin) {
-            $h_exp_q->where('admin_id', $adminId);
+            $h_exp_q = AdminScope::applyRechargesQuery($h_exp_q, $admin);
         }
 
         $h_exp = $h_exp_q->count();
@@ -157,7 +157,7 @@ class top_widget
             ->where('type', 'PPPoE');
 
         if ($isAdmin) {
-            $p_exp_q->where('admin_id', $adminId);
+            $p_exp_q = AdminScope::applyRechargesQuery($p_exp_q, $admin);
         }
 
         $p_exp = $p_exp_q->count();

@@ -226,8 +226,8 @@ switch ($action) {
             ->where_gte('recharged_on', $start_date)
             ->where_lte('recharged_on', $current_date);
         if ($isAdmin) {
-            $dailyQuery->where('admin_id', $adminId);
-            $monthlyQuery->where('admin_id', $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($dailyQuery, $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($monthlyQuery, $adminId);
         }
 
         $w_balance = 0;
@@ -263,8 +263,8 @@ switch ($action) {
             ->where_gte('recharged_on', $prevMonthStart)
             ->where_lte('recharged_on', $prevMonthEnd);
         if ($isAdmin) {
-            $yesterdayQuery->where('admin_id', $adminId);
-            $prevMonthQuery->where('admin_id', $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($yesterdayQuery, $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($prevMonthQuery, $adminId);
         }
         $incomeYesterday = (float) ($yesterdayQuery->sum('price') ?: 0);
         $incomePrevMonth = (float) ($prevMonthQuery->sum('price') ?: 0);
@@ -282,8 +282,9 @@ switch ($action) {
               AND method <> 'Recharge Balance - Administrator'";
         $revParams = [];
         if ($isAdmin) {
-            $revSql .= " AND admin_id = ?";
-            $revParams[] = $adminId;
+            [$revScopeSql, $revScopeParams] = AdminScope::transactionsSqlFilter($adminId);
+            $revSql .= ' AND ' . $revScopeSql;
+            $revParams = $revScopeParams;
         }
         $revSql .= " GROUP BY MONTH(recharged_on)";
         $revStmt = $db->prepare($revSql);
@@ -301,8 +302,9 @@ switch ($action) {
               AND LOWER(method) LIKE '%commission%'";
         $comParams = [];
         if ($isAdmin) {
-            $comSql .= " AND admin_id = ?";
-            $comParams[] = $adminId;
+            [$comScopeSql, $comScopeParams] = AdminScope::transactionsSqlFilter($adminId);
+            $comSql .= ' AND ' . $comScopeSql;
+            $comParams = $comScopeParams;
         }
         $comSql .= " GROUP BY MONTH(recharged_on)";
         $comStmt = $db->prepare($comSql);

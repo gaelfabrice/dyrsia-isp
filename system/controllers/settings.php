@@ -2042,7 +2042,7 @@ HTML;
                 $_POST['pppoe_setup_router'] = $hotspotRouter;
             }
             if (empty($_POST['hotspot_login_methods'])) {
-                $_POST['hotspot_login_methods'] = ['http-chap', 'http-pap', 'mac-cookie'];
+                $_POST['hotspot_login_methods'] = ['http-pap', 'http-chap', 'mac-cookie'];
             }
             if (trim((string) ($_POST['hotspot_cookie_lifetime'] ?? '')) === '') {
                 $_POST['hotspot_cookie_lifetime'] = '1d 00:00:00';

@@ -6900,7 +6900,7 @@ class Mikrotik
                 'hotspot_smtp_server' => '0.0.0.0',
                 'hotspot_dns_server' => '8.8.8.8',
                 'hotspot_dns_name' => '',
-                'hotspot_login_methods' => 'http-chap,http-pap,mac-cookie',
+                'hotspot_login_methods' => 'http-pap,http-chap,mac-cookie',
                 'hotspot_cookie_lifetime' => '1d 00:00:00',
                 'hotspot_idle_timeout' => '00:10:00',
                 'hotspot_address_per_mac' => '1',
@@ -7230,7 +7230,7 @@ class Mikrotik
         $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
         $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
         $masquerade = !empty($config['hotspot_masquerade']) && (string) $config['hotspot_masquerade'] !== '0';
-        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-chap,http-pap,mac-cookie'));
+        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-pap,http-chap,mac-cookie'));
         $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
         $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
         $addressPerMac = trim((string) ($config['hotspot_address_per_mac'] ?? '1'));
@@ -7808,25 +7808,7 @@ class Mikrotik
             }
 
             global $config;
-            $wlanPorts = [];
-            try {
-                foreach ($client->sendSync(
-                    (new RouterOS\Request('/interface/wireless/print'))
-                        ->setArgument('.proplist', 'name,disabled')
-                ) as $row) {
-                    if ($row->getType() === 'trap') {
-                        continue;
-                    }
-                    if ((string) $row->getProperty('disabled') === 'true') {
-                        continue;
-                    }
-                    $name = trim((string) $row->getProperty('name'));
-                    if ($name !== '') {
-                        $wlanPorts[] = $name;
-                    }
-                }
-            } catch (Throwable $e) {
-            }
+            $wlanPorts = self::listActiveWirelessInterfaceNames($client);
 
             if ($wlanPorts === []) {
                 $wlanPorts = array_values(array_filter(
@@ -7981,7 +7963,7 @@ class Mikrotik
 
     private static function isWlanInterfaceName($name)
     {
-        return preg_match('/^wlan/i', trim((string) $name)) === 1;
+        return preg_match('/^(wlan|wifi)/i', trim((string) $name)) === 1;
     }
 
     private static function isVlanInterfaceName($name)
@@ -8098,20 +8080,20 @@ class Mikrotik
             }
         }
         if (empty($normalized)) {
-            $normalized = ['http-chap', 'http-pap', 'mac-cookie'];
+            $normalized = ['http-pap', 'http-chap', 'mac-cookie'];
         }
 
         return self::orderHotspotLoginByMethods($normalized);
     }
 
     /**
-     * Ordre stable login-by : HTTP CHAP, HTTP PAP, MAC COOKIE.
+     * Ordre login-by : HTTP PAP (mot de passe clair) en premier, puis CHAP, MAC cookie.
      *
      * @param array<int, string> $methods
      */
     private static function orderHotspotLoginByMethods(array $methods)
     {
-        $order = ['http-chap', 'http-pap', 'mac-cookie'];
+        $order = ['http-pap', 'http-chap', 'mac-cookie'];
         $picked = [];
         foreach ($order as $method) {
             if (in_array($method, $methods, true)) {
@@ -8136,7 +8118,7 @@ class Mikrotik
         $allowed = ['http-chap', 'http-pap', 'mac-cookie'];
         $filtered = array_values(array_intersect($methods, $allowed));
         if ($filtered === []) {
-            return 'http-chap,http-pap,mac-cookie';
+            return 'http-pap,http-chap,mac-cookie';
         }
 
         return self::orderHotspotLoginByMethods($filtered);
@@ -9072,7 +9054,9 @@ class Mikrotik
 
         $loginBy = trim((string) $loginMethods);
         if ($loginBy === '') {
-            $loginBy = $useRadius ? 'http-chap,mac-cookie' : self::normalizeHotspotLoginBy('http-chap,http-pap,mac-cookie');
+            $loginBy = $useRadius
+                ? self::normalizeHotspotLoginByForRadius($loginMethods)
+                : self::normalizeHotspotLoginBy($loginMethods !== '' ? $loginMethods : 'http-pap,http-chap,mac-cookie');
         }
 
         $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
@@ -11443,6 +11427,85 @@ class Mikrotik
         $name = trim((string) ($config['lan_bridge_name'] ?? ''));
 
         return $name !== '' ? $name : 'bridge-lan';
+    }
+
+    /**
+     * Ports physiques / WiFi configurés pour le bridge LAN (trunk ou mode simple).
+     *
+     * @return array<int, string>
+     */
+    public static function resolveLanTrunkBridgePorts(array $config)
+    {
+        $keys = self::lanTrunkEnabled($config)
+            ? ['lan_trunk_bridge_ports', 'lan_hotspot_access_ports', 'hotspot_bridge_ports']
+            : ['hotspot_bridge_ports', 'lan_hotspot_access_ports', 'lan_trunk_bridge_ports'];
+
+        $ports = [];
+        foreach ($keys as $key) {
+            $raw = trim((string) ($config[$key] ?? ''));
+            if ($raw === '') {
+                continue;
+            }
+            foreach (preg_split('/[\s,;]+/', $raw) as $port) {
+                $port = trim((string) $port);
+                if ($port !== '' && !in_array($port, $ports, true)) {
+                    $ports[] = $port;
+                }
+            }
+            if ($ports !== []) {
+                break;
+            }
+        }
+
+        if ($ports === []) {
+            $defaults = self::lanTrunkDefaults();
+            $fallback = trim((string) ($defaults['lan_hotspot_access_ports'] ?? 'wlan1'));
+            foreach (preg_split('/[\s,;]+/', $fallback) as $port) {
+                $port = trim((string) $port);
+                if ($port !== '' && !in_array($port, $ports, true)) {
+                    $ports[] = $port;
+                }
+            }
+        }
+
+        return $ports;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function listActiveWirelessInterfaceNames($client)
+    {
+        $paths = [
+            '/interface/wireless/print',
+            '/interface/wifiwave2/print',
+            '/interface/wifi/print',
+        ];
+        $names = [];
+
+        foreach ($paths as $path) {
+            try {
+                foreach ($client->sendSync(
+                    (new RouterOS\Request($path))
+                        ->setArgument('.proplist', 'name,disabled')
+                ) as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    if ((string) $row->getProperty('disabled') === 'true') {
+                        continue;
+                    }
+                    $name = trim((string) $row->getProperty('name'));
+                    if ($name !== '' && !in_array($name, $names, true)) {
+                        $names[] = $name;
+                    }
+                }
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        return $names;
     }
 
     public static function resolvePppoeBridgeName(array $config)

@@ -24,12 +24,10 @@ class DashboardCommand
                 ->count();
         }
 
-        $rechargesQ = ORM::for_table('tbl_user_recharges')->where('status', 'on');
-        $salesTodayQ = ORM::for_table('tbl_transactions')->where('recharged_on', date('Y-m-d'));
+        $rechargesQ = self::scopedRechargesQuery($admin);
+        $salesTodayQ = self::scopedTransactionsQuery($admin)->where('recharged_on', date('Y-m-d'));
         $routersQ = ORM::for_table('tbl_routers')->where('enabled', 1);
         if ($isScoped) {
-            $rechargesQ->where('admin_id', $adminId);
-            $salesTodayQ->where('admin_id', $adminId);
             $routersQ->where('admin_id', $adminId);
         }
 
@@ -110,14 +108,11 @@ class DashboardCommand
             return ['recent_payments' => self::demoRecentPayments()];
         }
 
-        $query = ORM::for_table('tbl_transactions')
+        $query = self::scopedTransactionsQuery($admin)
             ->where_in('type', ['Hotspot', 'PPPOE'])
             ->where_gt('price', 0)
             ->order_by_desc('id')
             ->limit(max(1, $limit));
-        if ($isScoped) {
-            $query->where('admin_id', $adminId);
-        }
 
         $payments = [];
         foreach ($query->find_many() as $trx) {
@@ -296,14 +291,89 @@ class DashboardCommand
         return $offline;
     }
 
+    private static function scopedRouterNames(int $adminId): array
+    {
+        if ($adminId <= 0) {
+            return [];
+        }
+
+        $names = [];
+        foreach (ORM::for_table('tbl_routers')->where('admin_id', $adminId)->find_many() as $router) {
+            $name = trim((string) ($router->name ?? ''));
+            if ($name !== '') {
+                $names[] = $name;
+            }
+            $description = trim((string) ($router->description ?? ''));
+            if ($description !== '') {
+                $names[] = $description;
+            }
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    private static function scopedTransactionsQuery($admin)
+    {
+        $isScoped = ($admin['user_type'] ?? '') !== 'SuperAdmin';
+        $adminId = (int) ($admin['id'] ?? 0);
+        $query = ORM::for_table('tbl_transactions');
+        if (!$isScoped) {
+            return $query;
+        }
+
+        $routerNames = self::scopedRouterNames($adminId);
+        if ($routerNames === []) {
+            return $query->where('admin_id', $adminId);
+        }
+
+        $placeholders = implode(',', array_fill(0, count($routerNames), '?'));
+
+        return $query->where_raw(
+            '(admin_id = ? OR routers IN (' . $placeholders . '))',
+            array_merge([$adminId], $routerNames)
+        );
+    }
+
+    private static function scopedRechargesQuery($admin)
+    {
+        $isScoped = ($admin['user_type'] ?? '') !== 'SuperAdmin';
+        $adminId = (int) ($admin['id'] ?? 0);
+        $query = ORM::for_table('tbl_user_recharges')->where('status', 'on');
+        if (!$isScoped) {
+            return $query;
+        }
+
+        $routerNames = self::scopedRouterNames($adminId);
+        if ($routerNames === []) {
+            return $query->where('admin_id', $adminId);
+        }
+
+        $placeholders = implode(',', array_fill(0, count($routerNames), '?'));
+
+        return $query->where_raw(
+            '(admin_id = ? OR routers IN (' . $placeholders . '))',
+            array_merge([$adminId], $routerNames)
+        );
+    }
+
     private static function serviceStats($admin, bool $isScoped, int $adminId): array
     {
-        $scope = function ($type) use ($isScoped, $adminId) {
+        $scope = function ($type) use ($isScoped, $adminId, $admin) {
             $q = ORM::for_table('tbl_user_recharges')->table_alias('tur')
                 ->where('tur.type', $type);
             if ($isScoped) {
-                $q->where('tur.admin_id', $adminId);
+                $routerNames = self::scopedRouterNames($adminId);
+                if ($routerNames === []) {
+                    $q->where('tur.admin_id', $adminId);
+                } else {
+                    $placeholders = implode(',', array_fill(0, count($routerNames), '?'));
+                    $q->where_raw(
+                        '(tur.admin_id = ? OR tur.routers IN (' . $placeholders . '))',
+                        array_merge([$adminId], $routerNames)
+                    );
+                }
             }
+
             return $q;
         };
 

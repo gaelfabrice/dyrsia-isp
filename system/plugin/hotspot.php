@@ -247,6 +247,19 @@
         return $id;
     }
 
+    function hotspot_payment_failure_reason($payment)
+    {
+        if (!$payment) {
+            return '';
+        }
+        if (function_exists('hotspot_pg_campay_payment_failure_reason')
+            && strtolower(trim((string) ($payment->payment_gateway ?? ''))) === 'campay') {
+            return hotspot_pg_campay_payment_failure_reason($payment);
+        }
+
+        return '';
+    }
+
     function hotspot_overview()
     {
         global $ui;
@@ -268,7 +281,15 @@
                 return htmlspecialchars(hotspot_format_trx_display($params['id'] ?? ''), ENT_QUOTES, 'UTF-8');
             }
         }
+        if (!function_exists('smarty_function_hotspot_payment_failure_reason')) {
+            function smarty_function_hotspot_payment_failure_reason($params, $smarty)
+            {
+                $payment = $params['payment'] ?? null;
+                return htmlspecialchars(hotspot_payment_failure_reason($payment), ENT_QUOTES, 'UTF-8');
+            }
+        }
         $ui->registerPlugin('function', 'hotspot_trx_short', 'smarty_function_hotspot_trx_short');
+        $ui->registerPlugin('function', 'hotspot_payment_failure_reason', 'smarty_function_hotspot_payment_failure_reason');
 
         // Refresh must redirect immediately — never run slow sync/API work first.
         if (isset($_GET['refresh'])) {
@@ -279,7 +300,7 @@
         $CACHE_PATH = 'system/cache/';
         hotspot_sync_pending_campay_payments(3, 10);
 
-        $cacheFile = $CACHE_PATH . "hotspot_overview_" . md5($admin['user_type']) . ".json";
+        $cacheFile = $CACHE_PATH . "hotspot_overview_" . hotspot_overview_cache_key($admin) . ".json";
         $cacheTime = 120; 
 
         // Cache Loading Logic
@@ -309,7 +330,7 @@
         // --- FRESH DATA RETRIEVAL ---
 
         // 1. Transaction History
-        $payments_res = ORM::for_table('tbl_hotspot_payments')->order_by_desc('created_date')->find_many();
+        $payments_res = hotspot_payments_query_for_admin($admin)->order_by_desc('created_date')->find_many();
         $payments_array = [];
         if ($payments_res) {
             foreach ($payments_res as $p) {
@@ -318,10 +339,10 @@
         }
 
         // 2. Payment Stats
-        $successfulPayments = ORM::for_table('tbl_hotspot_payments')->where('transaction_status', 'paid')->count();
-        $failedPayments = ORM::for_table('tbl_hotspot_payments')->where('transaction_status', 'failed')->count();
-        $pendingPayments = ORM::for_table('tbl_hotspot_payments')->where('transaction_status', 'pending')->count();
-        $cancelledPayments = ORM::for_table('tbl_hotspot_payments')->where('transaction_status', 'cancelled')->count();
+        $successfulPayments = hotspot_payments_query_for_admin($admin)->where('transaction_status', 'paid')->count();
+        $failedPayments = hotspot_payments_query_for_admin($admin)->where('transaction_status', 'failed')->count();
+        $pendingPayments = hotspot_payments_query_for_admin($admin)->where('transaction_status', 'pending')->count();
+        $cancelledPayments = hotspot_payments_query_for_admin($admin)->where('transaction_status', 'cancelled')->count();
 
         // 3. Voucher Inventory (Table: tbl_hotspot_vouchers)
         $total_vouchers = ORM::for_table('tbl_hotspot_vouchers')->count();
@@ -330,7 +351,7 @@
         $expired_vouchers = $failedPayments + $cancelledPayments;
 
         // 4. Monthly Sales
-        $monthlySales = ORM::for_table('tbl_hotspot_payments')
+        $monthlySales = hotspot_payments_query_for_admin($admin)
             ->select_expr('YEAR(created_date)', 'year')
             ->select_expr('MONTH(created_date)', 'month')
             ->select_expr('SUM(amount)', 'total_sales')
@@ -346,7 +367,7 @@
         // 5. Weekly Sales
         $startDate = date('Y-m-d', strtotime('this week Monday'));
         $endDate = date('Y-m-d', strtotime('this week Sunday'));
-        $weeklySales = ORM::for_table('tbl_hotspot_payments')
+        $weeklySales = hotspot_payments_query_for_admin($admin)
             ->select_expr('DAYOFWEEK(created_date)', 'day_idx')
             ->select_expr('SUM(amount)', 'total_sales')
             ->where('transaction_status', 'paid')
@@ -363,7 +384,7 @@
 
         // 6. Daily Sales
         $today = date('Y-m-d');
-        $dailySalesSum = ORM::for_table('tbl_hotspot_payments')
+        $dailySalesSum = hotspot_payments_query_for_admin($admin)
             ->where('transaction_status', 'paid')
             ->where_raw("DATE(created_date) = ?", [$today])
             ->sum('amount');
@@ -464,13 +485,94 @@
     /**
      * Nom canonique MikroTik (tbl_routers.name) pour comparer forfaits / paiements par routeur.
      */
+    function hotspot_admin_router_names($admin)
+    {
+        if (($admin['user_type'] ?? '') === 'SuperAdmin') {
+            return null;
+        }
+
+        $adminId = (int) ($admin['id'] ?? 0);
+        if ($adminId <= 0) {
+            return [];
+        }
+
+        $names = [];
+        foreach (ORM::for_table('tbl_routers')->where('admin_id', $adminId)->find_many() as $router) {
+            $name = trim((string) ($router->name ?? ''));
+            if ($name !== '') {
+                $names[] = $name;
+            }
+            $description = trim((string) ($router->description ?? ''));
+            if ($description !== '') {
+                $names[] = $description;
+            }
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    function hotspot_payments_query_for_admin($admin)
+    {
+        $q = ORM::for_table('tbl_hotspot_payments');
+        if (($admin['user_type'] ?? '') === 'SuperAdmin') {
+            return $q;
+        }
+
+        $adminId = (int) ($admin['id'] ?? 0);
+        if ($adminId <= 0) {
+            return $q->where_raw('1 = 0');
+        }
+
+        $routerNames = hotspot_admin_router_names($admin);
+        $matchValues = is_array($routerNames) ? $routerNames : [];
+        foreach (ORM::for_table('tbl_routers')->where('admin_id', $adminId)->find_many() as $router) {
+            $ip = trim(explode(':', (string) ($router->ip_address ?? ''))[0]);
+            if ($ip !== '') {
+                $matchValues[] = $ip;
+            }
+        }
+        $matchValues = array_values(array_unique(array_filter($matchValues)));
+
+        $planIds = [];
+        foreach (ORM::for_table('tbl_plans')->where('admin_id', $adminId)->where('type', 'Hotspot')->find_many() as $plan) {
+            $planIds[] = (int) $plan->id;
+        }
+
+        if ($matchValues === [] && $planIds === []) {
+            return $q->where_raw('1 = 0');
+        }
+
+        $parts = [];
+        $params = [];
+        if ($matchValues !== []) {
+            $parts[] = 'router_name IN (' . implode(',', array_fill(0, count($matchValues), '?')) . ')';
+            $params = array_merge($params, $matchValues);
+        }
+        if ($planIds !== []) {
+            $parts[] = 'plan_id IN (' . implode(',', array_fill(0, count($planIds), '?')) . ')';
+            $params = array_merge($params, $planIds);
+        }
+
+        return $q->where_raw('(' . implode(' OR ', $parts) . ')', $params);
+    }
+
+    function hotspot_overview_cache_key($admin)
+    {
+        return md5(($admin['user_type'] ?? '') . ':' . (int) ($admin['id'] ?? 0));
+    }
+
     function hotspot_normalize_router_name($routerInput)
     {
         $routerInput = trim((string) $routerInput);
+        if ($routerInput === '' || preg_match('/^\$\(/', $routerInput)) {
+            global $config;
+            $routerInput = trim((string) ($config['hotspot_login_router'] ?? ''));
+        }
         if ($routerInput === '') {
             return '';
         }
         $row = hotspot_resolve_router($routerInput);
+
         return $row ? trim((string) $row['name']) : $routerInput;
     }
 
@@ -552,7 +654,7 @@
         }
 
         $status = (string) $trx->transaction_status;
-        if (!in_array($status, ['paid', 'pending'], true)) {
+        if (!in_array($status, ['paid', 'pending', 'failed'], true)) {
             return false;
         }
 
@@ -1406,13 +1508,17 @@
                 echo json_encode(['status' => 'not_found', 'message' => Lang::T('Transaction not found.')]);
                 exit;
             }
-            if ((string) $check->transaction_status === 'pending') {
+            if ((string) $check->transaction_status === 'pending' || (string) $check->transaction_status === 'failed') {
                 $gateway = strtolower(trim((string) ($check->payment_gateway ?? '')));
                 if ($gateway === 'campay' && function_exists('hotspot_pg_campay_sync_transaction')) {
                     $check = hotspot_pg_campay_sync_transaction($check);
                 } elseif ($gateway === 'mypvit' && function_exists('hotspot_pg_mypvit_sync_transaction')) {
                     $check = hotspot_pg_mypvit_sync_transaction($check);
                 }
+            }
+            if ((string) $check->transaction_status === 'pending' && function_exists('hotspot_retry_activate_payment')) {
+                hotspot_retry_activate_payment($check);
+                $check = ORM::for_table('tbl_hotspot_payments')->find_one($check->id) ?: $check;
             }
             $status = (string) $check->transaction_status;
             $payload = [
@@ -1428,6 +1534,11 @@
                 }
                 $payload['password'] = $credentials['password'];
                 $payload['auto_login'] = true;
+            } elseif ($status === 'failed') {
+                $failReason = hotspot_payment_failure_reason($check);
+                $payload['message'] = $failReason !== ''
+                    ? $failReason
+                    : 'Paiement non confirmé sur votre téléphone. Aucun débit — réessayez et validez la demande Mobile Money avec votre code PIN.';
             }
             echo json_encode($payload);
             exit;

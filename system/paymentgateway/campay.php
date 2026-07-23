@@ -286,6 +286,15 @@ function campay_payment_notification()
         }
     }
 
+    $hotspotPayment = ORM::for_table('tbl_hotspot_payments')
+        ->where('transaction_id', $reference)
+        ->find_one();
+    if ($hotspotPayment && function_exists('hotspot_pg_campay_sync_transaction')) {
+        hotspot_pg_campay_sync_transaction($hotspotPayment);
+        _log("CamPay Webhook: Hotspot payment handled for $reference");
+        exit();
+    }
+
     $adminPayment = ORM::for_table('admin_subscription_payments')
         ->where('reference', $reference)
         ->where('status', 'pending')

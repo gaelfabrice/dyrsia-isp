@@ -278,6 +278,7 @@ body.theme-light .ho-page table.ho-history-table tbody tr:nth-child(odd) td {
 .ho-badge-paid { background: rgba(16, 185, 129, 0.15); color: #10b981; }
 .ho-badge-pending { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
 .ho-badge-failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.ho-fail-reason { font-size: 11px; color: #94a3b8; margin-top: 4px; line-height: 1.35; max-width: 220px; }
 .ho-badge-cancelled { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
 
 .ho-alert {
@@ -470,6 +471,12 @@ body.theme-light .ho-page code { color: #2563eb; }
                             <span class="ho-badge ho-badge-cancelled">cancelled</span>
                             {else}
                             <span class="ho-badge ho-badge-failed">{$payment.transaction_status|escape}</span>
+                            {if $payment.transaction_status == 'failed'}
+                            {assign var="failReason" value={hotspot_payment_failure_reason payment=$payment}}
+                            {if $failReason}
+                            <div class="ho-fail-reason" title="{$failReason|escape}">{$failReason|escape|truncate:80}</div>
+                            {/if}
+                            {/if}
                             {/if}
                         </td>
                         <td>{$payment.payment_gateway|escape}</td>

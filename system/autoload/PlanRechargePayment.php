@@ -79,16 +79,12 @@ class PlanRechargePayment
 
     public static function isSuccessfulGatewayStatus($status)
     {
-        $status = strtoupper(trim((string) $status));
-
-        return in_array($status, ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'PAID', 'APPROVED'], true);
+        return MobileMoneyGateway::isSuccessfulGatewayStatus($status);
     }
 
     public static function isFailedGatewayStatus($status)
     {
-        $status = strtoupper(trim((string) $status));
-
-        return in_array($status, ['FAILED', 'CANCELLED', 'CANCELED', 'REJECTED', 'DECLINED'], true);
+        return MobileMoneyGateway::isFailedGatewayStatus($status);
     }
 
     public static function adminCanRechargeCustomer($admin, $customerId, $plan)
@@ -409,8 +405,23 @@ class PlanRechargePayment
         $gateway = (string) $payment->gateway;
         if ($payment->status === 'failed' && trim((string) $payment->gateway_reference) !== '') {
             $remote = self::fetchRemoteStatus($payment, $admin);
-            if (self::isSuccessfulGatewayStatus($remote['status'] ?? '')) {
+            $remoteStatus = strtoupper((string) ($remote['status'] ?? 'PENDING'));
+            if (self::isSuccessfulGatewayStatus($remoteStatus)) {
+                $payment->status = 'pending';
+                $payment->save();
+
                 return self::finalizePaidRecharge($payment, $admin, $remote);
+            }
+            if (!self::isFailedGatewayStatus($remoteStatus)) {
+                $payment->status = 'pending';
+                $payment->save();
+
+                return [
+                    'ok' => false,
+                    'pending' => true,
+                    'status' => 'pending',
+                    'message' => 'Vérification CamPay en cours — ne fermez pas cette fenêtre.',
+                ];
             }
 
             return [
@@ -437,6 +448,15 @@ class PlanRechargePayment
             return self::finalizePaidRecharge($payment, $admin, $remote);
         }
         if (self::isFailedGatewayStatus($status)) {
+            $createdAt = strtotime((string) ($payment->created_at ?? ''));
+            if ($createdAt > 0 && (time() - $createdAt) < 90) {
+                return [
+                    'ok' => false,
+                    'pending' => true,
+                    'status' => 'pending',
+                    'message' => 'En attente de confirmation sur votre téléphone…',
+                ];
+            }
             self::markFailed($payment);
 
             return [
@@ -557,6 +577,8 @@ class PlanRechargePayment
 
         global $admin;
         $previousAdmin = $admin;
+        $previousGlobalTrx = $GLOBALS['trx'] ?? null;
+        unset($GLOBALS['trx']);
         $admin = $actingAdmin;
 
         Package::$lastDeviceSyncError = '';
@@ -568,6 +590,23 @@ class PlanRechargePayment
             $operator
         );
         $admin = $previousAdmin;
+        if ($previousGlobalTrx !== null) {
+            $GLOBALS['trx'] = $previousGlobalTrx;
+        } else {
+            unset($GLOBALS['trx']);
+        }
+
+        if (!$recharged) {
+            $activeRecharge = ORM::for_table('tbl_user_recharges')
+                ->where('customer_id', (int) $payment->customer_id)
+                ->where('routers', (string) $payment->server)
+                ->where('plan_id', (int) $payment->plan_id)
+                ->where('status', 'on')
+                ->find_one();
+            if ($activeRecharge && Package::isRechargeActive($activeRecharge)) {
+                $recharged = true;
+            }
+        }
 
         if (!$recharged) {
             _log('Plan recharge Package::rechargeUser failed #' . (int) $payment->id . ' customer=' . (int) $payment->customer_id);

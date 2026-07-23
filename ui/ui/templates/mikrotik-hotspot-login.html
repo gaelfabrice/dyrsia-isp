@@ -515,10 +515,12 @@ async function loadPlans(){
 
 async function poll(ref,max){
   const dl=Date.now()+max*1000;
+  const pollStartDelay=10000;
+  await new Promise(r=>setTimeout(r,pollStartDelay));
   while(Date.now()<dl){
-    await new Promise(r=>setTimeout(r,2000));
     try{const r=await api('hotspot_verify&reference='+encodeURIComponent(ref)+'&format=json',{headers:{Accept:'application/json'}});
     const d=await r.json();if(['paid','failed','cancelled'].includes(d.status))return d;}catch(e){}
+    await new Promise(r=>setTimeout(r,3000));
   }
   return{status:'timeout',message:'Délai dépassé. Vérifiez votre téléphone.'};
 }
@@ -535,14 +537,33 @@ function normalizeHotspotPlainPassword(value) {
   return p;
 }
 
+function hotspotChapFieldsReady() {
+  var chapId = mkField('mk-chap-id');
+  var chapChallenge = mkField('mk-chap-challenge');
+  if (!chapId || !chapChallenge) return false;
+  if (chapId.indexOf('$(') === 0 || chapChallenge.indexOf('$(') === 0) return false;
+  return true;
+}
+
+function hotspotApplyChapHash(passwordInput, plainPassword) {
+  var plain = normalizeHotspotPlainPassword(
+    plainPassword != null ? plainPassword : (passwordInput ? passwordInput.value : '')
+  );
+  if (passwordInput) {
+    passwordInput.value = plain;
+    delete passwordInput.dataset.chapDone;
+  }
+  return plain;
+}
+
 function prepareMikrotikLogin(form) {
   if (!form) return false;
   const passwordInput = form.querySelector('input[name="password"]');
   if (passwordInput) {
+    // HTTP PAP : mot de passe clair (123456) — pas de hash MD5 CHAP côté navigateur.
     passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
     delete passwordInput.dataset.chapDone;
   }
-  // Auth HTTP PAP : mot de passe en clair (profil MikroTik = http-chap,http-pap,mac-cookie).
   return true;
 }
 
@@ -564,8 +585,8 @@ function fillAndSubmitHotspotLogin(username, password) {
   const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
   if (userEl) userEl.value = username || '';
   if (passEl) {
-    passEl.value = password || '123456';
     delete passEl.dataset.chapDone;
+    passEl.value = normalizeHotspotPlainPassword(password || '123456');
   }
   if (typeof hotspotModalClose === 'function') hotspotModalClose();
   submitHotspotLogin();
@@ -579,7 +600,6 @@ function normalizeHotspotLoginPassword(p){
   return p;
 }
 function connecter(user,pass,nom){
-  // Mot de passe hotspot unique (clair) — le CHAP MD5 n'est appliqué qu'à la soumission MikroTik.
   const loginPass='123456';
   hotspotSwal().fire({html:'<b>✅ '+escHtml(nom)+'</b><br>Connexion Internet en cours…<br><small>Un SMS de rappel peut suivre (optionnel)</small>',showConfirmButton:false,timer:1500});
   setTimeout(function(){fillAndSubmitHotspotLogin(user,loginPass);},800);
@@ -624,14 +644,17 @@ async function payer(nom,prix,currency,validite,planid,routername){
     const d=await parseApiJson(r);
     if(!d.ok){SwalUi.fire('Refusé',d.message||'Erreur paiement','error');return;}
     const ussd=d.ussd_code||'*126#';
-    SwalUi.fire({
+    await SwalUi.fire({
       title:'Validez sur votre téléphone',
       html:'<div class="hs-ussd-code">'+escHtml(ussd)+'</div><p class="hs-ussd-hint">Validez la demande Mobile Money sur votre téléphone.<br><small>Ne fermez pas cette page.</small></p>',
       modalTheme:'ussd',
-      showConfirmButton:false
+      showConfirmButton:false,
+      allowOutsideClick:false,
+      allowEscapeKey:false
     });
-    const res=await poll(d.reference,60);
+    const res=await poll(d.reference,120);
     SwalUi.close();
+    await new Promise(r=>setTimeout(r,150));
     if(res.status==='paid')connecter(res.voucher_code||res.username,'123456',nom);
     else if(res.status==='failed')SwalUi.fire('Échec',res.message||'Transaction refusée','error');
     else SwalUi.fire('En attente','Confirmation non reçue. Si validé, attendez 1 minute.','warning');

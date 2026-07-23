@@ -15,6 +15,7 @@
     var payBtn = document.getElementById('planMomoPay');
     var cancelBtn = document.getElementById('planMomoCancel');
     var PAY_WAIT_SECONDS = 120;
+    var PAY_POLL_START_DELAY_MS = 10000;
     var payCountdownTimer = null;
     var waitingForPayment = false;
 
@@ -103,9 +104,19 @@
 
     function pollPayment(paymentId, maxSeconds) {
         var deadline = Date.now() + (maxSeconds * 1000);
+        var started = false;
 
         return new Promise(function (resolve) {
+            function scheduleNext(delayMs) {
+                setTimeout(tick, delayMs);
+            }
+
             function tick() {
+                if (!started) {
+                    started = true;
+                    scheduleNext(PAY_POLL_START_DELAY_MS);
+                    return;
+                }
                 fetch(cfg.statusUrl + '&payment_id=' + encodeURIComponent(paymentId), {
                     credentials: 'same-origin',
                     headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
@@ -116,21 +127,29 @@
                             resolve({ status: 'paid', data: data });
                             return;
                         }
-                        if (data.pending) {
+                        if (data.pending || data.status === 'pending') {
                             if (Date.now() >= deadline) {
                                 resolve({ status: 'timeout', data: data });
                             } else {
-                                setTimeout(tick, 2500);
+                                scheduleNext(2500);
                             }
                             return;
                         }
-                        resolve({ status: 'failed', data: data });
+                        if (data.status === 'failed') {
+                            resolve({ status: 'failed', data: data });
+                            return;
+                        }
+                        if (Date.now() >= deadline) {
+                            resolve({ status: 'timeout', data: data });
+                        } else {
+                            scheduleNext(2500);
+                        }
                     })
                     .catch(function () {
                         if (Date.now() >= deadline) {
                             resolve({ status: 'timeout', data: {} });
                         } else {
-                            setTimeout(tick, 2500);
+                            scheduleNext(2500);
                         }
                     });
             }
@@ -170,19 +189,21 @@
                         clearPayCountdown();
                     }
                 }, 1000);
+                pollPayment(paymentId, PAY_WAIT_SECONDS).then(function (result) {
+                    clearPayCountdown();
+                    waitingForPayment = false;
+                    handlePollResult(result);
+                });
             },
             willClose: clearPayCountdown
-        });
-
-        pollPayment(paymentId, PAY_WAIT_SECONDS).then(function (result) {
-            clearPayCountdown();
-            waitingForPayment = false;
-            handlePollResult(result);
         });
     }
 
     function handlePollResult(result) {
         var data = result.data || {};
+        if (typeof Swal !== 'undefined') {
+            Swal.close();
+        }
         if (result.status === 'paid') {
             if (typeof Swal !== 'undefined') {
                 Swal.fire({

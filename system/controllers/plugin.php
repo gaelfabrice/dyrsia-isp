@@ -296,7 +296,7 @@ if ($pluginFn === 'hotspot_verify') {
         $pendingCampay = ORM::for_table('tbl_hotspot_payments')
             ->where('transaction_ref', $reference)
             ->where('payment_gateway', 'campay')
-            ->where('transaction_status', 'pending')
+            ->where_in('transaction_status', ['pending', 'failed'])
             ->find_one();
         if ($pendingCampay && function_exists('hotspot_pg_campay_sync_transaction')) {
             hotspot_pg_campay_sync_transaction($pendingCampay);

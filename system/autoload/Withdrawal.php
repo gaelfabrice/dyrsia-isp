@@ -157,7 +157,7 @@ class Withdrawal
             ->where_in('type', ['Hotspot', 'PPPOE'])
             ->where_not_equal('method', 'Customer - Balance');
         if ($adminId !== null) {
-            $query->where('admin_id', (int) $adminId);
+            AdminScope::applyTransactionsQueryByAdminId($query, (int) $adminId);
         }
         $rows = $query->find_many();
         $gross = 0.0;

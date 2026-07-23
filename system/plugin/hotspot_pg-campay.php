@@ -139,6 +139,89 @@ function hotspot_pg_campay_respond_success($txref, $result = [], $phone = '')
     exit;
 }
 
+function hotspot_pg_campay_is_successful_status($status)
+{
+    return MobileMoneyGateway::isSuccessfulGatewayStatus($status);
+}
+
+function hotspot_pg_campay_is_failed_status($status)
+{
+    return MobileMoneyGateway::isFailedGatewayStatus($status);
+}
+
+function hotspot_pg_campay_extract_failure_reason(array $campayData = [], $fallback = '')
+{
+    foreach (['reason', 'message', 'detail', 'failure_reason', 'error', 'description'] as $key) {
+        $value = trim((string) ($campayData[$key] ?? ''));
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    $status = strtoupper(trim((string) ($campayData['status'] ?? '')));
+    if ($status !== '' && MobileMoneyGateway::isFailedGatewayStatus($status)) {
+        return 'CamPay : transaction refusée ou non confirmée sur le téléphone.';
+    }
+
+    return trim((string) $fallback);
+}
+
+function hotspot_pg_campay_payment_failure_reason($trx)
+{
+    if (!$trx) {
+        return '';
+    }
+
+    $meta = json_decode((string) ($trx->gateway_response ?? '{}'), true);
+    if (!is_array($meta)) {
+        return '';
+    }
+
+    if (!empty($meta['campay_failure_reason'])) {
+        return (string) $meta['campay_failure_reason'];
+    }
+
+    if (!empty($meta['campay_poll']) && is_array($meta['campay_poll'])) {
+        return hotspot_pg_campay_extract_failure_reason($meta['campay_poll']);
+    }
+
+    if (!empty($meta['response']) && is_array($meta['response'])) {
+        return hotspot_pg_campay_extract_failure_reason($meta['response']);
+    }
+
+    if ((string) ($trx->transaction_status ?? '') === 'failed') {
+        return 'Paiement non confirmé — aucun débit Mobile Money.';
+    }
+
+    return '';
+}
+
+function hotspot_pg_campay_customer_has_active_plan($trx)
+{
+    if (!$trx) {
+        return false;
+    }
+    $customer = HotspotCustomer::resolveCustomerFromPayment($trx);
+    if (!$customer) {
+        return false;
+    }
+    if (function_exists('hotspot_customer_has_active_recharge')) {
+        return hotspot_customer_has_active_recharge(
+            (int) $customer->id,
+            (string) ($trx->router_name ?? '')
+        );
+    }
+
+    $recharge = ORM::for_table('tbl_user_recharges')
+        ->where('customer_id', (int) $customer->id)
+        ->where('plan_id', (int) ($trx->plan_id ?? 0))
+        ->where('routers', (string) ($trx->router_name ?? ''))
+        ->where('status', 'on')
+        ->find_one();
+
+    return $recharge && Package::isRechargeActive($recharge);
+}
+
 function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 {
     $phone = $trx->phone_number;
@@ -154,7 +237,9 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     if (!empty($gatewayMeta['customer_address'])) {
         $address = $gatewayMeta['customer_address'];
     }
-    $routername = $trx->router_name;
+    $routername = function_exists('hotspot_normalize_router_name')
+        ? hotspot_normalize_router_name((string) $trx->router_name)
+        : trim((string) $trx->router_name);
     $planid = $trx->plan_id;
     $mac_address = $trx->mac_address;
 
@@ -180,8 +265,12 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         $networkPassword = HotspotCustomer::defaultPassword();
 
         if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator)) {
-            _log('[CamPay Hotspot] Activation failed for trx ' . $trx->transaction_ref);
-            return false;
+            if (hotspot_pg_campay_customer_has_active_plan($trx)) {
+                _log('[CamPay Hotspot] rechargeUser returned false but active recharge exists for trx ' . $trx->transaction_ref);
+            } else {
+                _log('[CamPay Hotspot] Activation failed for trx ' . $trx->transaction_ref);
+                return false;
+            }
         }
 
         HotspotCustomer::forceMikrotikHotspotPassword($customer->username, $routername, $networkPassword);
@@ -216,6 +305,7 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         }
     }
 
+    $trx->router_name = $routername;
     $trx->voucher_code = $customer->username;
     $trx->payment_method = 'CamPay - ' . $operator;
     $trx->payment_date = date('Y-m-d H:i:s');
@@ -236,7 +326,7 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
         return $trx;
     }
 
-    if (in_array($trx->transaction_status, ['paid', 'failed', 'cancelled'], true)) {
+    if ((string) $trx->transaction_status === 'paid') {
         return $trx;
     }
 
@@ -269,7 +359,7 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
     }
 
     $result = json_decode($response, true);
-    $status = strtoupper($result['status'] ?? 'PENDING');
+    $status = strtoupper(trim((string) ($result['status'] ?? 'PENDING')));
     $operator = $result['operator'] ?? 'CamPay';
 
     $existingMeta = json_decode((string) ($trx->gateway_response ?? '{}'), true);
@@ -277,9 +367,13 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
         $existingMeta = [];
     }
     $existingMeta['campay_poll'] = $result;
+    $existingMeta['campay_poll_at'] = date('Y-m-d H:i:s');
     $trx->gateway_response = json_encode($existingMeta, JSON_UNESCAPED_UNICODE);
 
-    if ($status === 'SUCCESSFUL') {
+    if (hotspot_pg_campay_is_successful_status($status)) {
+        if ((string) $trx->transaction_status === 'failed') {
+            $trx->transaction_status = 'pending';
+        }
         try {
             hotspot_pg_campay_activate_user($trx, $operator);
         } catch (Throwable $e) {
@@ -287,14 +381,36 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
             Package::$lastDeviceSyncError = $e->getMessage();
         }
         if ((string) $trx->transaction_status === 'pending') {
-            // CamPay confirmed payment but local activation failed — keep pending for retry.
+            if (hotspot_pg_campay_customer_has_active_plan($trx)) {
+                $credentials = HotspotCustomer::credentialsFromPayment($trx);
+                if ($credentials['username'] !== '') {
+                    $trx->voucher_code = $credentials['username'];
+                }
+                $trx->payment_method = 'CamPay - ' . $operator;
+                $trx->payment_date = date('Y-m-d H:i:s');
+                $trx->transaction_status = 'paid';
+            }
+            Message::sendTelegram(
+                'CamPay Hotspot: paiement OK mais activation en attente — trx '
+                . ($trx->transaction_ref ?? $trx->transaction_id)
+            );
             $trx->save();
         }
-    } elseif ($status === 'FAILED') {
-        $trx->transaction_status = 'failed';
-        $trx->payment_date = date('Y-m-d H:i:s');
+    } elseif (hotspot_pg_campay_is_failed_status($status)) {
+        if (!hotspot_pg_campay_customer_has_active_plan($trx)) {
+            $existingMeta['campay_failure_reason'] = hotspot_pg_campay_extract_failure_reason(
+                is_array($result) ? $result : [],
+                'CamPay : transaction refusée, expirée ou annulée sur le téléphone (aucun débit).'
+            );
+            $trx->gateway_response = json_encode($existingMeta, JSON_UNESCAPED_UNICODE);
+            $trx->transaction_status = 'failed';
+            $trx->payment_date = date('Y-m-d H:i:s');
+        }
         $trx->save();
     } else {
+        if ((string) $trx->transaction_status === 'failed') {
+            $trx->transaction_status = 'pending';
+        }
         $trx->save();
     }
 

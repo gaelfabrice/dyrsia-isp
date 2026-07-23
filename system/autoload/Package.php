@@ -197,6 +197,38 @@ class Package
     }
 
     /**
+     * Propriétaire de la recharge : admin connecté, sinon admin du routeur / du forfait (portail captif).
+     */
+    public static function resolveRechargeAdminId($router_name, $plan = null)
+    {
+        global $admin;
+
+        if (!empty($admin['id'])) {
+            return (int) $admin['id'];
+        }
+
+        $router_name = trim((string) $router_name);
+        if ($router_name !== '' && function_exists('hotspot_normalize_router_name')) {
+            $router_name = hotspot_normalize_router_name($router_name);
+        }
+        if ($router_name !== '' && class_exists('WifiZoneHotspot')) {
+            $ownerId = WifiZoneHotspot::routerAdminId($router_name);
+            if ($ownerId > 0) {
+                return $ownerId;
+            }
+        }
+
+        if (is_array($plan) && !empty($plan['admin_id'])) {
+            return (int) $plan['admin_id'];
+        }
+        if (is_object($plan) && !empty($plan->admin_id)) {
+            return (int) $plan->admin_id;
+        }
+
+        return 0;
+    }
+
+    /**
      * @param int   $id_customer String user identifier
      * @param string $router_name router name for this package
      * @param int   $plan_id plan id for this package
@@ -222,6 +254,9 @@ class Package
 
         if ($id_customer == '' or $router_name == '' or $plan_id == '') {
             return false;
+        }
+        if ($router_name !== '' && function_exists('hotspot_normalize_router_name')) {
+            $router_name = hotspot_normalize_router_name($router_name);
         }
         if (trim($gateway) == 'Voucher' && $id_customer == 0) {
             $isVoucher = true;
@@ -268,6 +303,8 @@ class Package
                 r2(getUrl('dashboard'), 'e', Lang::T('You do not have permission to access this page'));
             }
         }
+
+        $rechargeAdminId = (int) self::resolveRechargeAdminId($router_name, $p);
 
         if ($p['validity_unit'] == 'Period') {
             // if customer has attribute Expired Date use it
@@ -466,11 +503,7 @@ class Package
                 $b->method = "$gateway - $channel";
                 $b->routers = $router_name;
                 $b->type = $p['type'];
-                if ($admin) {
-                    $b->admin_id = ($admin['id']) ? $admin['id'] : '0';
-                } else {
-                    $b->admin_id = '0';
-                }
+                $b->admin_id = $rechargeAdminId;
                 $b->save();
             }
 
@@ -504,11 +537,8 @@ class Package
             $t->routers = $router_name;
             $t->note = $note;
             $t->type = $p['type'];
-            if ($admin) {
-                $t->admin_id = ($admin['id']) ? $admin['id'] : '0';
-            } else {
-                $t->admin_id = '0';
-            }
+            $t->admin_id = $rechargeAdminId;
+            $t->type = $p['type'];
             $t->save();
 
             if ($p['validity_unit'] == 'Period') {
@@ -588,11 +618,7 @@ class Package
                 $d->method = "$gateway - $channel";
                 $d->routers = $router_name;
                 $d->type = $p['type'];
-                if ($admin) {
-                    $d->admin_id = ($admin['id']) ? $admin['id'] : '0';
-                } else {
-                    $d->admin_id = '0';
-                }
+                $d->admin_id = $rechargeAdminId;
                 $d->save();
             }
 
@@ -622,11 +648,7 @@ class Package
             $t->method = "$gateway - $channel";
             $t->note = $note;
             $t->routers = $router_name;
-            if ($admin) {
-                $t->admin_id = ($admin['id']) ? $admin['id'] : '0';
-            } else {
-                $t->admin_id = '0';
-            }
+            $t->admin_id = $rechargeAdminId;
             $t->type = $p['type'];
             $t->save();
 

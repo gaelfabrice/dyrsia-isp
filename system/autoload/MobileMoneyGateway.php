@@ -80,6 +80,20 @@ class MobileMoneyGateway
             }
         }
 
+        public static function isSuccessfulGatewayStatus($status)
+        {
+            $status = strtoupper(trim((string) $status));
+
+            return in_array($status, ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'PAID', 'APPROVED'], true);
+        }
+
+        public static function isFailedGatewayStatus($status)
+        {
+            $status = strtoupper(trim((string) $status));
+
+            return in_array($status, ['FAILED', 'CANCELLED', 'CANCELED', 'REJECTED', 'DECLINED'], true);
+        }
+
         public static function isConfigured($gateway = null)
         {
             global $config;
@@ -289,7 +303,8 @@ class MobileMoneyGateway
             return 'const HOTSPOT_PAYMENT_GATEWAY = ' . json_encode($profile['gateway']) . ";\n"
                 . 'const HOTSPOT_PAYMENT_PROFILE = ' . $profileJson . ";\n"
                 . <<<'JS'
-        const CAMPAY_WAIT_SECONDS = 60;
+        const CAMPAY_WAIT_SECONDS = 120;
+        const CAMPAY_POLL_START_DELAY_MS = 10000;
         function parsePaymentUrl(paymentUrl) {
             try {
                 const url = new URL(paymentUrl, APP_URL + '/');
@@ -362,21 +377,25 @@ class MobileMoneyGateway
         }
         async function pollPaymentStatus(reference, maxSeconds) {
             const deadline = Date.now() + (maxSeconds * 1000);
+            await new Promise(function (r) { setTimeout(r, CAMPAY_POLL_START_DELAY_MS); });
             while (Date.now() < deadline) {
-                await new Promise(function (r) { setTimeout(r, 3000); });
                 try {
                     const res = await fetchHotspotEndpoint('hotspot_verify&reference=' + encodeURIComponent(reference) + '&format=json', { headers: { 'Accept': 'application/json' } });
-                    if (!res.ok) continue;
+                    if (!res.ok) {
+                        await new Promise(function (r) { setTimeout(r, 3000); });
+                        continue;
+                    }
                     const data = await res.json();
                     if (data.status === 'paid' || data.status === 'failed' || data.status === 'cancelled') return data;
                 } catch (e) {}
+                await new Promise(function (r) { setTimeout(r, 3000); });
             }
             return { status: 'timeout', message: 'Délai dépassé. Vérifiez votre téléphone puis réessayez.' };
         }
         let campayCountdownTimer = null;
         function openUssdWaitModal(phone, operator, planName, price, currency) {
             let secondsLeft = CAMPAY_WAIT_SECONDS;
-            Swal.fire({ title: 'Paiement en cours…', html: buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency), allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false,
+            return Swal.fire({ title: 'Paiement en cours…', html: buildUssdWaitHtml(phone, operator, secondsLeft, planName, price, currency), allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false,
                 didOpen: function () {
                     campayCountdownTimer = setInterval(function () {
                         secondsLeft -= 1;
@@ -516,9 +535,9 @@ class MobileMoneyGateway
             catch (e) { await Swal.fire({ title: 'Erreur réseau', text: (e && e.message) ? e.message : 'Impossible de contacter le serveur.', icon: 'error' }); return; }
             if (!initResult.ok) { await Swal.fire({ title: 'Paiement refusé', text: initResult.message || 'Erreur', icon: 'error' }); return; }
             const operator = detectMobileOperator(phone, initResult.operator, initResult.ussd_code);
-            openUssdWaitModal(phone, operator, planName, price, currency);
+            await openUssdWaitModal(phone, operator, planName, price, currency);
             const paymentResult = await pollPaymentStatus(initResult.reference, CAMPAY_WAIT_SECONDS);
-            Swal.close();
+            if (typeof Swal !== 'undefined') await Swal.close();
             if (paymentResult.status === 'paid') {
                 const loginUser = paymentResult.username || paymentResult.voucher_code || '';
                 const loginPass = paymentResult.password || '123456';
@@ -622,10 +641,28 @@ class MobileMoneyGateway
         if (/^[a-f0-9]{32}$/i.test(p)) return '123456';
         return p;
     }
+    function hotspotChapFieldsReady() {
+        var chapId = typeof mkField === 'function' ? mkField('mk-chap-id') : '';
+        var chapChallenge = typeof mkField === 'function' ? mkField('mk-chap-challenge') : '';
+        if (!chapId || !chapChallenge) return false;
+        if (chapId.indexOf('$(') === 0 || chapChallenge.indexOf('$(') === 0) return false;
+        return true;
+    }
+    function hotspotApplyChapHash(passwordInput, plainPassword) {
+        var plain = normalizeHotspotPlainPassword(
+            plainPassword != null ? plainPassword : (passwordInput ? passwordInput.value : '')
+        );
+        if (passwordInput) {
+            passwordInput.value = plain;
+            delete passwordInput.dataset.chapDone;
+        }
+        return plain;
+    }
     function prepareMikrotikLogin(form) {
         if (!form) return false;
         const passwordInput = form.querySelector('input[name="password"]');
         if (passwordInput) {
+            // HTTP PAP : mot de passe clair — pas de hash CHAP JS (login-by PAP en premier sur MikroTik).
             passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
             delete passwordInput.dataset.chapDone;
         }
@@ -645,13 +682,12 @@ class MobileMoneyGateway
         const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
         if (userEl) userEl.value = username || '';
         if (passEl) {
-            passEl.value = password || username || '';
             delete passEl.dataset.chapDone;
+            passEl.value = normalizeHotspotPlainPassword(password || '123456');
         }
         if (!form) return;
         if (typeof Swal !== 'undefined' && Swal.close) Swal.close();
-        prepareMikrotikLogin(form);
-        form.submit();
+        submitHotspotLogin();
     }
     function fillAndSubmitLogin(username, password) {
         fillAndSubmitHotspotLogin(username, password);
@@ -887,7 +923,7 @@ class MobileMoneyGateway
             if (strpos($html, 'function fillAndSubmitHotspotLogin') === false && strpos($html, 'function prepareMikrotikLogin') !== false) {
                 $html = preg_replace(
                     '/(?=function prepareMikrotikLogin\s*\()/',
-                    "function fillAndSubmitHotspotLogin(username, password) {\n    const form = document.getElementById('loginForm');\n    const userEl = document.getElementById('user') || document.getElementById('loginUsername');\n    const passEl = document.getElementById('pass') || document.getElementById('loginPassword');\n    if (userEl) userEl.value = username || '';\n    if (passEl) { passEl.value = password || username || ''; delete passEl.dataset.chapDone; }\n    if (!form) return;\n    if (typeof Swal !== 'undefined' && Swal.close) Swal.close();\n    prepareMikrotikLogin(form);\n    form.submit();\n}\nfunction fillAndSubmitLogin(username, password) { fillAndSubmitHotspotLogin(username, password); }\n",
+                    "function fillAndSubmitHotspotLogin(username, password) {\n    const form = document.getElementById('loginForm');\n    const userEl = document.getElementById('user') || document.getElementById('loginUsername');\n    const passEl = document.getElementById('pass') || document.getElementById('loginPassword');\n    if (userEl) userEl.value = username || '';\n    if (passEl) { passEl.value = normalizeHotspotPlainPassword(password || '123456'); delete passEl.dataset.chapDone; }\n    if (!form) return;\n    if (typeof Swal !== 'undefined' && Swal.close) Swal.close();\n    prepareMikrotikLogin(form);\n    form.submit();\n}\nfunction fillAndSubmitLogin(username, password) { fillAndSubmitHotspotLogin(username, password); }\n",
                     $html,
                     1
                 );
