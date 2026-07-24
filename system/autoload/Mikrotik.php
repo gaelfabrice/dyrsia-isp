@@ -8739,6 +8739,129 @@ class Mikrotik
     }
 
     /**
+     * Force le profil hotspot actif à servir hotspot/login.html (DYRSIA), pas flash/hotspot MikroTik.
+     *
+     * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>, profile?: string}
+     */
+    public static function ensureHotspotCaptiveProfileReady($client, array $config, $hotspotName = '')
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $errors = [];
+        $actions = [];
+        $hotspotName = trim((string) $hotspotName);
+        if ($hotspotName === '') {
+            $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
+        }
+
+        $configuredProfile = trim((string) ($config['hotspot_profile'] ?? 'default'));
+        $profileName = self::resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile);
+
+        $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
+        $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
+        $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
+        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-pap,http-chap,mac-cookie'));
+        $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
+        $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
+        if ($idleTimeout === '') {
+            $idleTimeout = '00:10:00';
+        }
+        $useRadius = self::hotspotRadiusEnabled($config);
+        $loginMethodsForProfile = $useRadius
+            ? self::normalizeHotspotLoginByForRadius($loginMethods)
+            : self::normalizeHotspotLoginBy($loginMethods);
+
+        $hotspotAddress = '';
+        $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
+        $network = self::parseHotspotLocalNetwork($localAddress);
+        if ($network !== null) {
+            $hotspotAddress = (string) ($network['gateway'] ?? '');
+        }
+        if ($hotspotAddress === '' && $hotspotName !== '') {
+            $listenIp = self::getHotspotServerAddress($client, $hotspotName);
+            if ($listenIp !== '') {
+                $hotspotAddress = $listenIp;
+            }
+        }
+
+        try {
+            self::ensureHotspotProfileConfigured(
+                $client,
+                $profileName,
+                $dnsName,
+                $smtpServer,
+                $dnsServer,
+                $loginMethodsForProfile,
+                $cookieLifetime,
+                $idleTimeout,
+                $useRadius,
+                $hotspotAddress
+            );
+            $actions[] = 'profil « ' . $profileName . ' » → html-directory=hotspot';
+        } catch (Throwable $e) {
+            $errors[] = 'profil hotspot : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'profil hotspot : ' . $e->getMessage();
+        }
+
+        $htmlDir = self::getHotspotProfileHtmlDirectory($client, $profileName);
+        if ($htmlDir !== '' && !self::hotspotHtmlDirectoryIsDyrsia($htmlDir)) {
+            $errors[] = 'Profil « ' . $profileName . ' » utilise html-directory=« ' . $htmlDir
+                . ' » (page MikroTik par défaut). Attendu : « hotspot ».';
+        }
+
+        return [
+            'ok' => empty($errors),
+            'errors' => $errors,
+            'actions' => $actions,
+            'profile' => $profileName,
+        ];
+    }
+
+    private static function getHotspotProfileHtmlDirectory($client, $profileName)
+    {
+        $profileName = trim((string) $profileName);
+        if ($profileName === '') {
+            return '';
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/profile/print'))
+                    ->setArgument('.proplist', 'name,html-directory')
+                    ->setQuery(RouterOS\Query::where('name', $profileName))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                return trim((string) $row->getProperty('html-directory'));
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    private static function normalizeHotspotHtmlDirectory($value)
+    {
+        $value = trim(strtolower((string) $value));
+        $value = str_replace('\\', '/', $value);
+
+        return trim($value, '/');
+    }
+
+    private static function hotspotHtmlDirectoryIsDyrsia($htmlDir)
+    {
+        $htmlDir = self::normalizeHotspotHtmlDirectory($htmlDir);
+
+        return $htmlDir === 'hotspot';
+    }
+
+    /**
      * Cible le profil du serveur hotspot existant plutôt que « default » si mal configuré dans DYRSIA.
      */
     private static function resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile)
@@ -9914,6 +10037,17 @@ class Mikrotik
             $errors[] = 'hotspot/login.html trop petit (' . $loginSize . ' octets).';
         } else {
             $actions[] = 'login.html present (' . $loginSize . ' octets)';
+        }
+
+        $profileName = self::getHotspotServerProfileName($client, $hotspotName);
+        if ($profileName !== '') {
+            $htmlDir = self::getHotspotProfileHtmlDirectory($client, $profileName);
+            if ($htmlDir !== '' && !self::hotspotHtmlDirectoryIsDyrsia($htmlDir)) {
+                $errors[] = 'Profil « ' . $profileName . ' » : html-directory=« ' . $htmlDir
+                    . ' » — relancez Send login.html pour basculer sur « hotspot ».';
+            } else {
+                $actions[] = 'html-directory=hotspot (profil « ' . $profileName . ' »)';
+            }
         }
 
         try {

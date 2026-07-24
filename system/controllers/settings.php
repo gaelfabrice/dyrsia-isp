@@ -2448,6 +2448,15 @@ HTML;
                             true
                         );
 
+                    $profileReady = Mikrotik::ensureHotspotCaptiveProfileReady($client, $config, $hotspotServerName);
+                    if (empty($profileReady['ok'])) {
+                        r2(
+                            $hotspotSettingsUrl(),
+                            'e',
+                            'Profil hotspot : ' . implode(' | ', $profileReady['errors'] ?? ['erreur inconnue'])
+                        );
+                    }
+
                     $deployResult = Mikrotik::deployHotspotLoginHtml($client, $renderedLoginHtml, $loginFetchUrls);
                     if (empty($deployResult['ok'])) {
                         $localDevHint = $isLocalHotspotDev
@@ -2746,6 +2755,18 @@ HTML;
                 }
 
                 @set_time_limit(600);
+                $profileReady = Mikrotik::ensureHotspotCaptiveProfileReady($client, $config, $hotspotServerName);
+                if (empty($profileReady['ok'])) {
+                    r2(
+                        $hotspotSettingsUrl(),
+                        'e',
+                        'Profil hotspot : ' . implode(' | ', $profileReady['errors'] ?? ['erreur inconnue'])
+                    );
+                }
+                $profileNote = !empty($profileReady['actions'])
+                    ? ' ' . implode(', ', $profileReady['actions']) . '.'
+                    : '';
+
                 $deployResult = Mikrotik::deployHotspotLoginHtml($client, $renderedLoginHtml, $loginFetchUrls);
                 if (empty($deployResult['ok'])) {
                     $sendErrors = $deployResult['errors'] ?? ['échec inconnu'];
@@ -2825,6 +2846,7 @@ HTML;
                     . $sentPath
                     . ' (' . $deployMethod . ', ' . $routerLoginSize . ' octets), walled-garden OK.'
                     . $hotspotSetupNote
+                    . $profileNote
                     . $planSyncNote
                     . $portalNote
                     . ' ID: ' . $uploadId . '.'
