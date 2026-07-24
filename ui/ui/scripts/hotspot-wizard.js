@@ -388,11 +388,22 @@
     function setLoginMethodsFromRouter(loginBy) {
         var methods = String(loginBy || '').toLowerCase().split(',').map(function (m) {
             m = m.trim();
-            if (m === 'chap') return 'http-chap';
             if (m === 'cookie') return 'mac-cookie';
             return m;
+        }).filter(function (m) {
+            return m && m !== 'chap' && m !== 'http-chap';
         });
+        if (methods.indexOf('http-pap') === -1) {
+            methods.unshift('http-pap');
+        }
+        if (methods.indexOf('mac-cookie') === -1) {
+            methods.push('mac-cookie');
+        }
         document.querySelectorAll('input[name="hotspot_login_methods[]"]').forEach(function (cb) {
+            if (cb.disabled && cb.value === 'http-pap') {
+                cb.checked = true;
+                return;
+            }
             cb.checked = methods.indexOf(cb.value) !== -1;
         });
     }
@@ -1077,12 +1088,14 @@
     function loginMethodsSummary() {
         var selected = [];
         document.querySelectorAll('input[name="hotspot_login_methods[]"]:checked').forEach(function (cb) {
-            if (cb.value === 'http-chap') selected.push('HTTP CHAP');
-            else if (cb.value === 'http-pap') selected.push('HTTP PAP');
+            if (cb.value === 'http-pap') selected.push('HTTP PAP');
             else if (cb.value === 'mac-cookie') selected.push('MAC COOKIE');
-            else selected.push(cb.value);
+            else if (cb.value !== 'http-chap') selected.push(cb.value);
         });
-        return selected.length ? selected.join(', ') : '(aucune)';
+        if (selected.indexOf('HTTP PAP') === -1) {
+            selected.unshift('HTTP PAP');
+        }
+        return selected.length ? selected.join(', ') : 'HTTP PAP, MAC COOKIE';
     }
 
     function buildSummary() {

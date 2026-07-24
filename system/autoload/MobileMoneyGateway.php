@@ -641,35 +641,13 @@ class MobileMoneyGateway
         if (/^[a-f0-9]{32}$/i.test(p)) return '123456';
         return p;
     }
-    function hotspotChapFieldsReady() {
-        var chapId = typeof mkField === 'function' ? mkField('mk-chap-id') : '';
-        var chapChallenge = typeof mkField === 'function' ? mkField('mk-chap-challenge') : '';
-        if (!chapId || !chapChallenge) return false;
-        if (chapId.indexOf('$(') === 0 || chapChallenge.indexOf('$(') === 0) return false;
-        return true;
-    }
-    function hotspotApplyChapHash(passwordInput, plainPassword) {
-        var plain = normalizeHotspotPlainPassword(
-            plainPassword != null ? plainPassword : (passwordInput ? passwordInput.value : '')
-        );
-        if (!passwordInput) return plain;
-        if (passwordInput.dataset.chapDone === '1') return passwordInput.value;
-        if (hotspotChapFieldsReady() && typeof hexMD5 === 'function') {
-            var chapId = typeof mkField === 'function' ? mkField('mk-chap-id') : '';
-            var chapChallenge = typeof mkField === 'function' ? mkField('mk-chap-challenge') : '';
-            passwordInput.value = hexMD5(chapId + plain + chapChallenge);
-            passwordInput.dataset.chapDone = '1';
-            return passwordInput.value;
-        }
-        passwordInput.value = plain;
-        delete passwordInput.dataset.chapDone;
-        return plain;
-    }
     function prepareMikrotikLogin(form) {
         if (!form) return false;
         const passwordInput = form.querySelector('input[name="password"]');
         if (passwordInput) {
-            hotspotApplyChapHash(passwordInput);
+            // PAP uniquement : mot de passe clair (pas de CHAP / MD5).
+            passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
+            delete passwordInput.dataset.chapDone;
         }
         return true;
     }

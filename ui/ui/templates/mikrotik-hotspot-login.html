@@ -76,12 +76,10 @@ body{padding-top:10px;padding-bottom:10px}
 </style>
 </head>
 <body>
-<!-- Vars MikroTik hors JS : évite de casser tout le script si chap/mac contient des guillemets -->
+<!-- Vars MikroTik hors JS (PAP only — pas de CHAP) -->
 <textarea id="mk-identity" style="display:none" aria-hidden="true">$(identity)</textarea>
 <textarea id="mk-mac" style="display:none" aria-hidden="true">$(mac)</textarea>
 <textarea id="mk-ip" style="display:none" aria-hidden="true">$(ip)</textarea>
-<textarea id="mk-chap-id" style="display:none" aria-hidden="true">$(chap-id)</textarea>
-<textarea id="mk-chap-challenge" style="display:none" aria-hidden="true">$(chap-challenge)</textarea>
 <textarea id="mk-error" style="display:none" aria-hidden="true">$(error)</textarea>
 
 <div class="container">
@@ -537,39 +535,13 @@ function normalizeHotspotPlainPassword(value) {
   return p;
 }
 
-function hotspotChapFieldsReady() {
-  var chapId = mkField('mk-chap-id');
-  var chapChallenge = mkField('mk-chap-challenge');
-  if (!chapId || !chapChallenge) return false;
-  if (chapId.indexOf('$(') === 0 || chapChallenge.indexOf('$(') === 0) return false;
-  return true;
-}
-
-function hotspotApplyChapHash(passwordInput, plainPassword) {
-  var plain = normalizeHotspotPlainPassword(
-    plainPassword != null ? plainPassword : (passwordInput ? passwordInput.value : '')
-  );
-  if (!passwordInput) return plain;
-  if (passwordInput.dataset.chapDone === '1') return passwordInput.value;
-  // Si MikroTik a injecté un challenge CHAP, envoyer la réponse MD5 (sinon erreur « challenge response »).
-  if (hotspotChapFieldsReady() && typeof hexMD5 === 'function') {
-    var chapId = mkField('mk-chap-id');
-    var chapChallenge = mkField('mk-chap-challenge');
-    passwordInput.value = hexMD5(chapId + plain + chapChallenge);
-    passwordInput.dataset.chapDone = '1';
-    return passwordInput.value;
-  }
-  // Mode PAP : mot de passe clair.
-  passwordInput.value = plain;
-  delete passwordInput.dataset.chapDone;
-  return plain;
-}
-
 function prepareMikrotikLogin(form) {
   if (!form) return false;
   const passwordInput = form.querySelector('input[name="password"]');
   if (passwordInput) {
-    hotspotApplyChapHash(passwordInput);
+    // PAP uniquement : mot de passe clair (pas de CHAP / MD5).
+    passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
+    delete passwordInput.dataset.chapDone;
   }
   return true;
 }

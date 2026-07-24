@@ -703,17 +703,14 @@
                             <div class="form-group">
                                 <label class="col-md-4 control-label">Login</label>
                                 <div class="col-md-8">
-                                    <p class="help-block" style="margin-top:0;margin-bottom:8px;">Méthodes d'authentification (<code>login-by</code>) appliquées sur le profil MikroTik.</p>
+                                    <p class="help-block" style="margin-top:0;margin-bottom:8px;">Authentification portail captif : <strong>HTTP PAP</strong> (mot de passe clair) + MAC COOKIE. CHAP désactivé (incompatible avec le portail DYRSIA).</p>
+                                    <input type="hidden" name="hotspot_login_methods[]" value="http-pap">
                                     <label class="checkbox-inline" style="display:block;margin:0 0 6px;padding-left:0;">
-                                        <input type="checkbox" name="hotspot_login_methods[]" value="http-chap" class="hs-login-method"{if $hs_login|strstr:',http-chap,' || $hs_login|strstr:',chap,'} checked="checked"{/if}>
-                                        HTTP CHAP
+                                        <input type="checkbox" name="hotspot_login_methods[]" value="http-pap" class="hs-login-method" checked="checked" disabled="disabled">
+                                        HTTP PAP <span class="text-muted">(obligatoire)</span>
                                     </label>
                                     <label class="checkbox-inline" style="display:block;margin:0 0 6px;padding-left:0;">
-                                        <input type="checkbox" name="hotspot_login_methods[]" value="http-pap" class="hs-login-method"{if $hs_login|strstr:',http-pap,'} checked="checked"{/if}>
-                                        HTTP PAP
-                                    </label>
-                                    <label class="checkbox-inline" style="display:block;margin:0 0 6px;padding-left:0;">
-                                        <input type="checkbox" name="hotspot_login_methods[]" value="mac-cookie" class="hs-login-method"{if $hs_login|strstr:',mac-cookie,' || $hs_login|strstr:',cookie,'} checked="checked"{/if}>
+                                        <input type="checkbox" name="hotspot_login_methods[]" value="mac-cookie" class="hs-login-method"{if $hs_login|strstr:',mac-cookie,' || $hs_login|strstr:',cookie,' || !$hs_login|strstr:',http-pap,'} checked="checked"{/if}>
                                         MAC COOKIE
                                     </label>
                                 </div>

@@ -2043,6 +2043,21 @@ HTML;
             }
             if (empty($_POST['hotspot_login_methods'])) {
                 $_POST['hotspot_login_methods'] = ['http-pap', 'mac-cookie'];
+            } else {
+                // CHAP retiré : le portail DYRSIA envoie un mot de passe clair (PAP).
+                $_POST['hotspot_login_methods'] = array_values(array_filter(
+                    (array) $_POST['hotspot_login_methods'],
+                    static function ($m) {
+                        $m = strtolower(trim((string) $m));
+                        return $m !== '' && $m !== 'http-chap' && $m !== 'chap';
+                    }
+                ));
+                if (!in_array('http-pap', $_POST['hotspot_login_methods'], true)) {
+                    array_unshift($_POST['hotspot_login_methods'], 'http-pap');
+                }
+                if ($_POST['hotspot_login_methods'] === []) {
+                    $_POST['hotspot_login_methods'] = ['http-pap', 'mac-cookie'];
+                }
             }
             if (trim((string) ($_POST['hotspot_cookie_lifetime'] ?? '')) === '') {
                 $_POST['hotspot_cookie_lifetime'] = '1d 00:00:00';

@@ -8128,22 +8128,27 @@ class Mikrotik
 
     private static function normalizeHotspotLoginBy($loginMethods)
     {
-        $allowed = ['http-chap', 'http-pap', 'mac-cookie', 'cookie', 'chap', 'https', 'mac', 'trial'];
+        $allowed = ['http-pap', 'mac-cookie', 'cookie', 'https', 'mac', 'trial'];
         $methods = array_values(array_unique(array_filter(array_map('trim', explode(',', strtolower((string) $loginMethods))))));
         $normalized = [];
         foreach ($methods as $method) {
-            if ($method === 'chap') {
-                $method = 'http-chap';
-            } elseif ($method === 'cookie') {
+            // CHAP volontairement ignoré (portail captif = mot de passe clair / PAP).
+            if ($method === 'chap' || $method === 'http-chap') {
+                continue;
+            }
+            if ($method === 'cookie') {
                 $method = 'mac-cookie';
             }
             if (in_array($method, $allowed, true) && !in_array($method, $normalized, true)) {
                 $normalized[] = $method;
             }
         }
-        if (empty($normalized)) {
-            // Portail DYRSIA : mot de passe clair → PAP uniquement (pas de CHAP).
-            $normalized = ['http-pap', 'mac-cookie'];
+        if (empty($normalized) || !in_array('http-pap', $normalized, true)) {
+            array_unshift($normalized, 'http-pap');
+            $normalized = array_values(array_unique($normalized));
+        }
+        if (count($normalized) === 1 && $normalized[0] === 'http-pap') {
+            $normalized[] = 'mac-cookie';
         }
 
         return self::orderHotspotLoginByMethods($normalized);
@@ -8160,13 +8165,13 @@ class Mikrotik
     }
 
     /**
-     * Ordre login-by : HTTP PAP (mot de passe clair) en premier, puis CHAP, MAC cookie.
+     * Ordre login-by : HTTP PAP en premier, puis MAC cookie.
      *
      * @param array<int, string> $methods
      */
     private static function orderHotspotLoginByMethods(array $methods)
     {
-        $order = ['http-pap', 'http-chap', 'mac-cookie'];
+        $order = ['http-pap', 'mac-cookie'];
         $picked = [];
         foreach ($order as $method) {
             if (in_array($method, $methods, true)) {
@@ -8174,6 +8179,9 @@ class Mikrotik
             }
         }
         foreach ($methods as $method) {
+            if ($method === 'http-chap' || $method === 'chap') {
+                continue;
+            }
             if (!in_array($method, $picked, true)) {
                 $picked[] = $method;
             }
@@ -8183,25 +8191,11 @@ class Mikrotik
     }
 
     /**
-     * Hotspot + RADIUS : PAP d'abord pour le portail captif (mot de passe clair).
+     * Hotspot + RADIUS : PAP uniquement (pas de CHAP).
      */
     private static function normalizeHotspotLoginByForRadius($loginMethods)
     {
-        $methods = array_filter(explode(',', self::normalizeHotspotLoginBy($loginMethods)));
-        $allowed = ['http-chap', 'http-pap', 'mac-cookie'];
-        $filtered = array_values(array_intersect($methods, $allowed));
-        if ($filtered === []) {
-            return self::captivePortalLoginBy();
-        }
-        // Le portail envoie un mot de passe clair : retirer http-chap pour éviter l'erreur challenge.
-        $filtered = array_values(array_filter($filtered, static function ($m) {
-            return $m !== 'http-chap';
-        }));
-        if ($filtered === []) {
-            return self::captivePortalLoginBy();
-        }
-
-        return self::orderHotspotLoginByMethods($filtered);
+        return self::captivePortalLoginBy();
     }
 
     public static function hotspotRadiusEnabled(array $configLocal)
@@ -9349,7 +9343,7 @@ class Mikrotik
         if ($loginBy === '') {
             $loginBy = $useRadius
                 ? self::normalizeHotspotLoginByForRadius($loginMethods)
-                : self::normalizeHotspotLoginBy($loginMethods !== '' ? $loginMethods : 'http-pap,http-chap,mac-cookie');
+                : self::normalizeHotspotLoginBy($loginMethods !== '' ? $loginMethods : self::captivePortalLoginBy());
         }
 
         $cookieLifetime = self::normalizeHotspotCookieLifetime($cookieLifetime);
