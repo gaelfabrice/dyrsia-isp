@@ -549,10 +549,19 @@ function hotspotApplyChapHash(passwordInput, plainPassword) {
   var plain = normalizeHotspotPlainPassword(
     plainPassword != null ? plainPassword : (passwordInput ? passwordInput.value : '')
   );
-  if (passwordInput) {
-    passwordInput.value = plain;
-    delete passwordInput.dataset.chapDone;
+  if (!passwordInput) return plain;
+  if (passwordInput.dataset.chapDone === '1') return passwordInput.value;
+  // Si MikroTik a injecté un challenge CHAP, envoyer la réponse MD5 (sinon erreur « challenge response »).
+  if (hotspotChapFieldsReady() && typeof hexMD5 === 'function') {
+    var chapId = mkField('mk-chap-id');
+    var chapChallenge = mkField('mk-chap-challenge');
+    passwordInput.value = hexMD5(chapId + plain + chapChallenge);
+    passwordInput.dataset.chapDone = '1';
+    return passwordInput.value;
   }
+  // Mode PAP : mot de passe clair.
+  passwordInput.value = plain;
+  delete passwordInput.dataset.chapDone;
   return plain;
 }
 
@@ -560,9 +569,7 @@ function prepareMikrotikLogin(form) {
   if (!form) return false;
   const passwordInput = form.querySelector('input[name="password"]');
   if (passwordInput) {
-    // HTTP PAP : mot de passe clair (123456) — pas de hash MD5 CHAP côté navigateur.
-    passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
-    delete passwordInput.dataset.chapDone;
+    hotspotApplyChapHash(passwordInput);
   }
   return true;
 }

@@ -39,7 +39,7 @@
     {assign var=hs_idle value=$_c['hotspot_idle_timeout']|default:'00:10:00'}
     {assign var=hs_keepalive value=$_c['hotspot_keepalive_timeout']|default:'00:00:30'}
     {assign var=hs_address_per_mac value=$_c['hotspot_address_per_mac']|default:'1'}
-    {assign var=hs_login value=','|cat:($_c['hotspot_login_methods']|default:'http-pap,http-chap,mac-cookie')|cat:','}
+    {assign var=hs_login value=','|cat:($_c['hotspot_login_methods']|default:'http-pap,mac-cookie')|cat:','}
     {assign var=hs_use_radius value=$_c['hotspot_use_radius']|default:'1'}
     {assign var=ps_gateway value=$_c['pppoe_setup_gateway']|default:'10.10.10.1/24'}
     {assign var=ps_vlan_id value=$_c['pppoe_setup_vlan_id']|default:'20'}

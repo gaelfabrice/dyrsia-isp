@@ -6964,7 +6964,7 @@ class Mikrotik
                 'hotspot_smtp_server' => '0.0.0.0',
                 'hotspot_dns_server' => '8.8.8.8',
                 'hotspot_dns_name' => '',
-                'hotspot_login_methods' => 'http-pap,http-chap,mac-cookie',
+                'hotspot_login_methods' => 'http-pap,mac-cookie',
                 'hotspot_cookie_lifetime' => '1d 00:00:00',
                 'hotspot_idle_timeout' => '00:10:00',
                 'hotspot_address_per_mac' => '1',
@@ -7294,7 +7294,7 @@ class Mikrotik
         $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
         $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
         $masquerade = !empty($config['hotspot_masquerade']) && (string) $config['hotspot_masquerade'] !== '0';
-        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-pap,http-chap,mac-cookie'));
+        $loginMethods = self::captivePortalLoginBy();
         $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
         $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
         $addressPerMac = trim((string) ($config['hotspot_address_per_mac'] ?? '1'));
@@ -7458,9 +7458,7 @@ class Mikrotik
         }
 
         $useRadius = self::hotspotRadiusEnabled($config);
-        $loginMethodsForProfile = $useRadius
-            ? self::normalizeHotspotLoginByForRadius($loginMethods)
-            : self::normalizeHotspotLoginBy($loginMethods);
+        $loginMethodsForProfile = $loginMethods;
         $radiusPrep = [];
 
         if ($useRadius) {
@@ -8144,10 +8142,21 @@ class Mikrotik
             }
         }
         if (empty($normalized)) {
-            $normalized = ['http-pap', 'http-chap', 'mac-cookie'];
+            // Portail DYRSIA : mot de passe clair → PAP uniquement (pas de CHAP).
+            $normalized = ['http-pap', 'mac-cookie'];
         }
 
         return self::orderHotspotLoginByMethods($normalized);
+    }
+
+    /**
+     * Auth portail captif DYRSIA : PAP + cookie, sans http-chap
+     * (sinon MikroTik exige une réponse CHAP JS et affiche
+     * « web browser did not send challenge response »).
+     */
+    public static function captivePortalLoginBy()
+    {
+        return 'http-pap,mac-cookie';
     }
 
     /**
@@ -8174,7 +8183,7 @@ class Mikrotik
     }
 
     /**
-     * Hotspot + RADIUS : conserver HTTP PAP pour login en clair sur login.html.
+     * Hotspot + RADIUS : PAP d'abord pour le portail captif (mot de passe clair).
      */
     private static function normalizeHotspotLoginByForRadius($loginMethods)
     {
@@ -8182,7 +8191,14 @@ class Mikrotik
         $allowed = ['http-chap', 'http-pap', 'mac-cookie'];
         $filtered = array_values(array_intersect($methods, $allowed));
         if ($filtered === []) {
-            return 'http-pap,http-chap,mac-cookie';
+            return self::captivePortalLoginBy();
+        }
+        // Le portail envoie un mot de passe clair : retirer http-chap pour éviter l'erreur challenge.
+        $filtered = array_values(array_filter($filtered, static function ($m) {
+            return $m !== 'http-chap';
+        }));
+        if ($filtered === []) {
+            return self::captivePortalLoginBy();
         }
 
         return self::orderHotspotLoginByMethods($filtered);
@@ -8827,16 +8843,14 @@ class Mikrotik
         $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
         $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
         $dnsServer = trim((string) ($config['hotspot_dns_server'] ?? '8.8.8.8'));
-        $loginMethods = trim((string) ($config['hotspot_login_methods'] ?? 'http-pap,http-chap,mac-cookie'));
+        $loginMethods = self::captivePortalLoginBy();
         $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
         $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
         if ($idleTimeout === '') {
             $idleTimeout = '00:10:00';
         }
         $useRadius = self::hotspotRadiusEnabled($config);
-        $loginMethodsForProfile = $useRadius
-            ? self::normalizeHotspotLoginByForRadius($loginMethods)
-            : self::normalizeHotspotLoginBy($loginMethods);
+        $loginMethodsForProfile = $loginMethods;
 
         $hotspotAddress = '';
         $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
@@ -8940,7 +8954,8 @@ class Mikrotik
 
         $setRequest = (new RouterOS\Request('/ip/hotspot/profile/set'))
             ->setArgument('numbers', $profileId)
-            ->setArgument('html-directory', 'hotspot');
+            ->setArgument('html-directory', 'hotspot')
+            ->setArgument('login-by', self::captivePortalLoginBy());
         try {
             // RouterOS 7 : si un override pointe vers flash/hotspot, la page usine reste affichée.
             $setRequest->setArgument('html-directory-override', '');
@@ -8949,13 +8964,13 @@ class Mikrotik
         }
         $client->sendSync($setRequest);
 
-        // Fallback script one-shot si l'API ignore html-directory-override.
+        // Fallback script one-shot si l'API ignore html-directory-override / login-by.
         $escaped = str_replace(['\\', '"'], '', $profileName);
         try {
             self::runRouterOneShotScript(
                 $client,
                 'dyrsia_hs_htmldir',
-                '/ip hotspot profile set [find name="' . $escaped . '"] html-directory=hotspot; '
+                '/ip hotspot profile set [find name="' . $escaped . '"] html-directory=hotspot login-by=' . self::captivePortalLoginBy() . '; '
                 . ':do { /ip hotspot profile set [find name="' . $escaped . '"] html-directory-override="" } on-error={}'
             );
         } catch (Throwable $e) {

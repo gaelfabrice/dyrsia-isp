@@ -652,19 +652,24 @@ class MobileMoneyGateway
         var plain = normalizeHotspotPlainPassword(
             plainPassword != null ? plainPassword : (passwordInput ? passwordInput.value : '')
         );
-        if (passwordInput) {
-            passwordInput.value = plain;
-            delete passwordInput.dataset.chapDone;
+        if (!passwordInput) return plain;
+        if (passwordInput.dataset.chapDone === '1') return passwordInput.value;
+        if (hotspotChapFieldsReady() && typeof hexMD5 === 'function') {
+            var chapId = typeof mkField === 'function' ? mkField('mk-chap-id') : '';
+            var chapChallenge = typeof mkField === 'function' ? mkField('mk-chap-challenge') : '';
+            passwordInput.value = hexMD5(chapId + plain + chapChallenge);
+            passwordInput.dataset.chapDone = '1';
+            return passwordInput.value;
         }
+        passwordInput.value = plain;
+        delete passwordInput.dataset.chapDone;
         return plain;
     }
     function prepareMikrotikLogin(form) {
         if (!form) return false;
         const passwordInput = form.querySelector('input[name="password"]');
         if (passwordInput) {
-            // HTTP PAP : mot de passe clair — pas de hash CHAP JS (login-by PAP en premier sur MikroTik).
-            passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
-            delete passwordInput.dataset.chapDone;
+            hotspotApplyChapHash(passwordInput);
         }
         return true;
     }
