@@ -400,10 +400,6 @@
             methods.push('mac-cookie');
         }
         document.querySelectorAll('input[name="hotspot_login_methods[]"]').forEach(function (cb) {
-            if (cb.disabled && cb.value === 'http-pap') {
-                cb.checked = true;
-                return;
-            }
             cb.checked = methods.indexOf(cb.value) !== -1;
         });
     }
