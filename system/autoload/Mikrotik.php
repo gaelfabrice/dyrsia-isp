@@ -6955,11 +6955,11 @@ class Mikrotik
             'suggested' => array_merge(self::lanTrunkDefaults(), [
                 'hotspot_name' => '',
                 'hotspot_interface' => '',
-                'hotspot_profile' => 'default',
+                'hotspot_profile' => 'hotspot',
                 'hotspot_local_address' => '10.10.0.1/24',
                 'hotspot_masquerade' => '1',
                 'hotspot_address_pool' => '10.10.0.10-10.10.0.254',
-                'hotspot_pool_name' => '',
+                'hotspot_pool_name' => 'hs-pool',
                 'hotspot_pool_range' => '10.10.0.10-10.10.0.254',
                 'hotspot_smtp_server' => '0.0.0.0',
                 'hotspot_dns_server' => '8.8.8.8',
@@ -7183,7 +7183,7 @@ class Mikrotik
             $hs = $activeHotspot;
             $snapshot['suggested']['hotspot_name'] = $hs['name'];
             $snapshot['suggested']['hotspot_interface'] = $hs['interface'];
-            $snapshot['suggested']['hotspot_profile'] = $hs['profile'] !== '' ? $hs['profile'] : 'default';
+            $snapshot['suggested']['hotspot_profile'] = $hs['profile'] !== '' ? $hs['profile'] : 'hotspot';
             $snapshot['suggested']['hotspot_pool_name'] = $hs['address_pool'];
             if ($hs['dns_name'] !== '') {
                 $snapshot['suggested']['hotspot_dns_name'] = $hs['dns_name'];
@@ -7196,10 +7196,26 @@ class Mikrotik
                 }
             }
         } elseif (!empty($snapshot['pools'])) {
-            $snapshot['suggested']['hotspot_pool_name'] = $snapshot['pools'][0]['name'];
-            if ($snapshot['pools'][0]['ranges'] !== '') {
-                $snapshot['suggested']['hotspot_address_pool'] = $snapshot['pools'][0]['ranges'];
-                $snapshot['suggested']['hotspot_pool_range'] = $snapshot['pools'][0]['ranges'];
+            $defaultPoolName = $snapshot['suggested']['hotspot_pool_name'] ?: 'hs-pool';
+            $matchedPool = null;
+            foreach ($snapshot['pools'] as $pool) {
+                if ($pool['name'] === $defaultPoolName) {
+                    $matchedPool = $pool;
+                    break;
+                }
+            }
+            if ($matchedPool !== null) {
+                $snapshot['suggested']['hotspot_pool_name'] = $matchedPool['name'];
+                if ($matchedPool['ranges'] !== '') {
+                    $snapshot['suggested']['hotspot_address_pool'] = $matchedPool['ranges'];
+                    $snapshot['suggested']['hotspot_pool_range'] = $matchedPool['ranges'];
+                }
+            } elseif ($snapshot['suggested']['hotspot_pool_name'] === '') {
+                $snapshot['suggested']['hotspot_pool_name'] = $snapshot['pools'][0]['name'];
+                if ($snapshot['pools'][0]['ranges'] !== '') {
+                    $snapshot['suggested']['hotspot_address_pool'] = $snapshot['pools'][0]['ranges'];
+                    $snapshot['suggested']['hotspot_pool_range'] = $snapshot['pools'][0]['ranges'];
+                }
             }
         }
 
@@ -7207,7 +7223,7 @@ class Mikrotik
             $snapshot['suggested']['hotspot_local_address'] = $snapshot['networks'][0]['address'];
         }
 
-        $profileName = $snapshot['suggested']['hotspot_profile'] ?: 'default';
+        $profileName = $snapshot['suggested']['hotspot_profile'] ?: 'hotspot';
         foreach ($snapshot['profiles'] as $prof) {
             if ($prof['name'] !== $profileName) {
                 continue;
@@ -7286,8 +7302,8 @@ class Mikrotik
         $trunkMode = self::lanTrunkEnabled($config);
         $poolName = trim((string) ($config['hotspot_pool_name'] ?? ''));
         $poolRange = trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? ''));
-        $profileName = trim((string) ($config['hotspot_profile'] ?? 'default'));
-        $profileName = $profileName !== '' ? $profileName : 'default';
+        $profileName = trim((string) ($config['hotspot_profile'] ?? 'hotspot'));
+        $profileName = $profileName !== '' ? $profileName : 'hotspot';
         $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
         $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
         $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
@@ -8831,7 +8847,7 @@ class Mikrotik
             $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
         }
 
-        $configuredProfile = trim((string) ($config['hotspot_profile'] ?? 'default'));
+        $configuredProfile = trim((string) ($config['hotspot_profile'] ?? 'hotspot'));
         $primaryProfile = self::resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile);
 
         $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));

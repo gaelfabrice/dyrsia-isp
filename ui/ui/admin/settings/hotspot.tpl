@@ -26,12 +26,12 @@
     {assign var=hs_unused_ports value=$_c['lan_unused_ports']|default:'pwr-line1'}
     {assign var=hs_vlan_id value=$_c['hotspot_vlan_id']|default:'10'}
     {assign var=hs_vlan_iface value=$_c['hotspot_vlan_interface']|default:''}
-    {assign var=hs_profile value=$_c['hotspot_profile']|default:'default'}
+    {assign var=hs_profile value=$_c['hotspot_profile']|default:'hotspot'}
     {assign var=hs_dns value=$_c['hotspot_dns_name']|default:''}
     {assign var=hs_local value=$_c['hotspot_local_address']|default:'10.10.0.1/24'}
     {assign var=hs_masquerade value=$_c['hotspot_masquerade']|default:'1'}
-    {assign var=hs_address_pool value=$_c['hotspot_address_pool']|default:''}
-    {assign var=hs_pool_name value=$_c['hotspot_pool_name']|default:''}
+    {assign var=hs_address_pool value=$_c['hotspot_address_pool']|default:'10.10.0.10-10.10.0.254'}
+    {assign var=hs_pool_name value=$_c['hotspot_pool_name']|default:'hs-pool'}
     {assign var=hs_pool_range value=$_c['hotspot_pool_range']|default:'10.10.0.10-10.10.0.254'}
     {assign var=hs_dns_server value=$_c['hotspot_dns_server']|default:'8.8.8.8'}
     {assign var=hs_smtp value=$_c['hotspot_smtp_server']|default:'0.0.0.0'}

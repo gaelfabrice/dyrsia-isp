@@ -716,9 +716,6 @@
             }
             return { value: pool.name, label: label };
         });
-        if (suggested.hotspot_pool_name && !poolItems.some(function (p) { return p.value === suggested.hotspot_pool_name; })) {
-            poolItems.push({ value: suggested.hotspot_pool_name, label: suggested.hotspot_pool_name });
-        }
         setupNamePicker(
             'hotspot_pool_name_picker',
             'hotspot_pool_name',
@@ -733,15 +730,11 @@
         if (!profileItems.some(function (p) { return p.value === 'default'; })) {
             profileItems.unshift({ value: 'default', label: 'default' });
         }
-        var suggestedProfile = suggested.hotspot_profile || 'default';
-        if (suggestedProfile && !profileItems.some(function (p) { return p.value === suggestedProfile; })) {
-            profileItems.push({ value: suggestedProfile, label: suggestedProfile });
-        }
         setupNamePicker(
             'hotspot_profile_picker',
             'hotspot_profile',
             profileItems,
-            suggested.hotspot_profile || 'default',
+            suggested.hotspot_profile || 'hotspot',
             preserveUserEdits
         );
 
