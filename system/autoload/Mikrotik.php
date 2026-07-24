@@ -8904,7 +8904,8 @@ class Mikrotik
         }
 
         if ($fixed !== []) {
-            $actions[] = 'html-directory=hotspot sur ' . count($fixed) . ' profil(s) : ' . implode(', ', $fixed);
+            $actions[] = 'login-by=' . self::captivePortalLoginBy()
+                . ' + html-directory=hotspot sur ' . count($fixed) . ' profil(s) : ' . implode(', ', $fixed);
         }
 
         return [
