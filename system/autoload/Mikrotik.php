@@ -6608,7 +6608,13 @@ class Mikrotik
         if (self::tryRouterFileWriteChunked($client, $tmpPath, $html)) {
             $promoted = $promoteWrittenLogin($client, $tmpPath, $finalPath, $length);
             if ($promoted !== null) {
-                return ['ok' => true, 'path' => $promoted, 'method' => 'api'];
+                $mirror = self::mirrorHotspotLoginToFlashFallback($client, $html, $length);
+                return [
+                    'ok' => true,
+                    'path' => $promoted,
+                    'method' => 'api',
+                    'flash_mirror' => $mirror,
+                ];
             }
             $errors[] = $finalPath . ' (api): fichier écrit mais remplacement final impossible';
         } else {
@@ -6633,7 +6639,13 @@ class Mikrotik
                 if ($fetchError === null && $fetchedSize >= (int) ($length * 0.9)) {
                     $promoted = $promoteWrittenLogin($client, $normalizedPath ?? $tmpPath, $finalPath, $length);
                     if ($promoted !== null) {
-                        return ['ok' => true, 'path' => $promoted, 'method' => 'fetch'];
+                        $mirror = self::mirrorHotspotLoginToFlashFallback($client, $html, $length);
+                        return [
+                            'ok' => true,
+                            'path' => $promoted,
+                            'method' => 'fetch',
+                            'flash_mirror' => $mirror,
+                        ];
                     }
                     $errors[] = $finalPath . ' (fetch): nouveau fichier reçu mais remplacement final impossible';
                     continue;
@@ -6643,6 +6655,58 @@ class Mikrotik
         }
 
         return ['ok' => false, 'errors' => $errors];
+    }
+
+    /**
+     * Si le profil pointe encore vers flash/hotspot, écraser aussi la page usine.
+     *
+     * @return array{ok: bool, path?: string, error?: string}
+     */
+    private static function mirrorHotspotLoginToFlashFallback($client, $html, $length)
+    {
+        $flashDir = 'flash/hotspot';
+        $flashPath = $flashDir . '/login.html';
+        try {
+            self::ensureRouterDirectory($client, $flashDir);
+            self::removeRouterFile($client, $flashPath);
+            self::removeRouterFile($client, $flashPath . '.txt');
+            $tmp = $flashDir . '/dyrsia-login-new.html';
+            self::removeRouterFile($client, $tmp);
+            self::removeRouterFile($client, $tmp . '.txt');
+            if (!self::tryRouterFileWriteChunked($client, $tmp, $html)) {
+                return ['ok' => false, 'error' => 'écriture flash/hotspot refusée'];
+            }
+            $source = null;
+            if (self::getRouterFileSizeExact($client, $tmp) >= (int) ($length * 0.9)) {
+                $source = $tmp;
+            } elseif (self::getRouterFileSizeExact($client, $tmp . '.txt') >= (int) ($length * 0.9)) {
+                $source = $tmp . '.txt';
+            }
+            if ($source === null) {
+                return ['ok' => false, 'error' => 'fichier flash temporaire trop petit'];
+            }
+            if ($source !== $flashPath && !self::renameRouterFile($client, $source, $flashPath)) {
+                // Contenu présent sous .txt — acceptable tant que le profil flash le lit.
+                if (self::getRouterFileSizeExact($client, $source) >= (int) ($length * 0.9)) {
+                    return ['ok' => true, 'path' => $source];
+                }
+
+                return ['ok' => false, 'error' => 'rename flash/hotspot/login.html échoué'];
+            }
+            $size = max(
+                self::getRouterFileSizeExact($client, $flashPath),
+                self::getRouterFileSizeExact($client, $flashPath . '.txt')
+            );
+            if ($size >= (int) ($length * 0.9)) {
+                return ['ok' => true, 'path' => $flashPath];
+            }
+
+            return ['ok' => false, 'error' => 'flash/hotspot/login.html trop petit (' . $size . ')'];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'error' => $e->getMessage()];
+        } catch (Exception $e) {
+            return ['ok' => false, 'error' => $e->getMessage()];
+        }
     }
 
     /**
@@ -8739,7 +8803,7 @@ class Mikrotik
     }
 
     /**
-     * Force le profil hotspot actif à servir hotspot/login.html (DYRSIA), pas flash/hotspot MikroTik.
+     * Force TOUS les profils hotspot à servir hotspot/login.html (DYRSIA), pas flash/hotspot MikroTik.
      *
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>, profile?: string}
      */
@@ -8758,7 +8822,7 @@ class Mikrotik
         }
 
         $configuredProfile = trim((string) ($config['hotspot_profile'] ?? 'default'));
-        $profileName = self::resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile);
+        $primaryProfile = self::resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile);
 
         $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
         $smtpServer = trim((string) ($config['hotspot_smtp_server'] ?? '0.0.0.0'));
@@ -8787,38 +8851,116 @@ class Mikrotik
             }
         }
 
-        try {
-            self::ensureHotspotProfileConfigured(
-                $client,
-                $profileName,
-                $dnsName,
-                $smtpServer,
-                $dnsServer,
-                $loginMethodsForProfile,
-                $cookieLifetime,
-                $idleTimeout,
-                $useRadius,
-                $hotspotAddress
-            );
-            $actions[] = 'profil « ' . $profileName . ' » → html-directory=hotspot';
-        } catch (Throwable $e) {
-            $errors[] = 'profil hotspot : ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'profil hotspot : ' . $e->getMessage();
+        $profileNames = self::listHotspotProfileNames($client);
+        if ($primaryProfile !== '' && !in_array($primaryProfile, $profileNames, true)) {
+            $profileNames[] = $primaryProfile;
+        }
+        if ($profileNames === []) {
+            $profileNames = [$primaryProfile !== '' ? $primaryProfile : 'default'];
         }
 
-        $htmlDir = self::getHotspotProfileHtmlDirectory($client, $profileName);
-        if ($htmlDir !== '' && !self::hotspotHtmlDirectoryIsDyrsia($htmlDir)) {
-            $errors[] = 'Profil « ' . $profileName . ' » utilise html-directory=« ' . $htmlDir
-                . ' » (page MikroTik par défaut). Attendu : « hotspot ».';
+        $fixed = [];
+        foreach ($profileNames as $profileName) {
+            try {
+                self::ensureHotspotProfileConfigured(
+                    $client,
+                    $profileName,
+                    $dnsName,
+                    $smtpServer,
+                    $dnsServer,
+                    $loginMethodsForProfile,
+                    $cookieLifetime,
+                    $idleTimeout,
+                    $useRadius,
+                    $hotspotAddress
+                );
+                self::forceHotspotProfileHtmlDirectory($client, $profileName);
+                $htmlDir = self::getHotspotProfileHtmlDirectory($client, $profileName);
+                if ($htmlDir !== '' && !self::hotspotHtmlDirectoryIsDyrsia($htmlDir)) {
+                    $errors[] = 'Profil « ' . $profileName . ' » utilise html-directory=« ' . $htmlDir
+                        . ' » (page MikroTik par défaut). Attendu : « hotspot ».';
+                    continue;
+                }
+                $fixed[] = $profileName;
+            } catch (Throwable $e) {
+                $errors[] = 'profil « ' . $profileName . ' » : ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'profil « ' . $profileName . ' » : ' . $e->getMessage();
+            }
+        }
+
+        if ($fixed !== []) {
+            $actions[] = 'html-directory=hotspot sur ' . count($fixed) . ' profil(s) : ' . implode(', ', $fixed);
         }
 
         return [
             'ok' => empty($errors),
             'errors' => $errors,
             'actions' => $actions,
-            'profile' => $profileName,
+            'profile' => $primaryProfile,
         ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function listHotspotProfileNames($client)
+    {
+        $names = [];
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/profile/print'))
+                    ->setArgument('.proplist', 'name')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $name = trim((string) $row->getProperty('name'));
+                if ($name !== '') {
+                    $names[] = $name;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    private static function forceHotspotProfileHtmlDirectory($client, $profileName)
+    {
+        $profileName = trim((string) $profileName);
+        if ($profileName === '') {
+            return;
+        }
+        $profileId = self::routerEntityId($client, '/ip/hotspot/profile', 'name', $profileName);
+        if ($profileId === null) {
+            return;
+        }
+
+        $setRequest = (new RouterOS\Request('/ip/hotspot/profile/set'))
+            ->setArgument('numbers', $profileId)
+            ->setArgument('html-directory', 'hotspot');
+        try {
+            // RouterOS 7 : si un override pointe vers flash/hotspot, la page usine reste affichée.
+            $setRequest->setArgument('html-directory-override', '');
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+        $client->sendSync($setRequest);
+
+        // Fallback script one-shot si l'API ignore html-directory-override.
+        $escaped = str_replace(['\\', '"'], '', $profileName);
+        try {
+            self::runRouterOneShotScript(
+                $client,
+                'dyrsia_hs_htmldir',
+                '/ip hotspot profile set [find name="' . $escaped . '"] html-directory=hotspot; '
+                . ':do { /ip hotspot profile set [find name="' . $escaped . '"] html-directory-override="" } on-error={}'
+            );
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
     }
 
     private static function getHotspotProfileHtmlDirectory($client, $profileName)
@@ -8831,12 +8973,17 @@ class Mikrotik
         try {
             foreach ($client->sendSync(
                 (new RouterOS\Request('/ip/hotspot/profile/print'))
-                    ->setArgument('.proplist', 'name,html-directory')
+                    ->setArgument('.proplist', 'name,html-directory,html-directory-override')
                     ->setQuery(RouterOS\Query::where('name', $profileName))
             ) as $row) {
                 if ($row->getType() === 'trap') {
                     continue;
                 }
+                $override = trim((string) $row->getProperty('html-directory-override'));
+                if ($override !== '') {
+                    return $override;
+                }
+
                 return trim((string) $row->getProperty('html-directory'));
             }
         } catch (Throwable $e) {
@@ -8857,6 +9004,13 @@ class Mikrotik
     private static function hotspotHtmlDirectoryIsDyrsia($htmlDir)
     {
         $htmlDir = self::normalizeHotspotHtmlDirectory($htmlDir);
+        if ($htmlDir === '' || $htmlDir === 'hotspot') {
+            return true;
+        }
+        // flash/hotspot = page MikroTik usine
+        if (strpos($htmlDir, 'flash/') === 0) {
+            return false;
+        }
 
         return $htmlDir === 'hotspot';
     }
@@ -9191,6 +9345,11 @@ class Mikrotik
             ->setArgument('smtp-server', $smtpServer !== '' ? $smtpServer : '0.0.0.0')
             ->setArgument('dns-server', $dnsServer !== '' ? $dnsServer : '8.8.8.8')
             ->setArgument('use-radius', $useRadius ? 'yes' : 'no');
+        try {
+            $setRequest->setArgument('html-directory-override', '');
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
         if ($useRadius) {
             $setRequest->setArgument('radius-accounting', 'yes');
         } else {

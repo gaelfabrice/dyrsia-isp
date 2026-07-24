@@ -2480,6 +2480,15 @@ HTML;
                             'login.html absent sur le routeur après envoi. Essayez « Send complet » ou vérifiez /file print.'
                         );
                     }
+                    $profileNote = !empty($profileReady['actions'])
+                        ? ' ' . implode(', ', $profileReady['actions']) . '.'
+                        : '';
+                    $flashNote = '';
+                    if (!empty($deployResult['flash_mirror']['ok'])) {
+                        $flashNote = ' Copie flash/hotspot OK.';
+                    } elseif (!empty($deployResult['flash_mirror']['error'])) {
+                        $flashNote = ' (flash mirror: ' . $deployResult['flash_mirror']['error'] . ')';
+                    }
                     r2(
                         $hotspotSettingsUrl(),
                         's',
@@ -2489,7 +2498,10 @@ HTML;
                         . $deployMethod
                         . ', '
                         . $routerLoginSize
-                        . ' octets). ID: '
+                        . ' octets).'
+                        . $profileNote
+                        . $flashNote
+                        . ' ID: '
                         . $uploadId
                         . '.'
                     );
