@@ -27,7 +27,9 @@ class top_widget
             AdminScope::applyTransactionsQueryByAdminId($iday_q, $adminId);
         }
 
-        $iday = $iday_q->sum('price') ?: '0.00';
+        $iday = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices($iday_q)
+            : ($iday_q->sum('price') ?: '0.00');
 
 
         // ================= MONTHLY INCOME =================
@@ -42,7 +44,9 @@ class top_widget
             AdminScope::applyTransactionsQueryByAdminId($imonth_q, $adminId);
         }
 
-        $imonth = $imonth_q->sum('price') ?: '0.00';
+        $imonth = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices($imonth_q)
+            : ($imonth_q->sum('price') ?: '0.00');
 
 
         // ================= ACTIVE USERS =================

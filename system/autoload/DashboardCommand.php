@@ -25,14 +25,17 @@ class DashboardCommand
         }
 
         $rechargesQ = self::scopedRechargesQuery($admin);
-        $salesTodayQ = self::scopedTransactionsQuery($admin)->where('recharged_on', date('Y-m-d'));
         $routersQ = ORM::for_table('tbl_routers')->where('enabled', 1);
         if ($isScoped) {
             $routersQ->where('admin_id', $adminId);
         }
 
         $activeCustomers = (int) $rechargesQ->count();
-        $salesToday = (float) ($salesTodayQ->sum('price') ?: 0);
+        $salesToday = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices(
+                self::scopedTransactionsQuery($admin)->where('recharged_on', date('Y-m-d'))
+            )
+            : (float) (self::scopedTransactionsQuery($admin)->where('recharged_on', date('Y-m-d'))->sum('price') ?: 0);
         $routers = $routersQ->find_many();
         $routersTotal = count($routers);
         $offlineRouters = self::countOfflineRouters($routers);

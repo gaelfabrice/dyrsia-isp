@@ -246,8 +246,12 @@ switch ($action) {
         } catch (Exception $e) {
         }
 
-        $iday = (float) ($dailyQuery->sum('price') ?: 0);
-        $imonth = (float) ($monthlyQuery->sum('price') ?: 0);
+        $iday = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices($dailyQuery)
+            : (float) ($dailyQuery->sum('price') ?: 0);
+        $imonth = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices($monthlyQuery)
+            : (float) ($monthlyQuery->sum('price') ?: 0);
 
         $yesterday = date('Y-m-d', strtotime('-1 day'));
         $prevMonthStart = date('Y-m-01', strtotime('-1 month'));
@@ -266,8 +270,12 @@ switch ($action) {
             AdminScope::applyTransactionsQueryByAdminId($yesterdayQuery, $adminId);
             AdminScope::applyTransactionsQueryByAdminId($prevMonthQuery, $adminId);
         }
-        $incomeYesterday = (float) ($yesterdayQuery->sum('price') ?: 0);
-        $incomePrevMonth = (float) ($prevMonthQuery->sum('price') ?: 0);
+        $incomeYesterday = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices($yesterdayQuery)
+            : (float) ($yesterdayQuery->sum('price') ?: 0);
+        $incomePrevMonth = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumQueryPrices($prevMonthQuery)
+            : (float) ($prevMonthQuery->sum('price') ?: 0);
 
         $growthDaily = $incomeYesterday > 0 ? round((($iday - $incomeYesterday) / $incomeYesterday) * 100) : ($iday > 0 ? 100 : 0);
         $growthMonthly = $incomePrevMonth > 0 ? round((($imonth - $incomePrevMonth) / $incomePrevMonth) * 100) : ($imonth > 0 ? 100 : 0);

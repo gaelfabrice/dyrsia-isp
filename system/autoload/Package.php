@@ -264,6 +264,15 @@ class Package
 
         $p = ORM::for_table('tbl_plans')->where('id', $plan_id)->find_one();
 
+        if ($note !== '' && preg_match('/hotspot_payment:(\d+)/', (string) $note, $paymentMatch)
+            && class_exists('WifiZoneSales')) {
+            $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $paymentMatch[1]);
+            if ($existingSale) {
+                // Déjà facturé pour ce paiement hotspot — pas de 2e ligne tbl_transactions.
+                return (string) ($existingSale->invoice ?? true);
+            }
+        }
+
         if (!$isVoucher) {
             $c = ORM::for_table('tbl_customers')->where('id', $id_customer)->find_one();
             if ($c['status'] != 'Active') {

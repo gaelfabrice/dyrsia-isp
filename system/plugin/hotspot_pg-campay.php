@@ -224,6 +224,86 @@ function hotspot_pg_campay_customer_has_active_plan($trx)
 
 function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 {
+    if (!$trx || empty($trx->id)) {
+        return false;
+    }
+
+    // Recharge déjà facturée pour ce paiement → ne pas recréer tbl_transactions.
+    if (class_exists('WifiZoneSales')) {
+        $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id);
+        if ($existingSale) {
+            if ((string) $trx->transaction_status !== 'paid') {
+                $trx->transaction_status = 'paid';
+                $trx->payment_date = $trx->payment_date ?: date('Y-m-d H:i:s');
+                $trx->payment_method = $trx->payment_method ?: ('CamPay - ' . $operator);
+                $trx->save();
+            }
+            if (function_exists('hotspot_invalidate_overview_cache')) {
+                hotspot_invalidate_overview_cache();
+            }
+
+            return true;
+        }
+    }
+
+    if ((string) $trx->transaction_status === 'paid' && trim((string) ($trx->voucher_code ?? '')) !== '') {
+        $customerPaid = HotspotCustomer::findByPhone($trx->phone_number ?? '');
+        if ($customerPaid && function_exists('hotspot_customer_has_active_recharge')
+            && hotspot_customer_has_active_recharge((int) $customerPaid->id, (string) ($trx->router_name ?? ''))) {
+            return true;
+        }
+    }
+
+    // Verrou anti double-activation (webhook + poll en parallèle).
+    $db = ORM::get_db();
+    $claim = $db->prepare(
+        "UPDATE tbl_hotspot_payments
+         SET transaction_status = 'activating'
+         WHERE id = ?
+           AND transaction_status IN ('pending', 'failed')"
+    );
+    $claim->execute([(int) $trx->id]);
+    if ((int) $claim->rowCount() === 0) {
+        $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+        if (!$trx) {
+            return false;
+        }
+        if (class_exists('WifiZoneSales') && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
+            if ((string) $trx->transaction_status !== 'paid') {
+                $trx->transaction_status = 'paid';
+                $trx->save();
+            }
+
+            return true;
+        }
+        if ((string) $trx->transaction_status === 'paid') {
+            return true;
+        }
+        if ((string) $trx->transaction_status === 'activating') {
+            usleep(800000);
+            $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+            if ($trx && class_exists('WifiZoneSales')
+                && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
+                return true;
+            }
+            if ($trx && (string) $trx->transaction_status === 'paid') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+    $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+    if (!$trx) {
+        return false;
+    }
+    if (class_exists('WifiZoneSales') && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
+        $trx->transaction_status = 'paid';
+        $trx->save();
+
+        return true;
+    }
+
     $phone = $trx->phone_number;
     $fullname = 'Hotspot User';
     $address = 'Hotspot';
@@ -257,6 +337,9 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 
     $customer = null;
     $networkPassword = '';
+    $saleNote = class_exists('WifiZoneSales')
+        ? WifiZoneSales::hotspotPaymentNote((int) $trx->id)
+        : ('hotspot_payment:' . (int) $trx->id);
 
     try {
         $customer = HotspotCustomer::findOrCreate($phone, $fullname, $address);
@@ -264,11 +347,16 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         $customer = $prepared['customer'];
         $networkPassword = HotspotCustomer::defaultPassword();
 
-        if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator)) {
+        if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator, $saleNote)) {
             if (hotspot_pg_campay_customer_has_active_plan($trx)) {
                 _log('[CamPay Hotspot] rechargeUser returned false but active recharge exists for trx ' . $trx->transaction_ref);
             } else {
                 _log('[CamPay Hotspot] Activation failed for trx ' . $trx->transaction_ref);
+                if ((string) $trx->transaction_status === 'activating') {
+                    $trx->transaction_status = 'pending';
+                    $trx->save();
+                }
+
                 return false;
             }
         }
