@@ -2,7 +2,7 @@
 
 {assign var=ps_router value=$_c['pppoe_setup_router']|default:''}
 {assign var=ps_bridge value=$_c['pppoe_setup_bridge_name']|default:'bridge-pppoe'}
-{assign var=ps_ports value=$_c['pppoe_setup_bridge_ports']|default:'ether4'}
+{assign var=ps_ports value=$_c['pppoe_setup_bridge_ports']|default:'ether7,ether8'}
 {assign var=ps_gateway value=$_c['pppoe_setup_gateway']|default:'10.10.10.1/24'}
 {assign var=ps_pool_name value=$_c['pppoe_setup_pool_name']|default:'pppoe-pool'}
 {assign var=ps_pool_range value=$_c['pppoe_setup_pool_range']|default:'10.10.10.2-10.10.10.254'}

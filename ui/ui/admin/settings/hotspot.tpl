@@ -13,19 +13,11 @@
     {assign var=hs_name value=$_c['hotspot_name']|default:''}
     {assign var=hs_interface value=$_c['hotspot_interface']|default:'bridge-hotspot'}
     {assign var=hs_bridge_ports value=$_c['hotspot_bridge_ports']|default:'wlan1,ether3'}
-    {assign var=hs_lan_bridge value=$_c['lan_bridge_name']|default:'bridge-lan'}
-    {assign var=hs_trunk_enabled value='0'}
-    {assign var=hs_trunk_ports value=$_c['lan_trunk_bridge_ports']|default:'ether2,ether3,ether4,ether5'}
     {assign var=hs_wan_interface value=$_c['lan_wan_interface']|default:'ether1'}
     {assign var=hs_management_bridge value=$_c['lan_management_bridge_name']|default:'bridge-management'}
     {assign var=hs_management_interface value=$_c['lan_management_interface']|default:'ether2'}
-    {assign var=hs_management_address value=$_c['lan_management_address']|default:'192.168.88.1/24'}
+    {assign var=hs_management_address value=$_c['lan_management_address']|default:'10.99.99.1/24'}
     {assign var=hs_hotspot_access_ports value=$_c['lan_hotspot_access_ports']|default:'ether3,wlan1'}
-    {assign var=hs_pppoe_access_ports value=$_c['lan_pppoe_access_ports']|default:''}
-    {assign var=hs_trunk_uplink_ports value=$_c['lan_trunk_uplink_ports']|default:'ether4'}
-    {assign var=hs_unused_ports value=$_c['lan_unused_ports']|default:'pwr-line1'}
-    {assign var=hs_vlan_id value=$_c['hotspot_vlan_id']|default:'10'}
-    {assign var=hs_vlan_iface value=$_c['hotspot_vlan_interface']|default:''}
     {assign var=hs_profile value=$_c['hotspot_profile']|default:'hotspot'}
     {assign var=hs_dns value=$_c['hotspot_dns_name']|default:''}
     {assign var=hs_local value=$_c['hotspot_local_address']|default:'10.10.0.1/24'}
@@ -42,8 +34,6 @@
     {assign var=hs_login value=','|cat:($_c['hotspot_login_methods']|default:'http-pap,mac-cookie')|cat:','}
     {assign var=hs_use_radius value=$_c['hotspot_use_radius']|default:'1'}
     {assign var=ps_gateway value=$_c['pppoe_setup_gateway']|default:'10.10.10.1/24'}
-    {assign var=ps_vlan_id value=$_c['pppoe_setup_vlan_id']|default:'20'}
-    {assign var=ps_vlan_iface value=$_c['pppoe_setup_vlan_interface']|default:''}
     {assign var=ps_pool_name value=$_c['pppoe_setup_pool_name']|default:'pppoe-pool'}
     {assign var=ps_pool_range value=$_c['pppoe_setup_pool_range']|default:'10.10.10.2-10.10.10.254'}
     {assign var=ps_profile_default value=$_c['pppoe_setup_profile_default']|default:'default'}

@@ -1597,12 +1597,12 @@ switch ($action) {
             'hotspot_smtp_server',
             'hotspot_use_radius',
             'hotspot_radius_secret',
-            'lan_bridge_name',
-            'lan_trunk_enabled',
-            'lan_trunk_bridge_ports',
             'hotspot_bridge_ports',
-            'hotspot_vlan_id',
-            'hotspot_vlan_interface',
+            'lan_hotspot_access_ports',
+            'lan_management_bridge_name',
+            'lan_management_interface',
+            'lan_management_address',
+            'lan_wan_interface',
         ];
 
         $pppoeSetupKeys = array_keys(Mikrotik::pppoeSetupDefaults());
@@ -2017,23 +2017,6 @@ HTML;
             }
             $_POST['hotspot_masquerade'] = !empty($_POST['hotspot_masquerade']) ? '1' : '0';
             $_POST['hotspot_use_radius'] = !empty($_POST['hotspot_use_radius']) ? '1' : '0';
-            $_POST['lan_trunk_enabled'] = !empty($_POST['lan_trunk_enabled']) ? '1' : '0';
-            if (trim((string) ($_POST['lan_bridge_name'] ?? '')) !== '') {
-                $_POST['pppoe_setup_bridge_name'] = trim((string) $_POST['lan_bridge_name']);
-            }
-            if (trim((string) ($_POST['lan_trunk_bridge_ports'] ?? '')) !== '') {
-                $_POST['pppoe_setup_bridge_ports'] = trim((string) $_POST['lan_trunk_bridge_ports']);
-            }
-            if ($_POST['lan_trunk_enabled'] === '1') {
-                $hotspotVlanId = Mikrotik::normalizeVlanId($_POST['hotspot_vlan_id'] ?? 0);
-                if ($hotspotVlanId > 0 && trim((string) ($_POST['hotspot_vlan_interface'] ?? '')) === '') {
-                    $_POST['hotspot_interface'] = Mikrotik::defaultVlanInterfaceName($hotspotVlanId, 'hotspot');
-                }
-                $pppoeVlanId = Mikrotik::normalizeVlanId($_POST['pppoe_setup_vlan_id'] ?? 0);
-                if ($pppoeVlanId > 0 && trim((string) ($_POST['pppoe_setup_vlan_interface'] ?? '')) === '') {
-                    $_POST['pppoe_setup_server_interface'] = Mikrotik::defaultVlanInterfaceName($pppoeVlanId, 'pppoe');
-                }
-            }
             $_POST['pppoe_setup_dns_allow_remote'] = !empty($_POST['pppoe_setup_dns_allow_remote']) ? '1' : '0';
             $_POST['pppoe_setup_one_session'] = !empty($_POST['pppoe_setup_one_session']) ? '1' : '0';
             $_POST['pppoe_setup_nat_masquerade'] = !empty($_POST['pppoe_setup_nat_masquerade']) ? '1' : '0';
@@ -2173,34 +2156,6 @@ HTML;
             return getUrl('settings/hotspot&step=' . max(1, min(4, $step)));
         };
 
-        $deployPppoeToMikrotik = static function ($client, $routerName) use (&$config, $admin) {
-            @set_time_limit(600);
-            $routerRow = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
-            $result = Mikrotik::applyPppoeSetupFromConfig($client, $config, $routerRow);
-            if (empty($result['ok'])) {
-                return [
-                    'ok' => false,
-                    'message' => 'Échec envoi PPPoE vers MikroTik : ' . implode(' | ', $result['errors'] ?? ['échec inconnu']),
-                ];
-            }
-            $planSync = Mikrotik::syncPppoePlans($client, $routerName, $admin);
-            $secretSync = Mikrotik::syncPppoeSecrets($client, $routerName, $admin, true);
-            $backendUrl = Mikrotik::resolvePppoeCaptiveBackendUrl(is_array($config) ? $config : []);
-            $portalUrl = Mikrotik::buildPppoeCaptivePortalUrl($routerName, is_array($config) ? $config : []);
-            if ($backendUrl !== '' && $portalUrl !== '') {
-                Mikrotik::ensurePppoeExpiredCaptive($client, $portalUrl, $backendUrl, $routerName);
-            }
-            Mikrotik::syncExpiredPppoeSuspensions($client, $routerName, $admin, true);
-            $actions = implode(', ', $result['actions'] ?? []);
-            $planNote = !empty($planSync['upserted']) ? ' Forfaits PPPoE : ' . (int) $planSync['upserted'] . '.' : '';
-            $secretNote = !empty($secretSync['upserted']) ? ' Secrets PPPoE : ' . (int) $secretSync['upserted'] . '.' : '';
-
-            return [
-                'ok' => true,
-                'message' => 'PPPoE déployé sur « ' . $routerName . ' » : ' . $actions . '.' . $planNote . $secretNote,
-            ];
-        };
-
         if (_post('save') == 'save') {
             @set_time_limit(600);
             @ini_set('max_execution_time', '120');
@@ -2267,7 +2222,6 @@ HTML;
 
         if (_post('send_mikrotik') == '1') {
             $sendFullDeploy = (_post('send_full') === '1');
-            $sendPppoeOnly = (_post('send_pppoe_only') === '1');
             @set_time_limit(600);
             @ini_set('max_execution_time', '600');
             @ini_set('default_socket_timeout', '30');
@@ -2399,24 +2353,10 @@ HTML;
                 $hotspotListenIp = $hotspotServerName !== ''
                     ? Mikrotik::getHotspotServerAddress($client, $hotspotServerName)
                     : '';
-                $trunkEnabled = Mikrotik::lanTrunkEnabled($config);
 
-                if ($sendPppoeOnly) {
-                    if (!$trunkEnabled) {
-                        r2($hotspotSettingsUrl(), 'e', 'Le mode trunk VLAN doit être activé à l\'étape 1 pour déployer le PPPoE.');
-                    }
-                    Mikrotik::resetPppoeSyncRuntimeState();
-                    $pppoeDeploy = $deployPppoeToMikrotik($client, $routerName);
-                    r2(
-                        $hotspotSettingsUrl(),
-                        !empty($pppoeDeploy['ok']) ? 's' : 'e',
-                        $pppoeDeploy['message'] ?? 'Échec envoi PPPoE.'
-                    );
-                }
+                $useLightSend = !$sendFullDeploy && $hotspotListenIp !== '';
 
-                $useLightSend = !$sendFullDeploy && !$sendPppoeOnly && $hotspotListenIp !== '';
-
-                if (!$sendFullDeploy && !$sendPppoeOnly && $hotspotListenIp === '') {
+                if (!$sendFullDeploy && $hotspotListenIp === '') {
                     r2(
                         $hotspotSettingsUrl(),
                         'w',
@@ -2529,13 +2469,13 @@ HTML;
                 // DHCP bridge-hotspot : toujours assuré (même si l'infra hotspot existe déjà).
                 $hotspotAlreadyDeployed = $hotspotListenIp !== '';
                 $skipHotspotSetup = $hotspotAlreadyDeployed;
-                $skipTrunkRebuild = $hotspotAlreadyDeployed;
+                $skipBridgeHardening = $hotspotAlreadyDeployed;
                 if (!$skipHotspotSetup) {
                 $hotspotSetup = Mikrotik::applyHotspotSetupFromConfig(
                     $client,
                     $config,
                     is_array($mikrotik) ? $mikrotik : (method_exists($mikrotik, 'as_array') ? $mikrotik->as_array() : null),
-                    $skipTrunkRebuild
+                    $skipBridgeHardening
                 );
                 if (empty($hotspotSetup['ok'])) {
                     r2(
@@ -2595,14 +2535,12 @@ HTML;
                     $dhcpNote = '';
                     if ($dhcpIface !== '') {
                         // Bridge + ports même en mode incrémental (sans refaire tout le setup).
-                        if (!Mikrotik::lanTrunkEnabled($config)) {
-                            $bridgePrep = Mikrotik::ensureDedicatedHotspotBridge($client, $config);
-                            if (!empty($bridgePrep['interface'])) {
-                                $dhcpIface = (string) $bridgePrep['interface'];
-                            }
-                            if (!empty($bridgePrep['actions'])) {
-                                $dhcpNote .= ' ' . implode(', ', $bridgePrep['actions']) . '.';
-                            }
+                        $bridgePrep = Mikrotik::ensureDedicatedHotspotBridge($client, $config);
+                        if (!empty($bridgePrep['interface'])) {
+                            $dhcpIface = (string) $bridgePrep['interface'];
+                        }
+                        if (!empty($bridgePrep['actions'])) {
+                            $dhcpNote .= ' ' . implode(', ', $bridgePrep['actions']) . '.';
                         }
                         $dhcpResult = Mikrotik::ensureHotspotDhcpServer(
                             $client,
@@ -2620,6 +2558,14 @@ HTML;
                                 'e',
                                 'DHCP hotspot échoué : ' . implode(' | ', $dhcpResult['errors'])
                             );
+                        }
+                        $dhcpFw = Mikrotik::ensureHotspotDhcpFirewallPass($client, $dhcpIface);
+                        if (!empty($dhcpFw['actions'])) {
+                            $dhcpNote .= ' ' . implode(', ', $dhcpFw['actions']) . '.';
+                        }
+                        $wgDhcp = Mikrotik::ensureHotspotWalledGardenDhcp($client);
+                        if (!empty($wgDhcp['actions'])) {
+                            $dhcpNote .= ' ' . implode(', ', $wgDhcp['actions']) . '.';
                         }
                     }
                     $hotspotSetupNote = ' Hotspot : infra déjà sur le routeur (login.html + forfaits + walled-garden).'
@@ -2831,7 +2777,7 @@ HTML;
                 if ($localAddr !== '' && strpos($localAddr, '/') !== false) {
                     $gatewayIp = explode('/', $localAddr, 2)[0];
                 }
-                $bridgeForPortal = Mikrotik::lanTrunkEnabled($config) ? Mikrotik::resolveLanBridgeName($config) : '';
+                $bridgeForPortal = trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot'));
                 $portalVerify = Mikrotik::verifyHotspotCaptivePortalReady(
                     $client,
                     $hotspotServerName,
@@ -2856,16 +2802,6 @@ HTML;
                 $captiveNote = ($captiveApiUrl !== rtrim($apiUrlForFetch, '/'))
                     ? ' API captive : ' . $captiveApiUrl . ' (proxy NAT vers ' . $apiHostForDns . ').'
                     : '';
-                $pppoeNote = '';
-                if ($trunkEnabled) {
-                    @set_time_limit(600);
-                    Mikrotik::resetPppoeSyncRuntimeState();
-                    $pppoeDeploy = $deployPppoeToMikrotik($client, $routerName);
-                    if (empty($pppoeDeploy['ok'])) {
-                        r2($hotspotSettingsUrl(), 'e', $pppoeDeploy['message'] ?? 'Échec envoi PPPoE.');
-                    }
-                    $pppoeNote = ' ' . ($pppoeDeploy['message'] ?? 'PPPoE déployé.');
-                }
                 r2(
                     $hotspotSettingsUrl(),
                     's',
@@ -2879,7 +2815,6 @@ HTML;
                     . ' ID: ' . $uploadId . '.'
                     . $dnsNote
                     . $captiveNote
-                    . $pppoeNote
                 );
             } catch (Throwable $e) {
                 r2($hotspotSettingsUrl(), 'e', 'Échec de l\'envoi vers MikroTik (' . $routerName . ') : ' . $e->getMessage());
@@ -3058,7 +2993,6 @@ HTML;
             $_POST['pppoe_setup_dns_allow_remote'] = !empty($_POST['pppoe_setup_dns_allow_remote']) ? '1' : '0';
             $_POST['pppoe_setup_one_session'] = !empty($_POST['pppoe_setup_one_session']) ? '1' : '0';
             $_POST['pppoe_setup_nat_masquerade'] = !empty($_POST['pppoe_setup_nat_masquerade']) ? '1' : '0';
-            $_POST['lan_trunk_enabled'] = '0';
             $bridgeName = trim((string) ($_POST['pppoe_setup_bridge_name'] ?? ''));
             if ($bridgeName === '' || strcasecmp($bridgeName, 'bridge-lan') === 0) {
                 $bridgeName = 'bridge-pppoe';
@@ -3067,12 +3001,6 @@ HTML;
             $serverIface = trim((string) ($_POST['pppoe_setup_server_interface'] ?? ''));
             if ($serverIface === '' || strcasecmp($serverIface, 'bridge-lan') === 0) {
                 $_POST['pppoe_setup_server_interface'] = $bridgeName;
-            }
-            if ($_POST['lan_trunk_enabled'] === '1') {
-                $pppoeVlanId = Mikrotik::normalizeVlanId($_POST['pppoe_setup_vlan_id'] ?? 0);
-                if ($pppoeVlanId > 0 && trim((string) ($_POST['pppoe_setup_vlan_interface'] ?? '')) === '') {
-                    $_POST['pppoe_setup_server_interface'] = Mikrotik::defaultVlanInterfaceName($pppoeVlanId, 'pppoe');
-                }
             }
 
             foreach ($pppoeSetupKeys as $key) {
