@@ -12223,17 +12223,18 @@ class Mikrotik
      *     captive?: array<string, mixed>
      * }
      */
-    public static function deployPppoeComplete($client, array $config, $routerRow, $admin = null)
+    public static function deployPppoeComplete($client, array $setupConfig, $routerRow, $admin = null)
     {
         global $config;
         $appConfig = is_array($config) ? $config : [];
-        $config = self::normalizePppoeSetupConfig($config);
+        $setupConfig = self::normalizePppoeSetupConfig($setupConfig);
+        self::resetMikrotikReconnectBudget(6);
         $routerArray = is_array($routerRow)
             ? $routerRow
             : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
-        $routerName = trim((string) ($config['pppoe_setup_router'] ?? ($routerArray['name'] ?? '')));
+        $routerName = trim((string) ($setupConfig['pppoe_setup_router'] ?? ($routerArray['name'] ?? '')));
 
-        $infra = self::consolidatePppoeRouterSetup($client, $config, $routerArray, $admin);
+        $infra = self::consolidatePppoeRouterSetup($client, $setupConfig, $routerArray, $admin);
         $actions = $infra['actions'] ?? [];
         $errors = $infra['errors'] ?? [];
 
@@ -12285,7 +12286,7 @@ class Mikrotik
             $captive['errors'] ?? []
         );
 
-        $coexistence = self::ensureHotspotCoexistenceAfterPppoe($client, $config);
+        $coexistence = self::ensureHotspotCoexistenceAfterPppoe($client, $setupConfig);
         if (!empty($coexistence['actions'])) {
             $actions[] = 'coexistence Hotspot : ' . implode(', ', $coexistence['actions']);
         }

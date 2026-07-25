@@ -32,10 +32,12 @@ class DashboardCommand
 
         $activeCustomers = (int) $rechargesQ->count();
         $salesToday = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices(
-                self::scopedTransactionsQuery($admin)->where('recharged_on', date('Y-m-d'))
-            )
-            : (float) (self::scopedTransactionsQuery($admin)->where('recharged_on', date('Y-m-d'))->sum('price') ?: 0);
+            ? WifiZoneSales::sumIncomeForDay($admin)
+            : (float) (self::scopedTransactionsQuery($admin)
+                ->where('recharged_on', date('Y-m-d'))
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator')
+                ->sum('price') ?: 0);
         $routers = $routersQ->find_many();
         $routersTotal = count($routers);
         $offlineRouters = self::countOfflineRouters($routers);
@@ -125,7 +127,9 @@ class DashboardCommand
                 'invoice' => (string) ($trx->invoice ?? ''),
                 'username' => (string) ($trx->username ?? ''),
                 'plan_name' => (string) ($trx->plan_name ?? ''),
-                'price' => (float) ($trx->price ?? 0),
+                'price' => class_exists('WifiZoneSales')
+                    ? WifiZoneSales::parseAmount($trx->price ?? 0)
+                    : (float) ($trx->price ?? 0),
                 'method' => (string) ($trx->method ?? ''),
                 'type' => (string) ($trx->type ?? ''),
                 'recharged_on' => (string) ($trx->recharged_on ?? ''),
@@ -317,24 +321,18 @@ class DashboardCommand
 
     private static function scopedTransactionsQuery($admin)
     {
+        $query = ORM::for_table('tbl_transactions');
+        if (class_exists('AdminScope')) {
+            return AdminScope::applyTransactionsQuery($query, $admin);
+        }
+
         $isScoped = ($admin['user_type'] ?? '') !== 'SuperAdmin';
         $adminId = (int) ($admin['id'] ?? 0);
-        $query = ORM::for_table('tbl_transactions');
         if (!$isScoped) {
             return $query;
         }
 
-        $routerNames = self::scopedRouterNames($adminId);
-        if ($routerNames === []) {
-            return $query->where('admin_id', $adminId);
-        }
-
-        $placeholders = implode(',', array_fill(0, count($routerNames), '?'));
-
-        return $query->where_raw(
-            '(admin_id = ? OR routers IN (' . $placeholders . '))',
-            array_merge([$adminId], $routerNames)
-        );
+        return $query->where('admin_id', $adminId);
     }
 
     private static function scopedRechargesQuery($admin)

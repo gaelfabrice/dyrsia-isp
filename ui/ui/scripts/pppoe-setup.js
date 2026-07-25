@@ -105,10 +105,104 @@
     }
     var fetchInFlight = null;
     var fetchAbortController = null;
+    var deployInFlight = false;
     var SYNC_CACHE_TTL_MS = 120000;
     var SYNC_FETCH_TIMEOUT_MS = 40000;
     var DEPLOY_TIMEOUT_MS = 600000;
     var DEPLOY_VERIFY_TIMEOUT_MS = 90000;
+    var DEPLOY_POLL_INTERVAL_MS = 2000;
+    var DEPLOY_POLL_MAX_MS = 600000;
+
+    function httpErrorMessage(status) {
+        if (status === 403) {
+            return 'Session expirée ou jeton CSRF invalide — rechargez la page puis réessayez.';
+        }
+        if (status === 502 || status === 503 || status === 504) {
+            return 'HTTP ' + status + ' — délai serveur dépassé (aaPanel/Nginx). Le déploiement peut quand même continuer sur le routeur : resynchronisez dans 1–2 min.';
+        }
+        return 'HTTP ' + status;
+    }
+
+    function postPppoeForm(setupForm, extraFields, timeoutMs) {
+        var fd = new FormData(setupForm);
+        fd.set('send_mikrotik', '1');
+        Object.keys(extraFields || {}).forEach(function (key) {
+            fd.set(key, extraFields[key]);
+        });
+        var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var abortTimer = abortController && timeoutMs ? setTimeout(function () {
+            try { abortController.abort(); } catch (err) {}
+        }, timeoutMs) : null;
+
+        return fetch(setupForm.action, {
+            method: 'POST',
+            body: fd,
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            signal: abortController ? abortController.signal : undefined
+        }).then(function (r) {
+            return r.text().then(function (body) {
+                if (!r.ok) {
+                    throw new Error(httpErrorMessage(r.status));
+                }
+                try {
+                    return JSON.parse(body);
+                } catch (e) {
+                    throw new Error('Réponse serveur invalide pendant le déploiement.');
+                }
+            });
+        }).finally(function () {
+            if (abortTimer) clearTimeout(abortTimer);
+        });
+    }
+
+    function pollPppoeDeployJob(setupForm, jobId, startedAt) {
+        var deadline = Date.now() + DEPLOY_POLL_MAX_MS;
+        return new Promise(function (resolve, reject) {
+            function tick() {
+                if (Date.now() > deadline) {
+                    reject(new Error('Délai dépassé (~10 min) en attendant la fin du déploiement.'));
+                    return;
+                }
+                postPppoeForm(setupForm, { ajax_deploy: 'status', job_id: jobId }, 30000)
+                    .then(function (data) {
+                        if (!data) {
+                            reject(new Error('Réponse serveur vide.'));
+                            return;
+                        }
+                        if (data.running) {
+                            var secs = Math.round((Date.now() - startedAt) / 1000);
+                            var mins = Math.floor(secs / 60);
+                            var rem = secs % 60;
+                            var elapsed = mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
+                            setSyncStatus('loading', (data.message || 'Déploiement PPPoE en cours…') + ' ' + elapsed);
+                            setTimeout(tick, DEPLOY_POLL_INTERVAL_MS);
+                            return;
+                        }
+                        if (!data.ok) {
+                            reject(new Error(data.message || 'Déploiement PPPoE échoué.'));
+                            return;
+                        }
+                        resolve(data);
+                    })
+                    .catch(reject);
+            }
+            tick();
+        });
+    }
+
+    function abortSyncIfRunning() {
+        if (fetchAbortController) {
+            try {
+                fetchAbortController.abort();
+            } catch (err) {}
+            fetchAbortController = null;
+        }
+        fetchInFlight = null;
+    }
 
     function $(id) {
         return document.getElementById(id);
@@ -648,7 +742,7 @@
     }
 
     function deployToMikrotik(setupForm, sendBtn) {
-        if (!setupForm || !sendBtn) return;
+        if (!setupForm || !sendBtn || deployInFlight) return;
         if (!val('pppoe_setup_router')) {
             setSyncStatus('error', 'Sélectionnez un routeur avant l\'envoi.');
             return;
@@ -659,12 +753,14 @@
             return;
         }
         syncPortsInputFromPicker(ports);
+        abortSyncIfRunning();
         var bridgeName = val('pppoe_setup_bridge_name') || 'bridge-pppoe';
         var serverIface = $('pppoe_setup_server_interface');
         if (serverIface && (!String(serverIface.value || '').trim() || String(serverIface.value).toLowerCase() === 'bridge-lan')) {
             serverIface.value = bridgeName;
         }
 
+        deployInFlight = true;
         var label = sendBtn.querySelector('.ps-send-label');
         sendBtn.disabled = true;
         if (label) {
@@ -680,46 +776,27 @@
             setSyncStatus('loading', 'Consolidation PPPoE en cours… ' + elapsed + ' (VPN lent : jusqu\'à 10 min)');
         }, 1000);
 
-        var fd = new FormData(setupForm);
-        fd.set('send_mikrotik', '1');
-        fd.set('ajax_deploy', '1');
+        function finishSuccess(data) {
+            setSyncStatus('ok', (data && data.message) || 'Serveur PPPoE déployé.');
+            lastSnapshot = null;
+            lastSnapshotAt = 0;
+            fetchSnapshot(true).then(function (snap) {
+                if (snap) {
+                    renderPppoeServerStatus(snap);
+                }
+            });
+        }
 
-        var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        var abortTimer = abortController ? setTimeout(function () {
-            try { abortController.abort(); } catch (err) {}
-        }, DEPLOY_TIMEOUT_MS) : null;
-
-        fetch(setupForm.action, {
-            method: 'POST',
-            body: fd,
-            credentials: 'same-origin',
-            headers: { Accept: 'application/json' },
-            signal: abortController ? abortController.signal : undefined
-        })
-            .then(function (r) {
-                return r.text().then(function (body) {
-                    if (!r.ok) {
-                        throw new Error('HTTP ' + r.status);
-                    }
-                    try {
-                        return JSON.parse(body);
-                    } catch (e) {
-                        throw new Error('Réponse serveur invalide pendant le déploiement.');
-                    }
-                });
-            })
+        postPppoeForm(setupForm, { ajax_deploy: '1' }, 120000)
             .then(function (data) {
                 if (!data || !data.ok) {
                     throw new Error((data && data.message) || 'Déploiement PPPoE échoué.');
                 }
-                setSyncStatus('ok', data.message || 'Serveur PPPoE déployé.');
-                lastSnapshot = null;
-                lastSnapshotAt = 0;
-                fetchSnapshot(true).then(function (snap) {
-                    if (snap) {
-                        renderPppoeServerStatus(snap);
-                    }
-                });
+                if (data.async && data.job_id) {
+                    setSyncStatus('loading', data.message || 'Déploiement PPPoE démarré…');
+                    return pollPppoeDeployJob(setupForm, data.job_id, started).then(finishSuccess);
+                }
+                finishSuccess(data);
             })
             .catch(function (err) {
                 if (err && err.name === 'AbortError') {
@@ -731,14 +808,14 @@
                             lastSnapshotAt = 0;
                             return fetchSnapshot(true);
                         }
-                        setSyncStatus('error', 'Déploiement interrompu (délai ~5 min). Vérifiez le VPN, resynchronisez le routeur, ou réessayez.');
+                        setSyncStatus('error', 'Déploiement interrompu (délai ~2 min). Vérifiez le VPN, resynchronisez le routeur, ou réessayez.');
                     });
                 }
                 setSyncStatus('error', err.message || 'Erreur réseau pendant le déploiement.');
             })
             .finally(function () {
                 clearInterval(timer);
-                if (abortTimer) clearTimeout(abortTimer);
+                deployInFlight = false;
                 resetSendButton(sendBtn);
             });
     }
@@ -792,6 +869,14 @@
         var sendBtn = $('ps-send-mikrotik');
         var setupForm = $('pppoe-setup-form');
         if (setupForm && sendBtn) {
+            function handleSendClick(e) {
+                if (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+                deployToMikrotik(setupForm, sendBtn);
+            }
+            sendBtn.addEventListener('click', handleSendClick);
             setupForm.addEventListener('submit', function (e) {
                 var submitter = e.submitter;
                 if (!submitter || submitter.name !== 'send_mikrotik') {

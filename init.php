@@ -518,6 +518,9 @@ function wifizone_json_response_requested()
     if ($handler === 'routers' && $action === 'test-connection') {
         return true;
     }
+    if ($handler === 'settings' && $action === 'pppoe-setup' && !empty($_POST['ajax_deploy'])) {
+        return true;
+    }
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH'])
         && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
         return true;

@@ -3110,13 +3110,159 @@ HTML;
             }
         };
 
-        if (!empty($_POST['ajax_deploy']) && (string) $_POST['ajax_deploy'] === '1') {
+        $pppoeDeployJobDir = realpath(__DIR__ . '/../cache') ?: (__DIR__ . '/../cache');
+        $pppoeDeployJobPath = static function ($adminId, $jobId) use ($pppoeDeployJobDir) {
+            $adminId = (int) $adminId;
+            $jobId = preg_replace('/[^a-f0-9]/', '', strtolower((string) $jobId));
+            if ($adminId <= 0 || strlen($jobId) !== 32) {
+                return null;
+            }
+
+            return rtrim($pppoeDeployJobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR
+                . 'pppoe_deploy_' . $adminId . '_' . $jobId . '.json';
+        };
+        $pppoeDeployPurgeOldJobs = static function ($adminId) use ($pppoeDeployJobDir) {
+            $adminId = (int) $adminId;
+            if ($adminId <= 0) {
+                return;
+            }
+            $pattern = rtrim($pppoeDeployJobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR
+                . 'pppoe_deploy_' . $adminId . '_*.json';
+            $cutoff = time() - 3600;
+            foreach (glob($pattern) ?: [] as $path) {
+                if (@filemtime($path) !== false && filemtime($path) < $cutoff) {
+                    @unlink($path);
+                }
+            }
+        };
+        $pppoeDeployWriteJob = static function ($path, array $payload) {
+            if ($path === null || $path === '') {
+                return false;
+            }
+            $payload['updated_at'] = time();
+            return @file_put_contents($path, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false;
+        };
+
+        if (!empty($_POST['ajax_deploy'])) {
             @set_time_limit(600);
             @ini_set('max_execution_time', '600');
             @ignore_user_abort(true);
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode($runPppoeDeploy());
-            exit;
+            header('X-Accel-Buffering: no');
+            header('Cache-Control: no-store');
+
+            $ajaxDeployMode = (string) $_POST['ajax_deploy'];
+
+            if ($ajaxDeployMode === 'status') {
+                $jobId = trim((string) ($_POST['job_id'] ?? ''));
+                $jobPath = $pppoeDeployJobPath($admin['id'] ?? 0, $jobId);
+                if ($jobPath === null || !is_file($jobPath)) {
+                    echo json_encode(['ok' => false, 'message' => 'Tâche de déploiement introuvable ou expirée.']);
+                    exit;
+                }
+                $raw = @file_get_contents($jobPath);
+                $job = is_string($raw) ? json_decode($raw, true) : null;
+                if (!is_array($job)) {
+                    echo json_encode(['ok' => false, 'message' => 'État de déploiement illisible.']);
+                    exit;
+                }
+                $status = (string) ($job['status'] ?? '');
+                if ($status === 'running') {
+                    echo json_encode([
+                        'ok' => true,
+                        'running' => true,
+                        'message' => 'Déploiement PPPoE en cours sur le routeur…',
+                        'elapsed' => max(0, time() - (int) ($job['started_at'] ?? time())),
+                    ]);
+                    exit;
+                }
+                echo json_encode([
+                    'ok' => !empty($job['ok']),
+                    'running' => false,
+                    'message' => (string) ($job['message'] ?? ''),
+                    'actions' => $job['actions'] ?? [],
+                    'errors' => $job['errors'] ?? [],
+                    'elapsed' => $job['elapsed'] ?? null,
+                ]);
+                exit;
+            }
+
+            if ($ajaxDeployMode === '1') {
+                $savePppoeSetupSettings();
+                $routerName = trim((string) ($config['pppoe_setup_router'] ?? ''));
+                $bridgePorts = array_values(array_filter(array_map('trim', explode(',', (string) ($config['pppoe_setup_bridge_ports'] ?? '')))));
+                if ($routerName === '') {
+                    echo json_encode(['ok' => false, 'message' => 'Sélectionnez un routeur MikroTik.']);
+                    exit;
+                }
+                if (empty($bridgePorts)) {
+                    echo json_encode(['ok' => false, 'message' => 'Sélectionnez au moins un port membre pour le bridge PPPoE.']);
+                    exit;
+                }
+                global $_app_stage;
+                if ($_app_stage == 'Demo') {
+                    echo json_encode(['ok' => false, 'message' => 'Indisponible en mode démo.']);
+                    exit;
+                }
+
+                $pppoeDeployPurgeOldJobs($admin['id'] ?? 0);
+                $jobId = bin2hex(random_bytes(16));
+                $jobPath = $pppoeDeployJobPath($admin['id'] ?? 0, $jobId);
+                if ($jobPath === null) {
+                    echo json_encode(['ok' => false, 'message' => 'Impossible de créer la tâche de déploiement.']);
+                    exit;
+                }
+                $pppoeDeployWriteJob($jobPath, [
+                    'status' => 'running',
+                    'started_at' => time(),
+                    'router' => $routerName,
+                    'ok' => null,
+                    'message' => '',
+                    'actions' => [],
+                    'errors' => [],
+                ]);
+
+                $finishDeployJob = static function ($result) use ($jobPath, $pppoeDeployWriteJob) {
+                    $payload = is_array($result) ? $result : ['ok' => false, 'message' => 'Résultat de déploiement invalide.'];
+                    $pppoeDeployWriteJob($jobPath, [
+                        'status' => 'done',
+                        'ok' => !empty($payload['ok']),
+                        'message' => (string) ($payload['message'] ?? ''),
+                        'actions' => $payload['actions'] ?? [],
+                        'errors' => $payload['errors'] ?? [],
+                        'elapsed' => $payload['elapsed'] ?? null,
+                    ]);
+                };
+
+                if (function_exists('fastcgi_finish_request')) {
+                    echo json_encode([
+                        'ok' => true,
+                        'async' => true,
+                        'job_id' => $jobId,
+                        'message' => 'Déploiement PPPoE démarré — connexion au routeur via VPN…',
+                    ]);
+                    if (session_status() === PHP_SESSION_ACTIVE) {
+                        session_write_close();
+                    }
+                    fastcgi_finish_request();
+                    try {
+                        $finishDeployJob($runPppoeDeploy());
+                    } catch (Throwable $e) {
+                        $finishDeployJob([
+                            'ok' => false,
+                            'message' => 'Échec envoi PPPoE : ' . $e->getMessage(),
+                            'errors' => [$e->getMessage()],
+                            'actions' => [],
+                        ]);
+                    }
+                    exit;
+                }
+
+                $result = $runPppoeDeploy();
+                $finishDeployJob($result);
+                echo json_encode($result);
+                exit;
+            }
         }
 
         if (_post('save') == 'save') {

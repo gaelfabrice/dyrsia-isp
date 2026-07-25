@@ -18,35 +18,25 @@ class top_widget
 
         // ================= DAILY INCOME =================
 
-        $iday_q = ORM::for_table('tbl_transactions')
-            ->where('recharged_on', $current_date)
-            ->where_not_equal('method', 'Customer - Balance')
-            ->where_not_equal('method', 'Recharge Balance - Administrator');
-
-        if ($isAdmin) {
-            AdminScope::applyTransactionsQueryByAdminId($iday_q, $adminId);
-        }
-
         $iday = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices($iday_q)
-            : ($iday_q->sum('price') ?: '0.00');
+            ? WifiZoneSales::sumIncomeForDay($admin, $current_date)
+            : (float) (ORM::for_table('tbl_transactions')
+                ->where('recharged_on', $current_date)
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator')
+                ->sum('price') ?: 0);
 
 
         // ================= MONTHLY INCOME =================
 
-        $imonth_q = ORM::for_table('tbl_transactions')
-            ->where_not_equal('method', 'Customer - Balance')
-            ->where_not_equal('method', 'Recharge Balance - Administrator')
-            ->where_gte('recharged_on', $start_date)
-            ->where_lte('recharged_on', $current_date);
-
-        if ($isAdmin) {
-            AdminScope::applyTransactionsQueryByAdminId($imonth_q, $adminId);
-        }
-
         $imonth = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices($imonth_q)
-            : ($imonth_q->sum('price') ?: '0.00');
+            ? WifiZoneSales::sumIncomeForPeriod($admin, $start_date, $current_date)
+            : (float) (ORM::for_table('tbl_transactions')
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator')
+                ->where_gte('recharged_on', $start_date)
+                ->where_lte('recharged_on', $current_date)
+                ->sum('price') ?: 0);
 
 
         // ================= ACTIVE USERS =================

@@ -216,18 +216,47 @@ switch ($action) {
         $start_date = date('Y-m-01');
         $isAdmin = ($admin['user_type'] != 'SuperAdmin');
 
-        $dailyQuery = ORM::for_table('tbl_transactions')
-            ->where('recharged_on', $current_date)
-            ->where_not_equal('method', 'Customer - Balance')
-            ->where_not_equal('method', 'Recharge Balance - Administrator');
-        $monthlyQuery = ORM::for_table('tbl_transactions')
-            ->where_not_equal('method', 'Customer - Balance')
-            ->where_not_equal('method', 'Recharge Balance - Administrator')
-            ->where_gte('recharged_on', $start_date)
-            ->where_lte('recharged_on', $current_date);
-        if ($isAdmin) {
-            AdminScope::applyTransactionsQueryByAdminId($dailyQuery, $adminId);
-            AdminScope::applyTransactionsQueryByAdminId($monthlyQuery, $adminId);
+        if (class_exists('WifiZoneSales')) {
+            $iday = WifiZoneSales::sumIncomeForDay($admin, $current_date);
+            $imonth = WifiZoneSales::sumIncomeForPeriod($admin, $start_date, $current_date);
+            $incomeYesterday = WifiZoneSales::sumIncomeForDay($admin, date('Y-m-d', strtotime('-1 day')));
+            $incomePrevMonth = WifiZoneSales::sumIncomeForPeriod(
+                $admin,
+                date('Y-m-01', strtotime('-1 month')),
+                date('Y-m-t', strtotime('-1 month'))
+            );
+        } else {
+            $dailyQuery = ORM::for_table('tbl_transactions')
+                ->where('recharged_on', $current_date)
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator');
+            $monthlyQuery = ORM::for_table('tbl_transactions')
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator')
+                ->where_gte('recharged_on', $start_date)
+                ->where_lte('recharged_on', $current_date);
+            if ($isAdmin) {
+                AdminScope::applyTransactionsQueryByAdminId($dailyQuery, $adminId);
+                AdminScope::applyTransactionsQueryByAdminId($monthlyQuery, $adminId);
+            }
+            $iday = (float) ($dailyQuery->sum('price') ?: 0);
+            $imonth = (float) ($monthlyQuery->sum('price') ?: 0);
+
+            $yesterdayQuery = ORM::for_table('tbl_transactions')
+                ->where('recharged_on', date('Y-m-d', strtotime('-1 day')))
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator');
+            $prevMonthQuery = ORM::for_table('tbl_transactions')
+                ->where_not_equal('method', 'Customer - Balance')
+                ->where_not_equal('method', 'Recharge Balance - Administrator')
+                ->where_gte('recharged_on', date('Y-m-01', strtotime('-1 month')))
+                ->where_lte('recharged_on', date('Y-m-t', strtotime('-1 month')));
+            if ($isAdmin) {
+                AdminScope::applyTransactionsQueryByAdminId($yesterdayQuery, $adminId);
+                AdminScope::applyTransactionsQueryByAdminId($prevMonthQuery, $adminId);
+            }
+            $incomeYesterday = (float) ($yesterdayQuery->sum('price') ?: 0);
+            $incomePrevMonth = (float) ($prevMonthQuery->sum('price') ?: 0);
         }
 
         $w_balance = 0;
@@ -245,37 +274,6 @@ switch ($action) {
             }
         } catch (Exception $e) {
         }
-
-        $iday = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices($dailyQuery)
-            : (float) ($dailyQuery->sum('price') ?: 0);
-        $imonth = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices($monthlyQuery)
-            : (float) ($monthlyQuery->sum('price') ?: 0);
-
-        $yesterday = date('Y-m-d', strtotime('-1 day'));
-        $prevMonthStart = date('Y-m-01', strtotime('-1 month'));
-        $prevMonthEnd = date('Y-m-t', strtotime('-1 month'));
-
-        $yesterdayQuery = ORM::for_table('tbl_transactions')
-            ->where('recharged_on', $yesterday)
-            ->where_not_equal('method', 'Customer - Balance')
-            ->where_not_equal('method', 'Recharge Balance - Administrator');
-        $prevMonthQuery = ORM::for_table('tbl_transactions')
-            ->where_not_equal('method', 'Customer - Balance')
-            ->where_not_equal('method', 'Recharge Balance - Administrator')
-            ->where_gte('recharged_on', $prevMonthStart)
-            ->where_lte('recharged_on', $prevMonthEnd);
-        if ($isAdmin) {
-            AdminScope::applyTransactionsQueryByAdminId($yesterdayQuery, $adminId);
-            AdminScope::applyTransactionsQueryByAdminId($prevMonthQuery, $adminId);
-        }
-        $incomeYesterday = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices($yesterdayQuery)
-            : (float) ($yesterdayQuery->sum('price') ?: 0);
-        $incomePrevMonth = class_exists('WifiZoneSales')
-            ? WifiZoneSales::sumQueryPrices($prevMonthQuery)
-            : (float) ($prevMonthQuery->sum('price') ?: 0);
 
         $growthDaily = $incomeYesterday > 0 ? round((($iday - $incomeYesterday) / $incomeYesterday) * 100) : ($iday > 0 ? 100 : 0);
         $growthMonthly = $incomePrevMonth > 0 ? round((($imonth - $incomePrevMonth) / $incomePrevMonth) * 100) : ($imonth > 0 ? 100 : 0);
@@ -303,6 +301,7 @@ switch ($action) {
                 $monthlyRevenue[$idx] = round((float) ($row['total'] ?? 0), 2);
             }
         }
+        $monthlyRevenue[(int) date('n') - 1] = round((float) $imonth, 2);
 
         $comSql = "SELECT MONTH(recharged_on) AS m, SUM(price) AS total
             FROM tbl_transactions

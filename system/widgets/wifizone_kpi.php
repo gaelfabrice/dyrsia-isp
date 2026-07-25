@@ -24,20 +24,33 @@ class wifizone_kpi
         $adminId = (int) ($admin['id'] ?? 0);
 
         $rechargesQ = ORM::for_table('tbl_user_recharges')->where('status', 'on');
-        $salesTodayQ = ORM::for_table('tbl_transactions')->where('recharged_on', date('Y-m-d'));
-        $salesMonthQ = ORM::for_table('tbl_transactions')->where_gte('recharged_on', date('Y-m-01'));
         $routersQ = ORM::for_table('tbl_routers')->where('enabled', 1);
         if ($isAdmin) {
-            $rechargesQ->where('admin_id', $adminId);
-            $salesTodayQ->where('admin_id', $adminId);
-            $salesMonthQ->where('admin_id', $adminId);
+            if (class_exists('AdminScope')) {
+                $rechargesQ = AdminScope::applyRechargesQuery($rechargesQ, $admin);
+            } else {
+                $rechargesQ->where('admin_id', $adminId);
+            }
             $routersQ->where('admin_id', $adminId);
         }
 
+        $salesToday = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumIncomeForDay($admin)
+            : (float) (ORM::for_table('tbl_transactions')
+                ->where('recharged_on', date('Y-m-d'))
+                ->where('admin_id', $adminId)
+                ->sum('price') ?: 0);
+        $salesMonth = class_exists('WifiZoneSales')
+            ? WifiZoneSales::sumIncomeForPeriod($admin, date('Y-m-01'), date('Y-m-d'))
+            : (float) (ORM::for_table('tbl_transactions')
+                ->where_gte('recharged_on', date('Y-m-01'))
+                ->where('admin_id', $adminId)
+                ->sum('price') ?: 0);
+
         $kpi = [
             'active_customers' => $rechargesQ->count(),
-            'sales_today' => $salesTodayQ->sum('price') ?: 0,
-            'sales_month' => $salesMonthQ->sum('price') ?: 0,
+            'sales_today' => $salesToday,
+            'sales_month' => $salesMonth,
             'routers_offline' => 0,
             'expiring_soon' => 0,
         ];

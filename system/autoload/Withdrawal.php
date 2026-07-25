@@ -170,40 +170,12 @@ class Withdrawal
             $eligible[] = $t;
         }
         if (class_exists('WifiZoneSales')) {
-            $uniqueRows = [];
-            $seenPayment = [];
-            $seenFingerprint = [];
-            foreach ($eligible as $t) {
-                $arr = $t->as_array();
-                $note = (string) ($arr['note'] ?? '');
-                $method = (string) ($arr['method'] ?? '');
-                if (preg_match('/hotspot_payment:(\d+)/', $note, $m)) {
-                    $key = 'hp:' . $m[1];
-                    if (isset($seenPayment[$key])) {
-                        continue;
-                    }
-                    $seenPayment[$key] = true;
-                } elseif (stripos($method, 'CamPay') !== false || stripos($method, 'MyPVit') !== false) {
-                    $fp = implode('|', [
-                        (string) ($arr['username'] ?? ''),
-                        (string) ($arr['plan_name'] ?? ''),
-                        (string) ($arr['price'] ?? ''),
-                        $method,
-                        (string) ($arr['routers'] ?? ''),
-                        (string) ($arr['recharged_on'] ?? ''),
-                        substr((string) ($arr['recharged_time'] ?? ''), 0, 8),
-                    ]);
-                    if (isset($seenFingerprint[$fp])) {
-                        continue;
-                    }
-                    $seenFingerprint[$fp] = true;
-                }
-                $uniqueRows[] = $t;
-            }
-            $eligible = $uniqueRows;
+            $eligible = WifiZoneSales::dedupeSaleRows($eligible);
         }
         foreach ($eligible as $t) {
-            $price = (float) $t->price;
+            $price = class_exists('WifiZoneSales')
+                ? WifiZoneSales::parseAmount($t->price ?? 0)
+                : (float) $t->price;
             $gross += $price;
             $commission += $price * (self::commissionRate($t->type) / 100);
         }

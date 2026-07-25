@@ -26,10 +26,79 @@ class WifiZoneSales
             ->find_one();
     }
 
+    /** Convertit price (varchar) en montant numérique. */
+    public static function parseAmount($value): float
+    {
+        if ($value === null || $value === '') {
+            return 0.0;
+        }
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+        $raw = trim((string) $value);
+        if ($raw === '') {
+            return 0.0;
+        }
+        if (is_numeric($raw)) {
+            return (float) $raw;
+        }
+        $normalized = preg_replace('/[^\d.,-]/', '', $raw);
+        if ($normalized === '' || $normalized === '-' || $normalized === '.' || $normalized === ',') {
+            return 0.0;
+        }
+        if (strpos($normalized, ',') !== false && strpos($normalized, '.') === false) {
+            $normalized = str_replace(',', '.', $normalized);
+        } else {
+            $normalized = str_replace(',', '', $normalized);
+        }
+
+        return is_numeric($normalized) ? (float) $normalized : 0.0;
+    }
+
+    public static function businessDate($timestamp = null): string
+    {
+        return date('Y-m-d', $timestamp ?? time());
+    }
+
+    /**
+     * Requête de base pour les revenus affichés (Finance / dashboard).
+     */
+    public static function incomeBaseQuery($admin)
+    {
+        $query = ORM::for_table('tbl_transactions')
+            ->where_not_equal('method', 'Customer - Balance')
+            ->where_not_equal('method', 'Recharge Balance - Administrator');
+
+        if (class_exists('AdminScope') && AdminScope::isScoped($admin)) {
+            AdminScope::applyTransactionsQuery($query, $admin);
+        }
+
+        return $query;
+    }
+
+    public static function sumIncomeForDay($admin, ?string $day = null): float
+    {
+        $day = $day ?: self::businessDate();
+
+        return self::sumQueryPrices(
+            self::incomeBaseQuery($admin)->where('recharged_on', $day)
+        );
+    }
+
+    public static function sumIncomeForPeriod($admin, string $startDate, string $endDate): float
+    {
+        return self::sumQueryPrices(
+            self::incomeBaseQuery($admin)
+                ->where_gte('recharged_on', $startDate)
+                ->where_lte('recharged_on', $endDate)
+        );
+    }
+
     /**
      * @param iterable|array $rows rows with id, price, note, username, plan_name, method, routers, recharged_on, recharged_time
+     * @return array<int, array<string, mixed>>
      */
-    public static function sumUniquePrices($rows): float
+    public static function dedupeSaleRows($rows): array
     {
         $list = [];
         foreach ($rows as $row) {
@@ -41,34 +110,71 @@ class WifiZoneSales
 
         $seenPayment = [];
         $seenFingerprint = [];
-        $total = 0.0;
+        $unique = [];
+
         foreach ($list as $row) {
             $note = (string) ($row['note'] ?? '');
             if (preg_match('/hotspot_payment:(\d+)/', $note, $m)) {
                 $key = 'hp:' . $m[1];
-                if (isset($seenPayment[$key])) {
-                    continue;
+                if (!isset($seenPayment[$key])
+                    || self::parseAmount($row['price'] ?? 0) > self::parseAmount($seenPayment[$key]['price'] ?? 0)) {
+                    $seenPayment[$key] = $row;
                 }
-                $seenPayment[$key] = true;
-            } else {
-                $method = (string) ($row['method'] ?? '');
-                if (stripos($method, 'CamPay') !== false || stripos($method, 'MyPVit') !== false) {
-                    $fp = implode('|', [
-                        (string) ($row['username'] ?? ''),
-                        (string) ($row['plan_name'] ?? ''),
-                        (string) ($row['price'] ?? ''),
-                        $method,
-                        (string) ($row['routers'] ?? ''),
-                        (string) ($row['recharged_on'] ?? ''),
-                        substr((string) ($row['recharged_time'] ?? ''), 0, 8),
-                    ]);
-                    if (isset($seenFingerprint[$fp])) {
-                        continue;
-                    }
-                    $seenFingerprint[$fp] = true;
-                }
+                continue;
             }
-            $total += (float) ($row['price'] ?? 0);
+
+            $method = (string) ($row['method'] ?? '');
+            if (stripos($method, 'CamPay') !== false || stripos($method, 'MyPVit') !== false) {
+                $fp = self::gatewayFingerprint($row);
+                if (!isset($seenFingerprint[$fp])
+                    || self::parseAmount($row['price'] ?? 0) > self::parseAmount($seenFingerprint[$fp]['price'] ?? 0)) {
+                    $seenFingerprint[$fp] = $row;
+                }
+                continue;
+            }
+
+            $unique[] = $row;
+        }
+
+        foreach ($seenPayment as $row) {
+            $unique[] = $row;
+        }
+        foreach ($seenFingerprint as $row) {
+            $unique[] = $row;
+        }
+
+        usort($unique, static function ($a, $b) {
+            return ((int) ($a['id'] ?? 0)) <=> ((int) ($b['id'] ?? 0));
+        });
+
+        return $unique;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private static function gatewayFingerprint(array $row): string
+    {
+        $method = (string) ($row['method'] ?? '');
+
+        return implode('|', [
+            (string) ($row['username'] ?? ''),
+            (string) ($row['plan_name'] ?? ''),
+            $method,
+            (string) ($row['routers'] ?? ''),
+            (string) ($row['recharged_on'] ?? ''),
+            substr((string) ($row['recharged_time'] ?? ''), 0, 8),
+        ]);
+    }
+
+    /**
+     * @param iterable|array $rows rows with id, price, note, username, plan_name, method, routers, recharged_on, recharged_time
+     */
+    public static function sumUniquePrices($rows): float
+    {
+        $total = 0.0;
+        foreach (self::dedupeSaleRows($rows) as $row) {
+            $total += self::parseAmount($row['price'] ?? 0);
         }
 
         return round($total, 2);
@@ -95,7 +201,7 @@ class WifiZoneSales
     }
 
     /**
-     * Supprime les doublons CamPay/Hotspot (garde la plus ancienne ligne).
+     * Supprime les doublons CamPay/Hotspot (garde la ligne au montant le plus élevé).
      *
      * @return array{deleted:int, kept:int}
      */
@@ -106,44 +212,17 @@ class WifiZoneSales
             ->order_by_asc('id')
             ->find_many();
 
-        $seenPayment = [];
-        $seenFingerprint = [];
+        $keepIds = [];
+        foreach (self::dedupeSaleRows($rows) as $row) {
+            $keepIds[(int) ($row['id'] ?? 0)] = true;
+        }
+
         $deleteIds = [];
-        $kept = 0;
-
         foreach ($rows as $t) {
-            $note = (string) ($t->note ?? '');
-            $method = (string) ($t->method ?? '');
-            $isGateway = (stripos($method, 'CamPay') !== false || stripos($method, 'MyPVit') !== false);
-
-            if (preg_match('/hotspot_payment:(\d+)/', $note, $m)) {
-                $key = 'hp:' . $m[1];
-                if (isset($seenPayment[$key])) {
-                    $deleteIds[] = (int) $t->id;
-                    continue;
-                }
-                $seenPayment[$key] = (int) $t->id;
-                $kept++;
-                continue;
+            $id = (int) ($t->id ?? 0);
+            if ($id > 0 && !isset($keepIds[$id])) {
+                $deleteIds[] = $id;
             }
-
-            if ($isGateway) {
-                $fp = implode('|', [
-                    (string) $t->username,
-                    (string) $t->plan_name,
-                    (string) $t->price,
-                    $method,
-                    (string) $t->routers,
-                    (string) $t->recharged_on,
-                    substr((string) $t->recharged_time, 0, 8),
-                ]);
-                if (isset($seenFingerprint[$fp])) {
-                    $deleteIds[] = (int) $t->id;
-                    continue;
-                }
-                $seenFingerprint[$fp] = (int) $t->id;
-            }
-            $kept++;
         }
 
         if (!$dryRun && $deleteIds !== []) {
@@ -154,6 +233,6 @@ class WifiZoneSales
             }
         }
 
-        return ['deleted' => count($deleteIds), 'kept' => $kept];
+        return ['deleted' => count($deleteIds), 'kept' => count($keepIds)];
     }
 }

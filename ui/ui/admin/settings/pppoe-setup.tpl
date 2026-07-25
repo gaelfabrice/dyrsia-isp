@@ -557,7 +557,7 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
     </div>
 </div>
 
-<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.22a"></script>
+<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.25b"></script>
 <script>
 window.PPPOE_FETCH_URL = '{$pppoe_fetch_url|escape:'javascript'}';
 window.PPPOE_INITIAL_ROUTER = '{$ps_router|escape:'javascript'}';
