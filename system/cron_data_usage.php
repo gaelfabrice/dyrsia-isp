@@ -48,9 +48,8 @@ function cron_data_usage_install()
 
 function cron_data_usage_resolve_admin_id($username, $routerAdminId)
 {
-    $adminId = ($routerAdminId > 0) ? (int) $routerAdminId : null;
-    if ($adminId !== null) {
-        return $adminId;
+    if ($routerAdminId > 0) {
+        return (int) $routerAdminId;
     }
     $customer = ORM::for_table('tbl_customers')
         ->where_raw('username = ? OR pppoe_username = ?', [$username, $username])
@@ -58,6 +57,7 @@ function cron_data_usage_resolve_admin_id($username, $routerAdminId)
     if ($customer && (int) ($customer['created_by'] ?? 0) > 0) {
         return (int) $customer['created_by'];
     }
+
     return null;
 }
 
@@ -173,7 +173,7 @@ function cron_data_usage_collect_router_live_sessions($client, $routerName)
             if ($username === '') {
                 continue;
             }
-            $key = strtolower($username);
+            $key = strtolower($routerName . '|' . $username);
             $live[$key] = [
                 'username' => $username,
                 'router' => $routerName,
@@ -190,7 +190,7 @@ function cron_data_usage_collect_router_live_sessions($client, $routerName)
             if ($username === '') {
                 continue;
             }
-            $key = strtolower($username);
+            $key = strtolower($routerName . '|' . $username);
             if (!isset($live[$key])) {
                 $live[$key] = [
                     'username' => $username,
@@ -251,15 +251,16 @@ function cron_data_usage_sync()
     $db->exec("DELETE FROM `api_data_usage` WHERE `log_date` < NOW() - INTERVAL 365 DAY");
     try {
         $db->exec("UPDATE api_data_usage u
-            INNER JOIN tbl_customers c ON (
-                u.username = c.username OR u.username = c.pppoe_username
-            )
-            SET u.admin_id = c.created_by
-            WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND c.created_by > 0");
-        $db->exec("UPDATE api_data_usage u
             INNER JOIN tbl_routers r ON r.name = u.router_name
             SET u.admin_id = r.admin_id
-            WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND r.admin_id > 0");
+            WHERE r.admin_id > 0");
+        $db->exec("UPDATE api_data_usage u
+            INNER JOIN tbl_customers c ON (
+                u.username = c.pppoe_username OR u.username = c.username
+            )
+            INNER JOIN tbl_routers r ON r.name = u.router_name AND r.admin_id = c.created_by
+            SET u.admin_id = c.created_by
+            WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND c.created_by > 0");
     } catch (Exception $e) {
     }
     $routers = ORM::for_table('tbl_routers')->where('enabled', 1)->find_many();

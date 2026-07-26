@@ -313,10 +313,19 @@ function pppoe_activate_transaction($trx, $operator = 'PPPoE Portal')
             return false;
         }
         if (class_exists('WifiZoneSales') && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
-            $trx->transaction_status = 'paid';
-            $trx->save();
+            WifiZoneSales::markHotspotPaymentPaid((int) $trx->id);
 
             return true;
+        }
+        if ((string) $trx->transaction_status === 'activating') {
+            usleep(800000);
+            $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+            if ($trx && class_exists('WifiZoneSales')
+                && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
+                WifiZoneSales::markHotspotPaymentPaid((int) $trx->id);
+
+                return true;
+            }
         }
 
         return (string) $trx->transaction_status === 'paid';

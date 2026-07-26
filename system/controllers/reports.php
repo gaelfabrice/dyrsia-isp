@@ -103,19 +103,23 @@ function reports_data_usage_fill_chart_series(array $dayMap, $startDate, $endDat
 function reports_data_usage_customer_join()
 {
     return " LEFT JOIN tbl_customers c ON (
-        u.username COLLATE utf8mb4_unicode_ci = c.username COLLATE utf8mb4_unicode_ci
-        OR u.username COLLATE utf8mb4_unicode_ci = c.pppoe_username COLLATE utf8mb4_unicode_ci
+        (
+            u.username COLLATE utf8mb4_unicode_ci = c.username COLLATE utf8mb4_unicode_ci
+            OR u.username COLLATE utf8mb4_unicode_ci = c.pppoe_username COLLATE utf8mb4_unicode_ci
+        )
+        AND EXISTS (
+            SELECT 1 FROM tbl_routers r
+            WHERE r.name COLLATE utf8mb4_unicode_ci = u.router_name COLLATE utf8mb4_unicode_ci
+              AND r.enabled = 1
+              AND r.admin_id = c.created_by
+        )
     )";
 }
 
-function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', $usageFilter = null)
+function reports_data_usage_router_scope_sql($prefix = 'u')
 {
-    $usageFilter = $usageFilter ?? trim((string) _req('usage_filter'));
-
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $sql .= " AND (
+    return "(
             {$prefix}.admin_id = ?
-            OR c.created_by = ?
             OR EXISTS (
                 SELECT 1 FROM tbl_routers r
                 WHERE r.name COLLATE utf8mb4_unicode_ci = {$prefix}.router_name COLLATE utf8mb4_unicode_ci
@@ -123,7 +127,19 @@ function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', 
                   AND r.admin_id = ?
             )
         )";
-        $params[] = $admin['id'];
+}
+
+function reports_data_usage_live_session_key($routerName, $username)
+{
+    return strtolower(trim((string) $routerName) . '|' . trim((string) $username));
+}
+
+function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', $usageFilter = null)
+{
+    $usageFilter = $usageFilter ?? trim((string) _req('usage_filter'));
+
+    if ($admin['user_type'] != 'SuperAdmin') {
+        $sql .= ' AND ' . reports_data_usage_router_scope_sql($prefix);
         $params[] = $admin['id'];
         $params[] = $admin['id'];
         if (strpos($usageFilter, 'customer:') === 0) {
@@ -139,7 +155,7 @@ function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', 
     if (strpos($usageFilter, 'admin:') === 0) {
         $adminId = (int) substr($usageFilter, 6);
         if ($adminId > 0) {
-            $sql .= " AND ({$prefix}.admin_id = ? OR c.created_by = ?)";
+            $sql .= ' AND ' . reports_data_usage_router_scope_sql($prefix);
             $params[] = $adminId;
             $params[] = $adminId;
         }
@@ -162,7 +178,13 @@ function reports_data_usage_apply_service_filter(&$sql, &$params, $serviceType)
         return;
     }
     if ($serviceType === 'PPPoE') {
-        $sql .= " AND c.service_type = 'PPPoE'";
+        $sql .= " AND c.service_type = 'PPPoE' AND (
+            u.username COLLATE utf8mb4_unicode_ci = c.pppoe_username COLLATE utf8mb4_unicode_ci
+            OR (
+                (c.pppoe_username IS NULL OR c.pppoe_username = '')
+                AND u.username COLLATE utf8mb4_unicode_ci = c.username COLLATE utf8mb4_unicode_ci
+            )
+        )";
         return;
     }
     $sql .= " AND (c.id IS NULL OR c.service_type IS NULL OR c.service_type = '' OR c.service_type NOT IN ('Hotspot', 'PPPoE'))";
@@ -197,7 +219,12 @@ function reports_data_usage_router_status($admin)
     foreach ($routers as $router) {
         $name = $router['name'];
         $params = [$name];
-        $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ?");
+        if ($admin['user_type'] != 'SuperAdmin') {
+            $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ? AND admin_id = ?");
+            $params[] = (int) $admin['id'];
+        } else {
+            $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ?");
+        }
         $stmt->execute($params);
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $lastSync = $row['last_sync'] ?? null;
@@ -370,11 +397,12 @@ function reports_data_usage_api_payload($admin)
     $totalDl = (double) ($summaryRow['dl'] ?? 0);
     $totalUl = (double) ($summaryRow['ul'] ?? 0);
     $uniqueUsers = (int) ($summaryRow['unique_users'] ?? 0);
-    $stmt = $db->prepare("SELECT DISTINCT u.username" . $baseFrom);
+    $stmt = $db->prepare("SELECT DISTINCT u.username, u.router_name" . $baseFrom);
     $stmt->execute($baseParams);
     $activeClients = 0;
-    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $usageUsername) {
-        if (isset($liveSessions[strtolower((string) $usageUsername)])) {
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $usageRow) {
+        $liveKey = reports_data_usage_live_session_key($usageRow['router_name'] ?? '', $usageRow['username'] ?? '');
+        if (isset($liveSessions[$liveKey])) {
             $activeClients++;
         }
     }
@@ -441,11 +469,11 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Consommation par client (PPPoE + Hotspot), agrégée sur la période
-    $stmt = $db->prepare("SELECT u.username, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, MAX(u.router_name) AS router_name, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY u.username ORDER BY ttl_bytes DESC LIMIT 200");
+    $stmt = $db->prepare("SELECT u.username, u.router_name, MAX(c.fullname) AS fullname, MAX(c.phonenumber) AS phonenumber, COALESCE(NULLIF(MAX(c.service_type), ''), 'Autre') AS service_type, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY u.username, u.router_name ORDER BY ttl_bytes DESC LIMIT 200");
     $stmt->execute($baseParams);
     $clientsBreakdown = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $liveKey = strtolower((string) $row['username']);
+        $liveKey = reports_data_usage_live_session_key($row['router_name'] ?? '', $row['username'] ?? '');
         $clientsBreakdown[] = [
             'username' => $row['username'],
             'fullname' => $row['fullname'] ?: '—',
@@ -461,11 +489,11 @@ function reports_data_usage_api_payload($admin)
     }
 
     // Detail rows
-    $stmt = $db->prepare("SELECT u.username, DATE(u.log_date) AS log_day, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes, MAX(u.router_name) AS router_name" . $baseFrom . " GROUP BY u.username, DATE(u.log_date) ORDER BY log_day DESC, u.username ASC LIMIT 500");
+    $stmt = $db->prepare("SELECT u.username, u.router_name, DATE(u.log_date) AS log_day, SUM(u.download_bytes) AS dl_bytes, SUM(u.upload_bytes) AS ul_bytes, SUM(u.total_bytes) AS ttl_bytes" . $baseFrom . " GROUP BY u.username, u.router_name, DATE(u.log_date) ORDER BY log_day DESC, u.username ASC LIMIT 500");
     $stmt->execute($baseParams);
     $formattedData = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $liveKey = strtolower((string) $row['username']);
+        $liveKey = reports_data_usage_live_session_key($row['router_name'] ?? '', $row['username'] ?? '');
         $formattedData[] = [
             'username' => $row['username'],
             'router' => $row['router_name'],

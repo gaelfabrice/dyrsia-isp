@@ -442,10 +442,9 @@ class Package
 
         if ($note !== '' && preg_match('/hotspot_payment:(\d+)/', (string) $note, $paymentMatch)
             && class_exists('WifiZoneSales')) {
-            $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $paymentMatch[1]);
-            if ($existingSale) {
-                // Déjà facturé pour ce paiement hotspot — pas de 2e ligne tbl_transactions.
-                return (string) ($existingSale->invoice ?? true);
+            $existingSale = WifiZoneSales::existingSaleRefForPaymentNote($note);
+            if ($existingSale !== null) {
+                return (string) $existingSale;
             }
         }
 
@@ -643,6 +642,13 @@ class Package
             //}
 
             // insert table transactions
+            if ($note !== '' && class_exists('WifiZoneSales')) {
+                $existingInvoice = WifiZoneSales::existingSaleRefForPaymentNote($note);
+                if ($existingInvoice !== null) {
+                    return (string) $existingInvoice;
+                }
+            }
+
             $t = ORM::for_table('tbl_transactions')->create();
             $t->invoice = $inv = "INV-" . Package::_raid();
             $t->username = $c['username'];
@@ -759,6 +765,13 @@ class Package
             }
 
             // insert table transactions
+            if ($note !== '' && class_exists('WifiZoneSales')) {
+                $existingInvoice = WifiZoneSales::existingSaleRefForPaymentNote($note);
+                if ($existingInvoice !== null) {
+                    return (string) $existingInvoice;
+                }
+            }
+
             $t = ORM::for_table('tbl_transactions')->create();
             $t->invoice = $inv = "INV-" . Package::_raid();
             $t->username = $c['username'];

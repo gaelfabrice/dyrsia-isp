@@ -27,24 +27,48 @@ function pppoe_pg_campay_respond_success($txref, $result = [])
     exit;
 }
 
+function pppoe_pg_campay_payment_already_settled($trx)
+{
+    if (!$trx || empty($trx->id)) {
+        return false;
+    }
+
+    $paymentId = (int) $trx->id;
+    if (class_exists('WifiZoneSales')
+        && WifiZoneSales::findTransactionByHotspotPaymentId($paymentId)) {
+        WifiZoneSales::markHotspotPaymentPaid($paymentId);
+
+        return true;
+    }
+
+    return false;
+}
+
 function pppoe_pg_campay_sync_transaction($trx)
 {
     if (!$trx || empty($trx->transaction_id)) {
         return $trx;
     }
-    if (in_array($trx->transaction_status, ['paid', 'failed', 'cancelled'], true)) {
+
+    $paymentId = (int) ($trx->id ?? 0);
+
+    if (pppoe_pg_campay_payment_already_settled($trx)) {
+        return ORM::for_table('tbl_hotspot_payments')->find_one($paymentId) ?: $trx;
+    }
+
+    $status = (string) ($trx->transaction_status ?? 'pending');
+    if ($status === 'activating') {
+        usleep(700000);
+        $trx = ORM::for_table('tbl_hotspot_payments')->find_one($paymentId) ?: $trx;
+        if (pppoe_pg_campay_payment_already_settled($trx)) {
+            return ORM::for_table('tbl_hotspot_payments')->find_one($paymentId) ?: $trx;
+        }
+
         return $trx;
     }
 
-    if (class_exists('WifiZoneSales')) {
-        $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id);
-        if ($existingSale) {
-            $trx->transaction_status = 'paid';
-            $trx->payment_date = $trx->payment_date ?: date('Y-m-d H:i:s');
-            $trx->save();
-
-            return ORM::for_table('tbl_hotspot_payments')->find_one($trx->id);
-        }
+    if (in_array($status, ['paid', 'failed', 'cancelled'], true)) {
+        return $trx;
     }
 
     $token = hotspot_pg_campay_get_token();
@@ -72,16 +96,19 @@ function pppoe_pg_campay_sync_transaction($trx)
     }
 
     $result = json_decode($response, true);
-    $status = strtoupper($result['status'] ?? 'PENDING');
+    $campayStatus = strtoupper($result['status'] ?? 'PENDING');
     $operator = $result['operator'] ?? 'CamPay';
     $trx->gateway_response = json_encode(array_merge(
         json_decode($trx->gateway_response ?? '{}', true) ?: [],
         ['campay_sync' => $result]
     ));
 
-    if ($status === 'SUCCESSFUL') {
+    if ($campayStatus === 'SUCCESSFUL') {
+        if (pppoe_pg_campay_payment_already_settled($trx)) {
+            return ORM::for_table('tbl_hotspot_payments')->find_one($paymentId) ?: $trx;
+        }
         pppoe_activate_after_payment($trx, $operator);
-    } elseif ($status === 'FAILED') {
+    } elseif ($campayStatus === 'FAILED') {
         $trx->transaction_status = 'failed';
         $trx->payment_date = date('Y-m-d H:i:s');
         $trx->save();
@@ -89,7 +116,7 @@ function pppoe_pg_campay_sync_transaction($trx)
         $trx->save();
     }
 
-    return ORM::for_table('tbl_hotspot_payments')->find_one($trx->id);
+    return ORM::for_table('tbl_hotspot_payments')->find_one($paymentId) ?: $trx;
 }
 
 function pppoe_processPayment_campay($data)

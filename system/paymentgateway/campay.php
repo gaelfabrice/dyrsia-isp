@@ -303,6 +303,12 @@ function campay_payment_notification()
             }
         }
         if (function_exists('pppoe_is_transaction') && pppoe_is_transaction($hotspotPayment)
+            && function_exists('pppoe_pg_campay_payment_already_settled')
+            && pppoe_pg_campay_payment_already_settled($hotspotPayment)) {
+            _log("CamPay Webhook: PPPoE payment already settled for $reference");
+            exit();
+        }
+        if (function_exists('pppoe_is_transaction') && pppoe_is_transaction($hotspotPayment)
             && function_exists('pppoe_pg_campay_sync_transaction')) {
             pppoe_pg_campay_sync_transaction($hotspotPayment);
             _log("CamPay Webhook: PPPoE captive payment handled for $reference");

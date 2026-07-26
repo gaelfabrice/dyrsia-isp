@@ -26,6 +26,40 @@ class WifiZoneSales
             ->find_one();
     }
 
+    /**
+     * Évite une 2e vente tbl_transactions pour le même paiement portal (race webhook + poll).
+     *
+     * @return string|true|null invoice/id existant, ou null si aucune vente
+     */
+    public static function existingSaleRefForPaymentNote($note)
+    {
+        if (!preg_match('/hotspot_payment:(\d+)/', (string) $note, $match)) {
+            return null;
+        }
+
+        $existing = self::findTransactionByHotspotPaymentId((int) $match[1]);
+        if (!$existing) {
+            return null;
+        }
+
+        return (string) ($existing->invoice ?? true);
+    }
+
+    public static function markHotspotPaymentPaid($paymentId): void
+    {
+        $paymentId = (int) $paymentId;
+        if ($paymentId <= 0) {
+            return;
+        }
+        $payment = ORM::for_table('tbl_hotspot_payments')->find_one($paymentId);
+        if (!$payment || (string) $payment->transaction_status === 'paid') {
+            return;
+        }
+        $payment->transaction_status = 'paid';
+        $payment->payment_date = $payment->payment_date ?: date('Y-m-d H:i:s');
+        $payment->save();
+    }
+
     /** Convertit price (varchar) en montant numérique. */
     public static function parseAmount($value): float
     {
@@ -253,6 +287,11 @@ class WifiZoneSales
      */
     private static function gatewayFingerprint(array $row): string
     {
+        $note = (string) ($row['note'] ?? '');
+        if (preg_match('/hotspot_payment:(\d+)/', $note, $m)) {
+            return 'hp:' . $m[1];
+        }
+
         $method = (string) ($row['method'] ?? '');
         $parts = [
             (string) ($row['plan_name'] ?? ''),

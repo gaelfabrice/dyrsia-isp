@@ -442,21 +442,15 @@ class DashboardCommand
                 $params = [$day . ' 00:00:00', $day . ' 23:59:59'];
                 $sql = 'SELECT COALESCE(SUM(u.download_bytes),0) AS dl, COALESCE(SUM(u.upload_bytes),0) AS ul
                     FROM api_data_usage u
-                    LEFT JOIN tbl_customers c ON (
-                        u.username COLLATE utf8mb4_general_ci = c.username COLLATE utf8mb4_general_ci
-                        OR u.username COLLATE utf8mb4_general_ci = c.pppoe_username COLLATE utf8mb4_general_ci
-                    )
                     WHERE u.log_date >= ? AND u.log_date <= ?';
                 if ($isScoped) {
                     $sql .= ' AND (
                         u.admin_id = ?
-                        OR c.created_by = ?
                         OR EXISTS (
                             SELECT 1 FROM tbl_routers r
                             WHERE r.name = u.router_name AND r.enabled = 1 AND r.admin_id = ?
                         )
                     )';
-                    $params[] = $adminId;
                     $params[] = $adminId;
                     $params[] = $adminId;
                 }

@@ -227,6 +227,12 @@
             ->find_many();
         foreach ($pending as $trx) {
             try {
+                if (function_exists('pppoe_is_transaction') && pppoe_is_transaction($trx)) {
+                    if (function_exists('pppoe_pg_campay_sync_transaction')) {
+                        pppoe_pg_campay_sync_transaction($trx);
+                    }
+                    continue;
+                }
                 hotspot_pg_campay_sync_transaction($trx, (int) $curlTimeout);
             } catch (Throwable $e) {
                 _log('[Hotspot] CamPay sync skipped for trx #' . (int) $trx->id . ': ' . $e->getMessage());
