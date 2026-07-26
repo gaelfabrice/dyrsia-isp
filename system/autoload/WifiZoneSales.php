@@ -101,6 +101,29 @@ class WifiZoneSales
     }
 
     /**
+     * Date métier d'un paiement hotspot (payment_date puis created_date).
+     */
+    private static function hotspotPaymentBusinessDate($payment): string
+    {
+        $row = is_array($payment) ? $payment : (method_exists($payment, 'as_array') ? $payment->as_array() : []);
+        foreach (['payment_date', 'created_date'] as $field) {
+            $raw = trim((string) ($row[$field] ?? ''));
+            if ($raw === ''
+                || $raw === '0000-00-00'
+                || $raw === '0000-00-00 00:00:00'
+                || str_starts_with($raw, '0000-00-00')) {
+                continue;
+            }
+            $ts = strtotime($raw);
+            if ($ts !== false && $ts > 0) {
+                return date('Y-m-d', $ts);
+            }
+        }
+
+        return '';
+    }
+
+    /**
      * Ventes Hotspot CamPay présentes dans tbl_hotspot_payments mais absentes (ou orphelines) de tbl_transactions.
      */
     public static function sumHotspotPaymentsIncome($admin, string $dateFrom, string $dateTo, bool $onlyWithoutTransaction = false): float
@@ -111,18 +134,15 @@ class WifiZoneSales
         }
 
         $query = hotspot_payments_query_for_admin($admin)
-            ->where('transaction_status', 'paid')
-            ->where_raw(
-                'DATE(COALESCE(NULLIF(payment_date, \'\'), created_date)) >= ?',
-                [$dateFrom]
-            )
-            ->where_raw(
-                'DATE(COALESCE(NULLIF(payment_date, \'\'), created_date)) <= ?',
-                [$dateTo]
-            );
+            ->where('transaction_status', 'paid');
 
         $total = 0.0;
         foreach ($query->find_many() as $payment) {
+            $businessDate = self::hotspotPaymentBusinessDate($payment);
+            if ($businessDate === '' || $businessDate < $dateFrom || $businessDate > $dateTo) {
+                continue;
+            }
+
             $amount = self::parseAmount($payment->amount ?? 0);
             if ($amount <= 0) {
                 continue;
