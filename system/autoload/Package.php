@@ -15,17 +15,34 @@ class Package
     /**
      * When extending an active plan, never stack time from a past expiry.
      */
-    private static function extensionBaseTimestamp($expiration, $time)
+    private static function extensionBaseTimestamp($expiration, $time, int $adminId = 0)
     {
-        $expiryTs = self::rechargeExpiresAt(['expiration' => $expiration, 'time' => $time]);
+        $expiryTs = self::rechargeExpiresAt([
+            'expiration' => $expiration,
+            'time' => $time,
+            'admin_id' => $adminId,
+        ]);
         if ($expiryTs <= 0) {
-            return time();
+            return class_exists('WifiZoneTime')
+                ? WifiZoneTime::nowTimestamp(['admin_id' => $adminId])
+                : time();
         }
 
-        return max(time(), $expiryTs);
+        $nowTs = class_exists('WifiZoneTime')
+            ? WifiZoneTime::nowTimestamp(['admin_id' => $adminId])
+            : time();
+
+        return max($nowTs, $expiryTs);
     }
 
-    private static function appTimezone(): DateTimeZone
+    private static function appTimezone(array $context = []): DateTimeZone
+    {
+        return class_exists('WifiZoneTime')
+            ? WifiZoneTime::zone($context)
+            : self::legacyAppTimezone();
+    }
+
+    private static function legacyAppTimezone(): DateTimeZone
     {
         global $config;
         $tz = trim((string) ($config['timezone'] ?? ''));
@@ -37,6 +54,14 @@ class Package
         } catch (Exception $e) {
             return new DateTimeZone('UTC');
         }
+    }
+
+    /** @param array{admin_id?:int} $context */
+    private static function rechargeTimeContext(array $context = []): array
+    {
+        $adminId = (int) ($context['admin_id'] ?? 0);
+
+        return $adminId > 0 ? ['admin_id' => $adminId] : [];
     }
 
     /** Normalise l'heure d'expiration (HH:MM:SS) pour éviter les comparaisons SQL ambiguës. */
@@ -62,11 +87,11 @@ class Package
      *
      * @return array{date:string,time:string}
      */
-    private static function computePlanExpiry(array $plan, int $baseTs, $day_exp = 20): array
+    private static function computePlanExpiry(array $plan, int $baseTs, $day_exp = 20, array $timeContext = []): array
     {
         $validity = max(0, (int) ($plan['validity'] ?? 0));
         $unit = (string) ($plan['validity_unit'] ?? '');
-        $tz = self::appTimezone();
+        $tz = self::appTimezone($timeContext);
         $base = (new DateTimeImmutable('@' . $baseTs))->setTimezone($tz);
 
         if ($unit === 'Period') {
@@ -131,6 +156,12 @@ class Package
             return 0;
         }
         $time = self::normalizeRechargeTime($row['time'] ?? '23:59:59');
+        $context = self::rechargeTimeContext(['admin_id' => (int) ($row['admin_id'] ?? 0)]);
+
+        if (class_exists('WifiZoneTime')) {
+            return WifiZoneTime::parseLocalDateTime($expiration, $time, $context);
+        }
+
         $ts = strtotime($expiration . ' ' . $time);
 
         return $ts !== false ? $ts : 0;
@@ -369,9 +400,6 @@ class Package
     {
         global $config, $admin, $c, $p, $b, $t, $d, $zero, $trx, $_app_stage, $isChangePlan;
         self::$lastDeviceSyncError = '';
-        $date_only = date("Y-m-d");
-        $time_only = date("H:i:s");
-        $time = date("H:i:s");
         $inv = "";
         $isVoucher = false;
         $c = [];
@@ -442,6 +470,16 @@ class Package
         }
 
         $rechargeAdminId = (int) self::resolveRechargeAdminId($router_name, $p);
+        $timeContext = self::rechargeTimeContext(['admin_id' => $rechargeAdminId]);
+        if (class_exists('WifiZoneTime')) {
+            WifiZoneTime::applyForRecharge($router_name, $p, $rechargeAdminId);
+        }
+        $rechargeNow = class_exists('WifiZoneTime')
+            ? WifiZoneTime::now($timeContext)
+            : new DateTimeImmutable('now');
+        $date_only = $rechargeNow->format('Y-m-d');
+        $time_only = $rechargeNow->format('H:i:s');
+        $time = $time_only;
 
         if ($p['validity_unit'] == 'Period') {
             // if customer has attribute Expired Date use it
@@ -504,8 +542,13 @@ class Package
 
         run_hook("recharge_user");
 
-        $rechargeStartTs = strtotime($date_only . ' ' . $time_only) ?: time();
-        $expiry = self::computePlanExpiry($p->as_array(), $rechargeStartTs, $day_exp ?? 20);
+        $rechargeStartTs = class_exists('WifiZoneTime')
+            ? WifiZoneTime::parseLocalDateTime($date_only, $time_only, $timeContext)
+            : (strtotime($date_only . ' ' . $time_only) ?: time());
+        if ($rechargeStartTs <= 0) {
+            $rechargeStartTs = $rechargeNow->getTimestamp();
+        }
+        $expiry = self::computePlanExpiry($p->as_array(), $rechargeStartTs, $day_exp ?? 20, $timeContext);
         $date_exp = $expiry['date'];
         $time = self::normalizeRechargeTime($expiry['time']);
 
@@ -514,8 +557,8 @@ class Package
             $isChangePlan = false;
             if ($b['namebp'] == $p['name_plan'] && $b['status'] == 'on' && $config['extend_expiry'] == 'yes') {
                 // if it same internet plan, expired will extend
-                $baseTs = self::extensionBaseTimestamp($b['expiration'], $b['time']);
-                $extended = self::computePlanExpiry($p->as_array(), $baseTs, $day_exp ?? 20);
+                $baseTs = self::extensionBaseTimestamp($b['expiration'], $b['time'], $rechargeAdminId);
+                $extended = self::computePlanExpiry($p->as_array(), $baseTs, $day_exp ?? 20, $timeContext);
                 $date_exp = $extended['date'];
                 $time = self::normalizeRechargeTime($extended['time']);
             } else {

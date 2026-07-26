@@ -278,22 +278,91 @@ function pppoe_plan()
 
 function pppoe_activate_transaction($trx, $operator = 'PPPoE Portal')
 {
+    if (!$trx || empty($trx->id)) {
+        return false;
+    }
+
+    if (class_exists('WifiZoneSales')) {
+        $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id);
+        if ($existingSale) {
+            if ((string) $trx->transaction_status !== 'paid') {
+                $trx->transaction_status = 'paid';
+                $trx->payment_date = $trx->payment_date ?: date('Y-m-d H:i:s');
+                $trx->save();
+            }
+
+            return true;
+        }
+    }
+
+    if ((string) $trx->transaction_status === 'paid') {
+        return true;
+    }
+
+    $db = ORM::get_db();
+    $claim = $db->prepare(
+        "UPDATE tbl_hotspot_payments
+         SET transaction_status = 'activating'
+         WHERE id = ?
+           AND transaction_status IN ('pending', 'failed')"
+    );
+    $claim->execute([(int) $trx->id]);
+    if ((int) $claim->rowCount() === 0) {
+        $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+        if (!$trx) {
+            return false;
+        }
+        if (class_exists('WifiZoneSales') && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
+            $trx->transaction_status = 'paid';
+            $trx->save();
+
+            return true;
+        }
+
+        return (string) $trx->transaction_status === 'paid';
+    }
+    $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+    if (!$trx) {
+        return false;
+    }
+
     $login = pppoe_transaction_login($trx);
     $customer = pppoe_find_customer_by_login($login);
     if (!$customer) {
+        if ((string) $trx->transaction_status === 'activating') {
+            $trx->transaction_status = 'pending';
+            $trx->save();
+        }
         _log('[PPPoE portal] Customer not found for login: ' . $login);
+
         return false;
     }
 
     $routerName = (string) ($trx->router_name ?? '');
     $planId = (int) ($trx->plan_id ?? 0);
     if ($routerName === '' || $planId <= 0) {
+        if ((string) $trx->transaction_status === 'activating') {
+            $trx->transaction_status = 'pending';
+            $trx->save();
+        }
+
         return false;
     }
 
     $gateway = ucfirst((string) ($trx->payment_gateway ?? 'CamPay'));
-    if (!Package::rechargeUser((int) $customer->id, $routerName, $planId, $gateway, $operator)) {
+    $saleNote = class_exists('WifiZoneSales')
+        ? WifiZoneSales::hotspotPaymentNote((int) $trx->id)
+        : ('hotspot_payment:' . (int) $trx->id);
+    if (class_exists('WifiZoneTime')) {
+        WifiZoneTime::applyForRecharge($routerName, ORM::for_table('tbl_plans')->find_one($planId), 0);
+    }
+    if (!Package::rechargeUser((int) $customer->id, $routerName, $planId, $gateway, $operator, $saleNote)) {
+        if ((string) $trx->transaction_status === 'activating') {
+            $trx->transaction_status = 'pending';
+            $trx->save();
+        }
         _log('[PPPoE portal] rechargeUser failed for ' . $login);
+
         return false;
     }
 

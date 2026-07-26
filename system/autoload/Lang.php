@@ -92,7 +92,18 @@ class Lang
 
     public static function dateAndTimeFormat($date, $time)
     {
-        global $config;
+        global $config, $admin;
+        if (class_exists('WifiZoneTime')) {
+            $context = [];
+            if (is_array($admin) && !empty($admin['id'])) {
+                $context['admin_id'] = (int) $admin['id'];
+            }
+            $ts = WifiZoneTime::parseLocalDateTime((string) $date, (string) $time, $context);
+            if ($ts > 0) {
+                return date($config['date_format'] . ' H:i', $ts);
+            }
+        }
+
         return date($config['date_format'] . ' H:i', strtotime("$date $time"));
     }
 

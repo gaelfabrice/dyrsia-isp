@@ -117,24 +117,32 @@ class DashboardCommand
             ->where_in('type', ['Hotspot', 'PPPOE'])
             ->where_gt('price', 0)
             ->order_by_desc('id')
-            ->limit(max(1, $limit));
+            ->limit(max(1, $limit * 3));
+
+        $rows = $query->find_many();
+        if (class_exists('WifiZoneSales')) {
+            $rows = WifiZoneSales::dedupeSaleRows($rows);
+        }
 
         $payments = [];
-        foreach ($query->find_many() as $trx) {
-            $datetime = trim((string) $trx->recharged_on . ' ' . ($trx->recharged_time ?: '00:00:00'));
+        foreach (array_slice($rows, 0, max(1, $limit)) as $trx) {
+            $row = is_array($trx)
+                ? $trx
+                : (is_object($trx) && method_exists($trx, 'as_array') ? $trx->as_array() : (array) $trx);
+            $datetime = trim((string) ($row['recharged_on'] ?? '') . ' ' . (($row['recharged_time'] ?? '') ?: '00:00:00'));
             $payments[] = [
-                'id' => (int) $trx->id,
-                'invoice' => (string) ($trx->invoice ?? ''),
-                'username' => (string) ($trx->username ?? ''),
-                'plan_name' => (string) ($trx->plan_name ?? ''),
+                'id' => (int) ($row['id'] ?? 0),
+                'invoice' => (string) ($row['invoice'] ?? ''),
+                'username' => (string) ($row['username'] ?? ''),
+                'plan_name' => (string) ($row['plan_name'] ?? ''),
                 'price' => class_exists('WifiZoneSales')
-                    ? WifiZoneSales::parseAmount($trx->price ?? 0)
-                    : (float) ($trx->price ?? 0),
-                'method' => (string) ($trx->method ?? ''),
-                'type' => (string) ($trx->type ?? ''),
-                'recharged_on' => (string) ($trx->recharged_on ?? ''),
+                    ? WifiZoneSales::rowSaleAmount($row)
+                    : (float) ($row['price'] ?? 0),
+                'method' => (string) ($row['method'] ?? ''),
+                'type' => (string) ($row['type'] ?? ''),
+                'recharged_on' => (string) ($row['recharged_on'] ?? ''),
                 'time_ago' => self::timeAgo($datetime),
-                'url' => getUrl('plan/view/' . (int) $trx->id),
+                'url' => getUrl('plan/view/' . (int) ($row['id'] ?? 0)),
             ];
         }
 

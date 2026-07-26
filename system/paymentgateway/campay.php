@@ -289,9 +289,27 @@ function campay_payment_notification()
     $hotspotPayment = ORM::for_table('tbl_hotspot_payments')
         ->where('transaction_id', $reference)
         ->find_one();
-    if ($hotspotPayment && function_exists('hotspot_pg_campay_sync_transaction')) {
-        hotspot_pg_campay_sync_transaction($hotspotPayment);
-        _log("CamPay Webhook: Hotspot payment handled for $reference");
+    if ($hotspotPayment) {
+        if (!function_exists('pppoe_is_transaction')) {
+            $pppoePlugin = dirname(__DIR__) . '/plugin/pppoe.php';
+            if (is_file($pppoePlugin)) {
+                require_once $pppoePlugin;
+            }
+        }
+        if (!function_exists('pppoe_pg_campay_sync_transaction')) {
+            $pppoeCampayPlugin = dirname(__DIR__) . '/plugin/pppoe_pg-campay.php';
+            if (is_file($pppoeCampayPlugin)) {
+                require_once $pppoeCampayPlugin;
+            }
+        }
+        if (function_exists('pppoe_is_transaction') && pppoe_is_transaction($hotspotPayment)
+            && function_exists('pppoe_pg_campay_sync_transaction')) {
+            pppoe_pg_campay_sync_transaction($hotspotPayment);
+            _log("CamPay Webhook: PPPoE captive payment handled for $reference");
+        } elseif (function_exists('hotspot_pg_campay_sync_transaction')) {
+            hotspot_pg_campay_sync_transaction($hotspotPayment);
+            _log("CamPay Webhook: Hotspot payment handled for $reference");
+        }
         exit();
     }
 

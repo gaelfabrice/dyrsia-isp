@@ -145,6 +145,9 @@ if (class_exists('VisitorLog')) {
 Tenant::restoreFromSession();
 $currentTenant = Tenant::current();
 Tenant::applyLocaleConfig($currentTenant);
+if (!$currentTenant && class_exists('WifiZoneTime')) {
+    WifiZoneTime::bootstrapFromPrimaryTenant();
+}
 if ($currentTenant) {
     $ui->assign('wifizone_tenant', $currentTenant);
     $ui->assign('wifizone_tenant_slug', $currentTenant['slug']);

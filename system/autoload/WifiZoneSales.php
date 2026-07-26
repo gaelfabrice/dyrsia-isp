@@ -57,6 +57,10 @@ class WifiZoneSales
 
     public static function businessDate($timestamp = null): string
     {
+        if ($timestamp === null && class_exists('WifiZoneTime')) {
+            return WifiZoneTime::now()->format('Y-m-d');
+        }
+
         return date('Y-m-d', $timestamp ?? time());
     }
 
@@ -238,15 +242,19 @@ class WifiZoneSales
     private static function gatewayFingerprint(array $row): string
     {
         $method = (string) ($row['method'] ?? '');
-
-        return implode('|', [
-            (string) ($row['username'] ?? ''),
+        $parts = [
             (string) ($row['plan_name'] ?? ''),
             $method,
             (string) ($row['routers'] ?? ''),
             (string) ($row['recharged_on'] ?? ''),
-            substr((string) ($row['recharged_time'] ?? ''), 0, 8),
-        ]);
+            substr((string) ($row['recharged_time'] ?? ''), 0, 5),
+            (string) self::parseAmount($row['price'] ?? 0),
+        ];
+        if (stripos($method, 'CamPay') === false && stripos($method, 'MyPVit') === false) {
+            array_unshift($parts, (string) ($row['username'] ?? ''));
+        }
+
+        return implode('|', $parts);
     }
 
     /**

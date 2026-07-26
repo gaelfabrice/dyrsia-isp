@@ -35,8 +35,16 @@ function pppoe_pg_campay_sync_transaction($trx)
     if (in_array($trx->transaction_status, ['paid', 'failed', 'cancelled'], true)) {
         return $trx;
     }
-    if (!function_exists('hotspot_pg_campay_get_token')) {
-        return $trx;
+
+    if (class_exists('WifiZoneSales')) {
+        $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id);
+        if ($existingSale) {
+            $trx->transaction_status = 'paid';
+            $trx->payment_date = $trx->payment_date ?: date('Y-m-d H:i:s');
+            $trx->save();
+
+            return ORM::for_table('tbl_hotspot_payments')->find_one($trx->id);
+        }
     }
 
     $token = hotspot_pg_campay_get_token();

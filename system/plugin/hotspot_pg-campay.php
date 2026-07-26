@@ -228,6 +228,11 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         return false;
     }
 
+    if (function_exists('pppoe_is_transaction') && pppoe_is_transaction($trx)
+        && function_exists('pppoe_activate_after_payment')) {
+        return pppoe_activate_after_payment($trx, $operator);
+    }
+
     // Recharge déjà facturée pour ce paiement → ne pas recréer tbl_transactions.
     if (class_exists('WifiZoneSales')) {
         $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id);
@@ -347,6 +352,10 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         $customer = $prepared['customer'];
         $networkPassword = HotspotCustomer::defaultPassword();
 
+        if (class_exists('WifiZoneTime')) {
+            WifiZoneTime::applyForRecharge($routername, ORM::for_table('tbl_plans')->find_one($planid), 0);
+        }
+
         if (!Package::rechargeUser($customer->id, $routername, $planid, 'CamPay', $operator, $saleNote)) {
             if (hotspot_pg_campay_customer_has_active_plan($trx)) {
                 _log('[CamPay Hotspot] rechargeUser returned false but active recharge exists for trx ' . $trx->transaction_ref);
@@ -412,6 +421,11 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
 {
     if (!$trx || empty($trx->transaction_id)) {
         return $trx;
+    }
+
+    if (function_exists('pppoe_is_transaction') && pppoe_is_transaction($trx)
+        && function_exists('pppoe_pg_campay_sync_transaction')) {
+        return pppoe_pg_campay_sync_transaction($trx);
     }
 
     if ((string) $trx->transaction_status === 'paid') {

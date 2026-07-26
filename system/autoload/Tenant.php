@@ -559,6 +559,19 @@ class Tenant
         $tenant->updated_at = $now;
         $tenant->save();
 
+        $tzRow = ORM::for_table('tbl_appconfig')->where('setting', 'timezone')->find_one();
+        if ($tzRow) {
+            $tzRow->value = $country['timezone'];
+            $tzRow->save();
+        } else {
+            $tzRow = ORM::for_table('tbl_appconfig')->create();
+            $tzRow->setting = 'timezone';
+            $tzRow->value = $country['timezone'];
+            $tzRow->save();
+        }
+        $config['timezone'] = $country['timezone'];
+        date_default_timezone_set($country['timezone']);
+
         self::ensureUserTenantColumn();
         self::assignUserTenant($admin, $tenant);
         $admin->save();

@@ -182,12 +182,14 @@ class Withdrawal
             $eligible = WifiZoneSales::dedupeSaleRows($eligible);
         }
         foreach ($eligible as $t) {
-            $row = method_exists($t, 'as_array') ? $t->as_array() : (array) $t;
+            $row = is_array($t)
+                ? $t
+                : (is_object($t) && method_exists($t, 'as_array') ? $t->as_array() : (array) $t);
             $price = class_exists('WifiZoneSales')
                 ? WifiZoneSales::rowSaleAmount($row)
                 : (float) ($row['price'] ?? 0);
             $gross += $price;
-            $commission += $price * (self::commissionRate($t->type) / 100);
+            $commission += $price * (self::commissionRate($row['type'] ?? '') / 100);
         }
 
         if (class_exists('WifiZoneSales') && $adminId !== null) {
