@@ -16,18 +16,85 @@ class WifiZoneTime
             ->where('status', 'active')
             ->order_by_asc('id')
             ->find_one();
-        if (!$tenant || empty($tenant->timezone)) {
+        if (!$tenant) {
             return;
         }
 
-        global $config;
-        $timezone = trim((string) $tenant->timezone);
+        $timezone = trim((string) ($tenant->timezone ?? ''));
+        if ($timezone === '' && class_exists('MobileMoneyCountry')) {
+            $country = MobileMoneyCountry::resolve($tenant->country_code ?? '');
+            if (is_array($country) && !empty($country['timezone'])) {
+                $timezone = trim((string) $country['timezone']);
+            }
+        }
         if ($timezone === '') {
             return;
         }
 
+        global $config;
         $config['timezone'] = $timezone;
         date_default_timezone_set($timezone);
+    }
+
+    /**
+     * @param array{timezone?:string,admin_id?:int,admin?:array,country_code?:string} $context
+     */
+    public static function formatDisplay(string $date, $time, array $context = [], ?string $format = null): string
+    {
+        global $config;
+
+        $ts = self::parseLocalDateTime($date, $time, $context);
+        if ($ts <= 0) {
+            return '';
+        }
+
+        $pattern = $format ?: (($config['date_format'] ?? 'Y-m-d') . ' H:i');
+        $dt = (new DateTimeImmutable('@' . $ts))->setTimezone(self::zone($context));
+
+        return $dt->format($pattern);
+    }
+
+    public static function ensureInstanceTimezone(): string
+    {
+        global $config;
+
+        $current = trim((string) ($config['timezone'] ?? ''));
+        if (class_exists('Tenant')) {
+            Tenant::ensureSchema();
+            $tenant = ORM::for_table('tbl_tenants')
+                ->where('status', 'active')
+                ->order_by_asc('id')
+                ->find_one();
+            if ($tenant) {
+                $tenantTz = trim((string) ($tenant->timezone ?? ''));
+                if ($tenantTz === '' && class_exists('MobileMoneyCountry')) {
+                    $country = MobileMoneyCountry::resolve($tenant->country_code ?? '');
+                    if (is_array($country) && !empty($country['timezone'])) {
+                        $tenantTz = trim((string) $country['timezone']);
+                    }
+                }
+                if ($tenantTz !== '' && ($current === '' || $current === 'UTC' || $current !== $tenantTz)) {
+                    self::apply(['timezone' => $tenantTz]);
+                    if ($current !== $tenantTz) {
+                        $tzRow = ORM::for_table('tbl_appconfig')->where('setting', 'timezone')->find_one();
+                        if ($tzRow) {
+                            $tzRow->value = $tenantTz;
+                            $tzRow->save();
+                        }
+                    }
+
+                    return $tenantTz;
+                }
+            }
+        }
+
+        if ($current !== '') {
+            date_default_timezone_set($current);
+
+            return $current;
+        }
+
+        return self::apply([]);
     }
 
     /**

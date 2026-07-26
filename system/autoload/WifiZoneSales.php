@@ -180,6 +180,18 @@ class WifiZoneSales
         }
     }
 
+    public static function normalizeSaleRow($row): array
+    {
+        if (is_array($row)) {
+            return $row;
+        }
+        if (is_object($row) && method_exists($row, 'as_array')) {
+            return $row->as_array();
+        }
+
+        return (array) $row;
+    }
+
     /**
      * @param iterable|array $rows rows with id, price, note, username, plan_name, method, routers, recharged_on, recharged_time
      * @return array<int, array<string, mixed>>
@@ -188,7 +200,7 @@ class WifiZoneSales
     {
         $list = [];
         foreach ($rows as $row) {
-            $list[] = is_array($row) ? $row : (method_exists($row, 'as_array') ? $row->as_array() : (array) $row);
+            $list[] = self::normalizeSaleRow($row);
         }
         usort($list, static function ($a, $b) {
             return ((int) ($a['id'] ?? 0)) <=> ((int) ($b['id'] ?? 0));

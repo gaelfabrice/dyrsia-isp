@@ -141,6 +141,10 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
         $customer = $prepared['customer'];
         $networkPassword = HotspotCustomer::defaultPassword();
 
+        if (class_exists('WifiZoneTime') && $routername !== '' && $planid > 0) {
+            WifiZoneTime::applyForRecharge($routername, ORM::for_table('tbl_plans')->find_one($planid), 0);
+        }
+
         if (!Package::rechargeUser($customer->id, $routername, $planid, 'MyPVit', $operator)) {
             _log('[MyPVit Hotspot] Activation failed for trx ' . $trx->transaction_ref);
             return false;

@@ -126,9 +126,9 @@ class DashboardCommand
 
         $payments = [];
         foreach (array_slice($rows, 0, max(1, $limit)) as $trx) {
-            $row = is_array($trx)
-                ? $trx
-                : (is_object($trx) && method_exists($trx, 'as_array') ? $trx->as_array() : (array) $trx);
+            $row = class_exists('WifiZoneSales')
+                ? WifiZoneSales::normalizeSaleRow($trx)
+                : (is_array($trx) ? $trx : (array) $trx);
             $datetime = trim((string) ($row['recharged_on'] ?? '') . ' ' . (($row['recharged_time'] ?? '') ?: '00:00:00'));
             $payments[] = [
                 'id' => (int) ($row['id'] ?? 0),

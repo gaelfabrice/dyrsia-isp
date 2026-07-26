@@ -119,7 +119,9 @@ class Withdrawal
     /** Vente éligible au retrait : passerelle automatisée Hotspot/PPPoE uniquement. */
     public static function isWithdrawableSale($trx)
     {
-        $row = is_array($trx) ? $trx : $trx->as_array();
+        $row = class_exists('WifiZoneSales')
+            ? WifiZoneSales::normalizeSaleRow($trx)
+            : (is_array($trx) ? $trx : (array) $trx);
         if (!in_array($row['type'] ?? '', ['Hotspot', 'PPPOE'], true)) {
             return false;
         }
@@ -182,9 +184,9 @@ class Withdrawal
             $eligible = WifiZoneSales::dedupeSaleRows($eligible);
         }
         foreach ($eligible as $t) {
-            $row = is_array($t)
-                ? $t
-                : (is_object($t) && method_exists($t, 'as_array') ? $t->as_array() : (array) $t);
+            $row = class_exists('WifiZoneSales')
+                ? WifiZoneSales::normalizeSaleRow($t)
+                : (is_array($t) ? $t : (array) $t);
             $price = class_exists('WifiZoneSales')
                 ? WifiZoneSales::rowSaleAmount($row)
                 : (float) ($row['price'] ?? 0);
@@ -198,7 +200,9 @@ class Withdrawal
                 $orphanHotspot = WifiZoneSales::sumHotspotPaymentsIncome(
                     $admin->as_array(),
                     '1970-01-01',
-                    date('Y-m-d'),
+                    class_exists('WifiZoneTime')
+                        ? WifiZoneTime::now(['admin_id' => (int) $adminId])->format('Y-m-d')
+                        : date('Y-m-d'),
                     true
                 );
                 if ($orphanHotspot > 0) {

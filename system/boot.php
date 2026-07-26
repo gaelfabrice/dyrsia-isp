@@ -145,8 +145,11 @@ if (class_exists('VisitorLog')) {
 Tenant::restoreFromSession();
 $currentTenant = Tenant::current();
 Tenant::applyLocaleConfig($currentTenant);
-if (!$currentTenant && class_exists('WifiZoneTime')) {
-    WifiZoneTime::bootstrapFromPrimaryTenant();
+if (class_exists('WifiZoneTime')) {
+    if (!$currentTenant) {
+        WifiZoneTime::bootstrapFromPrimaryTenant();
+    }
+    WifiZoneTime::ensureInstanceTimezone();
 }
 if ($currentTenant) {
     $ui->assign('wifizone_tenant', $currentTenant);
@@ -163,6 +166,9 @@ try {
     } elseif ($admin) {
         $admin = Impersonate::resolveActingAdmin($admin);
         $admin = Impersonate::adminToArray($admin);
+        if (class_exists('WifiZoneTime') && !empty($admin['id'])) {
+            WifiZoneTime::apply(['admin_id' => (int) $admin['id']]);
+        }
         $ui->assign('_admin', $admin);
         Tenant::applyAdminBranding($admin);
         Impersonate::assignUi($ui);

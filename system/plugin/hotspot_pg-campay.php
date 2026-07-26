@@ -233,6 +233,14 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         return pppoe_activate_after_payment($trx, $operator);
     }
 
+    $routername = function_exists('hotspot_normalize_router_name')
+        ? hotspot_normalize_router_name((string) ($trx->router_name ?? ''))
+        : trim((string) ($trx->router_name ?? ''));
+    $planid = (int) ($trx->plan_id ?? 0);
+    if (class_exists('WifiZoneTime') && $routername !== '' && $planid > 0) {
+        WifiZoneTime::applyForRecharge($routername, ORM::for_table('tbl_plans')->find_one($planid), 0);
+    }
+
     // Recharge déjà facturée pour ce paiement → ne pas recréer tbl_transactions.
     if (class_exists('WifiZoneSales')) {
         $existingSale = WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id);

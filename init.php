@@ -238,6 +238,9 @@ if (empty($http_proxy) && !empty($config['http_proxy'])) {
     }
 }
 date_default_timezone_set($config['timezone']);
+if (class_exists('WifiZoneTime')) {
+    WifiZoneTime::ensureInstanceTimezone();
+}
 
 WifiZoneCore::boot();
 WifiZoneSecurity::bootstrap($config);

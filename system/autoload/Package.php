@@ -150,7 +150,7 @@ class Package
 
     public static function rechargeExpiresAt($recharge)
     {
-        $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
+        $row = self::normalizeRechargeRow($recharge);
         $expiration = trim((string) ($row['expiration'] ?? ''));
         if ($expiration === '') {
             return 0;
@@ -169,26 +169,43 @@ class Package
 
     public static function isRechargeExpired($recharge): bool
     {
-        $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
+        $row = self::normalizeRechargeRow($recharge);
         if (($row['status'] ?? '') !== 'on') {
             return true;
         }
+        $context = self::rechargeTimeContext(['admin_id' => (int) ($row['admin_id'] ?? 0)]);
         $expiresAt = self::rechargeExpiresAt($row);
         if ($expiresAt <= 0) {
             return false;
         }
+        $nowTs = class_exists('WifiZoneTime')
+            ? WifiZoneTime::nowTimestamp($context)
+            : time();
 
-        return $expiresAt <= time();
+        return $expiresAt <= $nowTs;
     }
 
     public static function isRechargeActive($recharge)
     {
-        $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
+        $row = self::normalizeRechargeRow($recharge);
         if (($row['status'] ?? '') !== 'on') {
             return false;
         }
 
-        return self::rechargeExpiresAt($row) > time();
+        return !self::isRechargeExpired($row);
+    }
+
+    /** @return array<string, mixed> */
+    private static function normalizeRechargeRow($recharge): array
+    {
+        if (is_array($recharge)) {
+            return $recharge;
+        }
+        if (is_object($recharge) && method_exists($recharge, 'as_array')) {
+            return $recharge->as_array();
+        }
+
+        return (array) $recharge;
     }
 
     /**
@@ -209,6 +226,9 @@ class Package
         }
 
         $due = [];
+        if (class_exists('WifiZoneTime')) {
+            WifiZoneTime::ensureInstanceTimezone();
+        }
         foreach (ORM::for_table('tbl_user_recharges')->where('status', 'on')->find_many() as $candidate) {
             if (self::isRechargeExpired($candidate)) {
                 $due[] = $candidate;
