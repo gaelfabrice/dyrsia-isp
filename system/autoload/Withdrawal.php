@@ -130,6 +130,12 @@ class Withdrawal
         if (stripos($method, 'Recharge Balance - Administrator') !== false) {
             return false;
         }
+        if (preg_match('/hotspot_payment:(\d+)/', (string) ($row['note'] ?? ''), $paymentMatch)) {
+            $payment = ORM::for_table('tbl_hotspot_payments')->find_one((int) $paymentMatch[1]);
+            if ($payment && (string) ($payment->transaction_status ?? '') === 'paid') {
+                return true;
+            }
+        }
         if (!empty($row['invoice'])) {
             $pg = ORM::for_table('tbl_payment_gateway')
                 ->where('trx_invoice', $row['invoice'])
@@ -145,6 +151,9 @@ class Withdrawal
         }
         if (stripos($gateway, 'Recharge') === 0) {
             return false;
+        }
+        if (stripos($method, 'CamPay') !== false || stripos($method, 'MyPVit') !== false) {
+            return true;
         }
 
         return $gateway !== '';
@@ -173,11 +182,28 @@ class Withdrawal
             $eligible = WifiZoneSales::dedupeSaleRows($eligible);
         }
         foreach ($eligible as $t) {
+            $row = method_exists($t, 'as_array') ? $t->as_array() : (array) $t;
             $price = class_exists('WifiZoneSales')
-                ? WifiZoneSales::parseAmount($t->price ?? 0)
-                : (float) $t->price;
+                ? WifiZoneSales::rowSaleAmount($row)
+                : (float) ($row['price'] ?? 0);
             $gross += $price;
             $commission += $price * (self::commissionRate($t->type) / 100);
+        }
+
+        if (class_exists('WifiZoneSales') && $adminId !== null) {
+            $admin = ORM::for_table('tbl_users')->find_one((int) $adminId);
+            if ($admin) {
+                $orphanHotspot = WifiZoneSales::sumHotspotPaymentsIncome(
+                    $admin->as_array(),
+                    '1970-01-01',
+                    date('Y-m-d'),
+                    true
+                );
+                if ($orphanHotspot > 0) {
+                    $gross += $orphanHotspot;
+                    $commission += $orphanHotspot * (self::commissionRate('Hotspot') / 100);
+                }
+            }
         }
 
         return [

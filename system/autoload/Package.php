@@ -17,19 +17,137 @@ class Package
      */
     private static function extensionBaseTimestamp($expiration, $time)
     {
-        $expiryTs = strtotime(trim((string) $expiration . ' ' . (string) $time));
-        if ($expiryTs === false) {
+        $expiryTs = self::rechargeExpiresAt(['expiration' => $expiration, 'time' => $time]);
+        if ($expiryTs <= 0) {
             return time();
         }
 
         return max(time(), $expiryTs);
     }
 
+    private static function appTimezone(): DateTimeZone
+    {
+        global $config;
+        $tz = trim((string) ($config['timezone'] ?? ''));
+        if ($tz === '') {
+            $tz = date_default_timezone_get() ?: 'UTC';
+        }
+        try {
+            return new DateTimeZone($tz);
+        } catch (Exception $e) {
+            return new DateTimeZone('UTC');
+        }
+    }
+
+    /** Normalise l'heure d'expiration (HH:MM:SS) pour éviter les comparaisons SQL ambiguës. */
+    public static function normalizeRechargeTime($time): string
+    {
+        $time = trim((string) $time);
+        if ($time === '') {
+            return '23:59:59';
+        }
+        if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $time)) {
+            return $time;
+        }
+        if (preg_match('/^\d{2}:\d{2}$/', $time)) {
+            return $time . ':00';
+        }
+        $ts = strtotime($time);
+
+        return $ts !== false ? date('H:i:s', $ts) : '23:59:59';
+    }
+
+    /**
+     * Calcule date/heure d'expiration à partir d'un instant de départ (timestamp Unix).
+     *
+     * @return array{date:string,time:string}
+     */
+    private static function computePlanExpiry(array $plan, int $baseTs, $day_exp = 20): array
+    {
+        $validity = max(0, (int) ($plan['validity'] ?? 0));
+        $unit = (string) ($plan['validity_unit'] ?? '');
+        $tz = self::appTimezone();
+        $base = (new DateTimeImmutable('@' . $baseTs))->setTimezone($tz);
+
+        if ($unit === 'Period') {
+            $date_only = $base->format('Y-m-d');
+            $current_date = new DateTime($date_only, $tz);
+            $exp_date = clone $current_date;
+            $exp_date->modify('first day of next month');
+            $exp_date->setDate((int) $exp_date->format('Y'), (int) $exp_date->format('m'), (int) $day_exp);
+
+            $min_days = 7 * $validity;
+            $max_days = 35 * $validity;
+            $days_until_exp = $exp_date->diff($current_date)->days;
+
+            while ($days_until_exp < $min_days) {
+                $exp_date->modify('+1 month');
+                $days_until_exp = $exp_date->diff($current_date)->days;
+            }
+            while ($days_until_exp > $max_days) {
+                $exp_date->modify('-1 month');
+                $days_until_exp = $exp_date->diff($current_date)->days;
+            }
+            if ($days_until_exp < $min_days || $exp_date <= $current_date) {
+                $exp_date->modify('+1 month');
+            }
+            if ($validity > 1) {
+                $exp_date->modify('+' . ($validity - 1) . ' months');
+            }
+
+            return ['date' => $exp_date->format('Y-m-d'), 'time' => '23:59:59'];
+        }
+
+        $modifier = null;
+        switch ($unit) {
+            case 'Months':
+                $modifier = '+' . $validity . ' months';
+                break;
+            case 'Days':
+                $modifier = '+' . $validity . ' days';
+                break;
+            case 'Hrs':
+                $modifier = '+' . $validity . ' hours';
+                break;
+            case 'Mins':
+                $modifier = '+' . $validity . ' minutes';
+                break;
+        }
+
+        if ($modifier === null) {
+            return ['date' => $base->format('Y-m-d'), 'time' => $base->format('H:i:s')];
+        }
+
+        $exp = $base->modify($modifier);
+
+        return ['date' => $exp->format('Y-m-d'), 'time' => $exp->format('H:i:s')];
+    }
+
     public static function rechargeExpiresAt($recharge)
     {
         $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
-        $ts = strtotime(trim((string) ($row['expiration'] ?? '') . ' ' . (string) ($row['time'] ?? '')));
+        $expiration = trim((string) ($row['expiration'] ?? ''));
+        if ($expiration === '') {
+            return 0;
+        }
+        $time = self::normalizeRechargeTime($row['time'] ?? '23:59:59');
+        $ts = strtotime($expiration . ' ' . $time);
+
         return $ts !== false ? $ts : 0;
+    }
+
+    public static function isRechargeExpired($recharge): bool
+    {
+        $row = is_array($recharge) ? $recharge : (method_exists($recharge, 'as_array') ? $recharge->as_array() : []);
+        if (($row['status'] ?? '') !== 'on') {
+            return true;
+        }
+        $expiresAt = self::rechargeExpiresAt($row);
+        if ($expiresAt <= 0) {
+            return false;
+        }
+
+        return $expiresAt <= time();
     }
 
     public static function isRechargeActive($recharge)
@@ -59,11 +177,12 @@ class Package
             @touch($stampFile);
         }
 
-        $now = date('Y-m-d H:i:s');
-        $due = ORM::for_table('tbl_user_recharges')
-            ->where('status', 'on')
-            ->where_raw("CONCAT(expiration, ' ', time) <= ?", [$now])
-            ->find_many();
+        $due = [];
+        foreach (ORM::for_table('tbl_user_recharges')->where('status', 'on')->find_many() as $candidate) {
+            if (self::isRechargeExpired($candidate)) {
+                $due[] = $candidate;
+            }
+        }
 
         if (count($due) === 0) {
             return 0;
@@ -210,6 +329,15 @@ class Package
         $router_name = trim((string) $router_name);
         if ($router_name !== '' && function_exists('hotspot_normalize_router_name')) {
             $router_name = hotspot_normalize_router_name($router_name);
+        }
+        if ($router_name !== '' && class_exists('WifiZoneHotspot')) {
+            $routerRow = WifiZoneHotspot::resolveRouterRow($router_name);
+            if (is_array($routerRow) && !empty($routerRow['name'])) {
+                $router_name = trim((string) $routerRow['name']);
+            }
+            if (is_array($routerRow) && !empty($routerRow['admin_id'])) {
+                return (int) $routerRow['admin_id'];
+            }
         }
         if ($router_name !== '' && class_exists('WifiZoneHotspot')) {
             $ownerId = WifiZoneHotspot::routerAdminId($router_name);
@@ -365,7 +493,8 @@ class Package
             # PPPOE or Hotspot only can have 1 per customer prepaid or postpaid
             # because 1 customer can have 1 PPPOE and 1 Hotspot Plan in mikrotik
             //->where('prepaid', $p['prepaid'])
-            ->left_outer_join('tbl_plans', array('tbl_plans.id', '=', 'tbl_user_recharges.plan_id'));
+            ->left_outer_join('tbl_plans', array('tbl_plans.id', '=', 'tbl_user_recharges.plan_id'))
+            ->order_by_desc('tbl_user_recharges.id');
         if ($isVoucher) {
             $query->where('username', $c['username']);
         } else {
@@ -375,56 +504,10 @@ class Package
 
         run_hook("recharge_user");
 
-        if ($p['validity_unit'] == 'Months') {
-            $date_exp = date("Y-m-d", strtotime('+' . $p['validity'] . ' month'));
-        } else if ($p['validity_unit'] == 'Period') {
-            $current_date = new DateTime($date_only);
-            $exp_date = clone $current_date;
-            $exp_date->modify('first day of next month');
-            $exp_date->setDate($exp_date->format('Y'), $exp_date->format('m'), $day_exp);
-
-            $min_days = 7 * $p['validity'];
-            $max_days = 35 * $p['validity'];
-
-            $days_until_exp = $exp_date->diff($current_date)->days;
-
-            // If less than min_days away, move to the next period
-            while ($days_until_exp < $min_days) {
-                $exp_date->modify('+1 month');
-                $days_until_exp = $exp_date->diff($current_date)->days;
-            }
-
-            // If more than max_days away, move to the previous period
-            while ($days_until_exp > $max_days) {
-                $exp_date->modify('-1 month');
-                $days_until_exp = $exp_date->diff($current_date)->days;
-            }
-
-            // Final check to ensure we're not less than min_days or in the past
-            if ($days_until_exp < $min_days || $exp_date <= $current_date) {
-                $exp_date->modify('+1 month');
-            }
-
-            // Adjust for multiple periods
-            if ($p['validity'] > 1) {
-                $exp_date->modify('+' . ($p['validity'] - 1) . ' months');
-            }
-
-            $date_exp = $exp_date->format('Y-m-d');
-            $time = "23:59:59";
-        } else if ($p['validity_unit'] == 'Days') {
-            $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' day')));
-            $date_exp = $datetime[0];
-            $time = $datetime[1];
-        } else if ($p['validity_unit'] == 'Hrs') {
-            $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' hour')));
-            $date_exp = $datetime[0];
-            $time = $datetime[1];
-        } else if ($p['validity_unit'] == 'Mins') {
-            $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' minute')));
-            $date_exp = $datetime[0];
-            $time = $datetime[1];
-        }
+        $rechargeStartTs = strtotime($date_only . ' ' . $time_only) ?: time();
+        $expiry = self::computePlanExpiry($p->as_array(), $rechargeStartTs, $day_exp ?? 20);
+        $date_exp = $expiry['date'];
+        $time = self::normalizeRechargeTime($expiry['time']);
 
         if ($b) {
             $lastExpired = Lang::dateAndTimeFormat($b['expiration'], $b['time']);
@@ -432,30 +515,9 @@ class Package
             if ($b['namebp'] == $p['name_plan'] && $b['status'] == 'on' && $config['extend_expiry'] == 'yes') {
                 // if it same internet plan, expired will extend
                 $baseTs = self::extensionBaseTimestamp($b['expiration'], $b['time']);
-                switch ($p['validity_unit']) {
-                    case 'Months':
-                        $date_exp = date("Y-m-d", strtotime('+' . $p['validity'] . ' months', $baseTs));
-                        $time = date("H:i:s", $baseTs);
-                        break;
-                    case 'Period':
-                        $date_exp = date("Y-m-$day_exp", strtotime('+' . $p['validity'] . ' months', $baseTs));
-                        $time = date("23:59:00");
-                        break;
-                    case 'Days':
-                        $date_exp = date("Y-m-d", strtotime('+' . $p['validity'] . ' days', $baseTs));
-                        $time = date("H:i:s", $baseTs);
-                        break;
-                    case 'Hrs':
-                        $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' hours', $baseTs)));
-                        $date_exp = $datetime[0];
-                        $time = $datetime[1];
-                        break;
-                    case 'Mins':
-                        $datetime = explode(' ', date("Y-m-d H:i:s", strtotime('+' . $p['validity'] . ' minutes', $baseTs)));
-                        $date_exp = $datetime[0];
-                        $time = $datetime[1];
-                        break;
-                }
+                $extended = self::computePlanExpiry($p->as_array(), $baseTs, $day_exp ?? 20);
+                $date_exp = $extended['date'];
+                $time = self::normalizeRechargeTime($extended['time']);
             } else {
                 $isChangePlan = true;
             }
@@ -467,6 +529,25 @@ class Package
                     $c = $refreshed;
                 }
             }
+
+            // if contains 'mikrotik', 'hotspot', 'pppoe', 'radius' then recharge it
+            if (Validator::containsKeyword($p['device'])) {
+                $b->customer_id = $id_customer;
+                $b->username = $c['username'];
+                $b->plan_id = $plan_id;
+                $b->namebp = $p['name_plan'];
+                $b->recharged_on = $date_only;
+                $b->recharged_time = $time_only;
+                $b->expiration = $date_exp;
+                $b->time = $time;
+                $b->status = "on";
+                $b->method = "$gateway - $channel";
+                $b->routers = $router_name;
+                $b->type = $p['type'];
+                $b->admin_id = $rechargeAdminId;
+                $b->save();
+            }
+
             $dvc = Package::getDevice($p);
             if ($_app_stage != 'Demo') {
                 try {
@@ -497,24 +578,6 @@ class Package
                 }
             }
             //}
-
-            // if contains 'mikrotik', 'hotspot', 'pppoe', 'radius' then recharge it
-            if (Validator::containsKeyword($p['device'])) {
-                $b->customer_id = $id_customer;
-                $b->username = $c['username'];
-                $b->plan_id = $plan_id;
-                $b->namebp = $p['name_plan'];
-                $b->recharged_on = $date_only;
-                $b->recharged_time = $time_only;
-                $b->expiration = $date_exp;
-                $b->time = $time;
-                $b->status = "on";
-                $b->method = "$gateway - $channel";
-                $b->routers = $router_name;
-                $b->type = $p['type'];
-                $b->admin_id = $rechargeAdminId;
-                $b->save();
-            }
 
             // insert table transactions
             $t = ORM::for_table('tbl_transactions')->create();
@@ -582,6 +645,26 @@ class Package
                     $c = $refreshed;
                 }
             }
+
+            // if contains 'mikrotik', 'hotspot', 'pppoe', 'radius' then recharge it
+            if (Validator::containsKeyword($p['device'])) {
+                $d = ORM::for_table('tbl_user_recharges')->create();
+                $d->customer_id = $id_customer;
+                $d->username = $c['username'];
+                $d->plan_id = $plan_id;
+                $d->namebp = $p['name_plan'];
+                $d->recharged_on = $date_only;
+                $d->recharged_time = $time_only;
+                $d->expiration = $date_exp;
+                $d->time = $time;
+                $d->status = "on";
+                $d->method = "$gateway - $channel";
+                $d->routers = $router_name;
+                $d->type = $p['type'];
+                $d->admin_id = $rechargeAdminId;
+                $d->save();
+            }
+
             $dvc = Package::getDevice($p);
             if ($_app_stage != 'Demo') {
                 try {
@@ -610,25 +693,6 @@ class Package
                             WifiZoneSecurity::formatExceptionForLog($e)
                     );
                 }
-            }
-
-            // if contains 'mikrotik', 'hotspot', 'pppoe', 'radius' then recharge it
-            if (Validator::containsKeyword($p['device'])) {
-                $d = ORM::for_table('tbl_user_recharges')->create();
-                $d->customer_id = $id_customer;
-                $d->username = $c['username'];
-                $d->plan_id = $plan_id;
-                $d->namebp = $p['name_plan'];
-                $d->recharged_on = $date_only;
-                $d->recharged_time = $time_only;
-                $d->expiration = $date_exp;
-                $d->time = $time;
-                $d->status = "on";
-                $d->method = "$gateway - $channel";
-                $d->routers = $router_name;
-                $d->type = $p['type'];
-                $d->admin_id = $rechargeAdminId;
-                $d->save();
             }
 
             // insert table transactions

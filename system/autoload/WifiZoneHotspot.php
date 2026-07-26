@@ -256,12 +256,49 @@ class WifiZoneHotspot
         if ($routerName === '') {
             return 0;
         }
-        if (function_exists('hotspot_normalize_router_name')) {
-            $routerName = hotspot_normalize_router_name($routerName);
-        }
-        $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
 
-        return $router && !empty($router->admin_id) ? (int) $router->admin_id : 0;
+        $row = self::resolveRouterRow($routerName);
+
+        return ($row && !empty($row['admin_id'])) ? (int) $row['admin_id'] : 0;
+    }
+
+    /**
+     * Résout un identifiant routeur (nom, description, IP) vers tbl_routers.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function resolveRouterRow($routerInput)
+    {
+        $routerInput = trim((string) $routerInput);
+        if ($routerInput === '') {
+            return null;
+        }
+
+        if (function_exists('hotspot_resolve_router')) {
+            $row = hotspot_resolve_router($routerInput);
+
+            return $row ? (is_array($row) ? $row : $row->as_array()) : null;
+        }
+
+        $router = ORM::for_table('tbl_routers')->where('name', $routerInput)->find_one();
+        if ($router) {
+            return $router->as_array();
+        }
+
+        $router = ORM::for_table('tbl_routers')->where('description', $routerInput)->find_one();
+        if ($router) {
+            return $router->as_array();
+        }
+
+        $routerIp = explode(':', $routerInput)[0];
+        if ($routerIp !== '') {
+            $router = ORM::for_table('tbl_routers')->where_like('ip_address', $routerIp . '%')->find_one();
+            if ($router) {
+                return $router->as_array();
+            }
+        }
+
+        return null;
     }
 
     /**

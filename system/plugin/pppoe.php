@@ -96,10 +96,8 @@ function pppoe_customer_can_renew($customer)
     if ($expiration === '') {
         return false;
     }
-    $timePart = trim((string) ($activePlan['time'] ?? '23:59:59'));
-    $expTs = strtotime($expiration . ' ' . $timePart);
 
-    return $expTs !== false && $expTs <= time();
+    return Package::isRechargeExpired($activePlan->as_array());
 }
 
 function pppoe_plans_query_for_router($routerName)

@@ -43,10 +43,12 @@ class MikrotikPppoe
     function add_customer($customer, $plan)
     {
         $client = $this->routerClient($plan['routers']);
-        $cid = self::getIdByCustomer($customer, $client);
+        $this->removeDuplicatePppoeSecrets($client, $customer);
+        $cid = $this->getIdByCustomer($customer, $client);
         $isExp = $this->isExpirePlan($plan) || ORM::for_table('tbl_plans')->select('id')->where('plan_expired', $plan['id'])->find_one();
         if (empty($cid)) {
             $this->addPpoeUser($client, $plan, $customer, $isExp);
+            $cid = $this->getIdByCustomer($customer, $client);
         } else {
             $setRequest = new RouterOS\Request('/ppp/secret/set');
             $setRequest->setArgument('numbers', $cid);
@@ -76,6 +78,8 @@ class MikrotikPppoe
                 $client->sendSync($unsetRequest);
             }
         }
+
+        $this->removeDuplicatePppoeSecrets($client, $customer, $cid);
 
         if ($this->isExpirePlan($plan)) {
             $this->suspendPppoeSession($client, $customer, (string) $plan['name_plan'], $plan);
@@ -394,20 +398,95 @@ class MikrotikPppoe
     }
 
     /**
+     * Login PPPoE canonique sur le routeur (pppoe_username prioritaire).
+     */
+    private function canonicalPppoeLogin($customer)
+    {
+        if (!empty($customer['pppoe_username'])) {
+            return trim((string) $customer['pppoe_username']);
+        }
+
+        return trim((string) ($customer['username'] ?? ''));
+    }
+
+    /**
+     * Supprime les secrets PPPoE en double (username vs pppoe_username).
+     */
+    private function removeDuplicatePppoeSecrets($client, $customer, $keepId = null)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo') {
+            return;
+        }
+
+        $keepId = $keepId !== null ? trim((string) $keepId) : trim((string) $this->getIdByCustomer($customer, $client));
+        $canonical = $this->canonicalPppoeLogin($customer);
+        $seenIds = [];
+
+        foreach ($this->pppoeLoginNames($customer) as $name) {
+            if ($name === '') {
+                continue;
+            }
+            $printRequest = new RouterOS\Request('/ppp/secret/print');
+            $printRequest->setArgument('.proplist', '.id,name');
+            $printRequest->setQuery(RouterOS\Query::where('name', $name));
+            foreach ($client->sendSync($printRequest) as $row) {
+                $secretId = trim((string) $row->getProperty('.id'));
+                if ($secretId === '') {
+                    continue;
+                }
+                $seenIds[$secretId] = trim((string) $row->getProperty('name'));
+            }
+        }
+
+        if ($keepId === '' && $canonical !== '' && isset($seenIds) && count($seenIds) === 1) {
+            $keepId = (string) array_key_first($seenIds);
+        }
+
+        foreach ($seenIds as $secretId => $secretName) {
+            if ($keepId !== '' && $secretId === $keepId) {
+                continue;
+            }
+            if ($keepId !== '' && $secretName === $canonical) {
+                continue;
+            }
+            try {
+                $this->removePpoeActive($client, $secretName);
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+            try {
+                $removeRequest = new RouterOS\Request('/ppp/secret/remove');
+                $removeRequest->setArgument('numbers', $secretId);
+                $client->sendSync($removeRequest);
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+    }
+
+    /**
      * Function to ID by username from Mikrotik
      */
     function getIdByCustomer($customer, $client){
-        $printRequest = new RouterOS\Request('/ppp/secret/print');
-        $printRequest->setQuery(RouterOS\Query::where('name', $customer['username']));
-        $id = $client->sendSync($printRequest)->getProperty('.id');
-        if(empty($id)){
-            if (!empty($customer['pppoe_username'])) {
-                $printRequest = new RouterOS\Request('/ppp/secret/print');
-                $printRequest->setQuery(RouterOS\Query::where('name', $customer['pppoe_username']));
-                $id = $client->sendSync($printRequest)->getProperty('.id');
+        $canonical = $this->canonicalPppoeLogin($customer);
+        $foundId = '';
+
+        foreach ($this->pppoeLoginNames($customer) as $name) {
+            if ($name === '') {
+                continue;
+            }
+            $printRequest = new RouterOS\Request('/ppp/secret/print');
+            $printRequest->setQuery(RouterOS\Query::where('name', $name));
+            $id = $client->sendSync($printRequest)->getProperty('.id');
+            if (!empty($id)) {
+                if ($name === $canonical || $foundId === '') {
+                    $foundId = $id;
+                }
             }
         }
-        return $id;
+
+        return $foundId !== '' ? $foundId : null;
     }
 
     function update_plan($old_name, $new_plan)

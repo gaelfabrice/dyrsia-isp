@@ -80,18 +80,80 @@ class WifiZoneSales
     {
         $day = $day ?: self::businessDate();
 
-        return self::sumQueryPrices(
-            self::incomeBaseQuery($admin)->where('recharged_on', $day)
+        return round(
+            self::sumQueryPrices(
+                self::incomeBaseQuery($admin)->where('recharged_on', $day)
+            ) + self::sumHotspotPaymentsIncome($admin, $day, $day),
+            2
         );
     }
 
     public static function sumIncomeForPeriod($admin, string $startDate, string $endDate): float
     {
-        return self::sumQueryPrices(
-            self::incomeBaseQuery($admin)
-                ->where_gte('recharged_on', $startDate)
-                ->where_lte('recharged_on', $endDate)
+        return round(
+            self::sumQueryPrices(
+                self::incomeBaseQuery($admin)
+                    ->where_gte('recharged_on', $startDate)
+                    ->where_lte('recharged_on', $endDate)
+            ) + self::sumHotspotPaymentsIncome($admin, $startDate, $endDate),
+            2
         );
+    }
+
+    /**
+     * Ventes Hotspot CamPay présentes dans tbl_hotspot_payments mais absentes (ou orphelines) de tbl_transactions.
+     */
+    public static function sumHotspotPaymentsIncome($admin, string $dateFrom, string $dateTo, bool $onlyWithoutTransaction = false): float
+    {
+        self::ensureHotspotPluginLoaded();
+        if (!function_exists('hotspot_payments_query_for_admin')) {
+            return 0.0;
+        }
+
+        $query = hotspot_payments_query_for_admin($admin)
+            ->where('transaction_status', 'paid')
+            ->where_raw(
+                'DATE(COALESCE(NULLIF(payment_date, \'\'), created_date)) >= ?',
+                [$dateFrom]
+            )
+            ->where_raw(
+                'DATE(COALESCE(NULLIF(payment_date, \'\'), created_date)) <= ?',
+                [$dateTo]
+            );
+
+        $total = 0.0;
+        foreach ($query->find_many() as $payment) {
+            $amount = self::parseAmount($payment->amount ?? 0);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $linkedTrx = self::findTransactionByHotspotPaymentId((int) ($payment->id ?? 0));
+            if ($linkedTrx) {
+                if ($onlyWithoutTransaction) {
+                    continue;
+                }
+                if (class_exists('AdminScope') && AdminScope::transactionOwnedByAdmin($linkedTrx, $admin)) {
+                    continue;
+                }
+            }
+
+            $total += $amount;
+        }
+
+        return round($total, 2);
+    }
+
+    private static function ensureHotspotPluginLoaded(): void
+    {
+        if (function_exists('hotspot_payments_query_for_admin')) {
+            return;
+        }
+
+        $plugin = dirname(__DIR__) . '/plugin/hotspot.php';
+        if (is_file($plugin)) {
+            require_once $plugin;
+        }
     }
 
     /**
@@ -174,10 +236,32 @@ class WifiZoneSales
     {
         $total = 0.0;
         foreach (self::dedupeSaleRows($rows) as $row) {
-            $total += self::parseAmount($row['price'] ?? 0);
+            $total += self::rowSaleAmount($row);
         }
 
         return round($total, 2);
+    }
+
+    /**
+     * Montant d'une vente tbl_transactions (fallback tbl_hotspot_payments si price = 0).
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function rowSaleAmount(array $row): float
+    {
+        $price = self::parseAmount($row['price'] ?? 0);
+        if ($price > 0) {
+            return $price;
+        }
+
+        if (preg_match('/hotspot_payment:(\d+)/', (string) ($row['note'] ?? ''), $paymentMatch)) {
+            $payment = ORM::for_table('tbl_hotspot_payments')->find_one((int) $paymentMatch[1]);
+            if ($payment && (string) ($payment->transaction_status ?? '') === 'paid') {
+                return self::parseAmount($payment->amount ?? 0);
+            }
+        }
+
+        return $price;
     }
 
     /**

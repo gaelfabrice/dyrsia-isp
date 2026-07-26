@@ -1893,26 +1893,41 @@ class Mikrotik
      * Script MikroTik on-up profil EXPIRE : ajoute l'IP client à pppoe-expired.
      * $remote-address peut être vide au moment on-up sur certains firmwares → fallback $address.
      */
-    public static function pppoeExpiredProfileOnUpScript()
+    public static function pppoeExpiredProfileOnUpScript($listName = 'pppoe-expired')
     {
-        return ':local ip "$remote-address"; '
-            . ':if ([:len $ip]=0) do={ :set ip "$address" }; '
+        $listName = self::sanitizePppoeExpiredListName($listName);
+
+        return ':local ip $remote-address; '
+            . ':if ([:len $ip]=0) do={ :set ip $address }; '
             . ':if ([:len $ip]>0) do={ '
-            . ':if ([len [/ip firewall address-list find list=pppoe-expired address=$ip]]=0) do={ '
-            . '/ip firewall address-list add list=pppoe-expired address=$ip comment=$user '
+            . ':if ([:len [/ip firewall address-list find list=' . $listName . ' address=$ip]]=0) do={ '
+            . '/ip firewall address-list add list=' . $listName . ' address=$ip comment=$user '
             . '} }';
     }
 
     /**
      * Script MikroTik on-down profil EXPIRE : retire l'IP de pppoe-expired.
      */
-    public static function pppoeExpiredProfileOnDownScript()
+    public static function pppoeExpiredProfileOnDownScript($listName = 'pppoe-expired')
     {
-        return ':local ip "$remote-address"; '
-            . ':if ([:len $ip]=0) do={ :set ip "$address" }; '
+        $listName = self::sanitizePppoeExpiredListName($listName);
+
+        return ':local ip $remote-address; '
+            . ':if ([:len $ip]=0) do={ :set ip $address }; '
             . ':if ([:len $ip]>0) do={ '
-            . '/ip firewall address-list remove [find list=pppoe-expired address=$ip] '
+            . '/ip firewall address-list remove [find list=' . $listName . ' address=$ip] '
             . '}';
+    }
+
+    private static function sanitizePppoeExpiredListName($listName): string
+    {
+        $listName = trim((string) $listName);
+        if ($listName === '') {
+            $listName = 'pppoe-expired';
+        }
+        $safe = preg_replace('/[^a-zA-Z0-9_-]/', '', $listName);
+
+        return $safe !== '' ? $safe : 'pppoe-expired';
     }
 
     /**
@@ -2488,17 +2503,19 @@ class Mikrotik
         $enforced = 0;
 
         if (!$secretsAlreadySynced) {
-            $now = date('Y-m-d H:i:s');
             $recharges = ORM::for_table('tbl_user_recharges')
                 ->where('routers', $routerName)
                 ->where_raw("LOWER(type) = 'pppoe'")
-                ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= ?)", [$now])
                 ->order_by_desc('id')
                 ->find_many();
 
             $seenCustomers = [];
             self::withPppoeSharedClient($client, static function ($driver) use ($recharges, $expirePlan, &$seenCustomers, &$enforced, &$errors) {
                 foreach ($recharges as $tur) {
+                    $row = $tur->as_array();
+                    if (($row['status'] ?? '') === 'on' && !Package::isRechargeExpired($row)) {
+                        continue;
+                    }
                     $customerId = (int) $tur['customer_id'];
                     if ($customerId <= 0 || isset($seenCustomers[$customerId])) {
                         continue;
@@ -3000,9 +3017,10 @@ class Mikrotik
         $expectedNames = ['default', 'EXPIRE'];
         $upserted = 0;
         $errors = [];
-        $expiredOnUp = self::pppoeExpiredProfileOnUpScript();
-        $expiredOnDown = self::pppoeExpiredProfileOnDownScript();
         global $config;
+        $expiredList = trim((string) ($config['pppoe_setup_expired_list'] ?? 'pppoe-expired'));
+        $expiredOnUp = self::pppoeExpiredProfileOnUpScript($expiredList);
+        $expiredOnDown = self::pppoeExpiredProfileOnDownScript($expiredList);
         $pppoeDns = trim((string) ($config['pppoe_setup_dns_servers'] ?? '8.8.8.8,1.1.1.1'));
 
         foreach ($plansQuery->find_many() as $plan) {
@@ -3209,10 +3227,7 @@ class Mikrotik
      */
     public static function resolvePppoeEffectivePlan(array $recharge, array $plan, $routerName, $admin = null)
     {
-        $expirationRaw = trim((string) ($recharge['expiration'] ?? '') . ' ' . (string) ($recharge['time'] ?? ''));
-        $expiresAt = $expirationRaw !== '' ? strtotime($expirationRaw) : false;
-        $isActive = (($recharge['status'] ?? '') === 'on')
-            && ($expiresAt === false || $expiresAt > time());
+        $isActive = (($recharge['status'] ?? '') === 'on') && !Package::isRechargeExpired($recharge);
 
         if ($isActive) {
             return $plan;
@@ -11205,15 +11220,9 @@ class Mikrotik
      */
     private static function pppoeExpiredProfileScripts($listName)
     {
-        $listName = trim((string) $listName);
-        if ($listName === '') {
-            $listName = 'pppoe-expired';
-        }
-        $listEsc = str_replace('"', '\\"', $listName);
-
         return [
-            'on-up' => ':if ($remote-address!="") do={ /ip firewall address-list add list="' . $listEsc . '" address=$remote-address comment=$user }',
-            'on-down' => ':if ($remote-address!="") do={ /ip firewall address-list remove [find list="' . $listEsc . '" address=$remote-address] }',
+            'on-up' => self::pppoeExpiredProfileOnUpScript($listName),
+            'on-down' => self::pppoeExpiredProfileOnDownScript($listName),
         ];
     }
 
