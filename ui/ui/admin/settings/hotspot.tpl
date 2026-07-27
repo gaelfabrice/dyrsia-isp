@@ -498,6 +498,84 @@
     @media (min-width: 1200px) {
         .hs-wizard-main { flex-basis: 560px; max-width: calc(100% - 340px); }
     }
+    .hs-deploy-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10050;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(2px);
+    }
+    .hs-deploy-overlay[hidden] { display: none !important; }
+    .hs-deploy-panel {
+        width: min(480px, 100%);
+        background: #fff;
+        border-radius: 14px;
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+        padding: 24px 26px 22px;
+        text-align: center;
+    }
+    .hs-deploy-panel h4 {
+        margin: 0 0 10px;
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f172a;
+    }
+    .hs-deploy-panel h4 .fa { color: #3c8dbc; margin-right: 6px; }
+    #hs-deploy-status {
+        margin: 0 0 16px;
+        font-size: 14px;
+        line-height: 1.45;
+        color: #475569;
+        min-height: 2.9em;
+    }
+    .hs-deploy-progress-track {
+        height: 10px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        overflow: hidden;
+        margin-bottom: 12px;
+    }
+    #hs-deploy-progress-bar {
+        height: 100%;
+        width: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #3c8dbc 0%, #00a65a 100%);
+        transition: width 0.45s ease;
+        position: relative;
+    }
+    #hs-deploy-progress-bar.hs-deploy-indeterminate {
+        width: 36% !important;
+        animation: hs-deploy-slide 1.35s ease-in-out infinite;
+    }
+    @keyframes hs-deploy-slide {
+        0% { transform: translateX(-120%); }
+        100% { transform: translateX(320%); }
+    }
+    #hs-deploy-elapsed {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #64748b;
+    }
+    .hs-deploy-hint {
+        margin: 12px 0 0;
+        font-size: 12px;
+        color: #94a3b8;
+    }
+    body.theme-dark .hs-deploy-panel,
+    body.dark-mode .hs-deploy-panel { background: #1e293b; }
+    body.theme-dark .hs-deploy-panel h4,
+    body.dark-mode .hs-deploy-panel h4 { color: #f1f5f9; }
+    body.theme-dark #hs-deploy-status,
+    body.dark-mode #hs-deploy-status { color: #cbd5e1; }
+    body.theme-dark .hs-deploy-progress-track,
+    body.dark-mode .hs-deploy-progress-track { background: #334155; }
     </style>
 
     <form method="post" action="{Text::url('settings/hotspot')}" id="hs-wizard-form" class="form-horizontal">
@@ -808,6 +886,18 @@
         </div>
     </form>
 
+    <div id="hs-deploy-overlay" class="hs-deploy-overlay" hidden aria-live="polite" aria-busy="true">
+        <div class="hs-deploy-panel" role="status">
+            <h4><i class="fa fa-spinner fa-spin"></i> <span id="hs-deploy-title">Déploiement en cours</span></h4>
+            <p id="hs-deploy-status">Initialisation…</p>
+            <div class="hs-deploy-progress-track" aria-hidden="true">
+                <div id="hs-deploy-progress-bar" class="hs-deploy-indeterminate"></div>
+            </div>
+            <p id="hs-deploy-elapsed">0 s</p>
+            <p class="hs-deploy-hint">Ne fermez pas cette page — le déploiement peut prendre plusieurs minutes via VPN.</p>
+        </div>
+    </div>
+
     <script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.07.22"></script>
     <script>
     window.HS_FETCH_URL = '{$hs_fetch_url|escape:'javascript'}';
@@ -883,6 +973,145 @@
         var HS_DEPLOY_POLL_INTERVAL_MS = 2500;
         var HS_DEPLOY_POLL_MAX_MS = 600000;
         var hsDeployDefaultLabels = {};
+        var hsDeployUi = {
+            timer: null,
+            startedAt: 0,
+            lastPct: 0,
+            isFull: false,
+            overlay: null,
+            statusEl: null,
+            barEl: null,
+            elapsedEl: null,
+            titleEl: null
+        };
+
+        function hsDeployFormatElapsed(startedAt) {
+            var secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+            var mins = Math.floor(secs / 60);
+            var rem = secs % 60;
+            return mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
+        }
+
+        function hsDeployProgressFromMessage(message, isFull) {
+            var m = String(message || '').toLowerCase();
+            if (m.indexOf('connexion api') >= 0 || m.indexOf('connexion mikrotik') >= 0) {
+                return isFull ? 14 : 18;
+            }
+            if (m.indexOf('configuration hotspot') >= 0 || m.indexOf('pool, bridge') >= 0) {
+                return 36;
+            }
+            if (m.indexOf('forfaits') >= 0 || m.indexOf('synchronisation des forfaits') >= 0) {
+                return 54;
+            }
+            if (m.indexOf('walled-garden') >= 0 || m.indexOf('proxy api') >= 0) {
+                return 70;
+            }
+            if (m.indexOf('login.html') >= 0 || m.indexOf('envoi login') >= 0) {
+                return 86;
+            }
+            if (m.indexOf('worker cli') >= 0) {
+                return 10;
+            }
+            if (m.indexOf('envoi complet') >= 0 || m.indexOf('démarr') >= 0 || m.indexOf('demarr') >= 0) {
+                return 6;
+            }
+            return null;
+        }
+
+        function hsDeployEnsureUi() {
+            if (!hsDeployUi.overlay) {
+                hsDeployUi.overlay = document.getElementById('hs-deploy-overlay');
+                hsDeployUi.statusEl = document.getElementById('hs-deploy-status');
+                hsDeployUi.barEl = document.getElementById('hs-deploy-progress-bar');
+                hsDeployUi.elapsedEl = document.getElementById('hs-deploy-elapsed');
+                hsDeployUi.titleEl = document.getElementById('hs-deploy-title');
+            }
+        }
+
+        function hsUpdateDeployProgressBar(pct, indeterminate) {
+            hsDeployEnsureUi();
+            if (!hsDeployUi.barEl) {
+                return;
+            }
+            if (indeterminate) {
+                hsDeployUi.barEl.classList.add('hs-deploy-indeterminate');
+                hsDeployUi.barEl.style.width = '';
+                return;
+            }
+            hsDeployUi.barEl.classList.remove('hs-deploy-indeterminate');
+            var next = Math.max(hsDeployUi.lastPct, Math.min(99, pct));
+            hsDeployUi.lastPct = next;
+            hsDeployUi.barEl.style.width = next + '%';
+        }
+
+        function hsUpdateDeployProgress(message, pct) {
+            hsDeployEnsureUi();
+            if (hsDeployUi.statusEl && message) {
+                hsDeployUi.statusEl.textContent = message;
+            }
+            if (typeof pct === 'number') {
+                hsUpdateDeployProgressBar(pct, false);
+            }
+            if (hsDeployUi.elapsedEl && hsDeployUi.startedAt) {
+                hsDeployUi.elapsedEl.textContent = 'Durée : ' + hsDeployFormatElapsed(hsDeployUi.startedAt);
+            }
+        }
+
+        function hsDeployProgressTick() {
+            if (!hsDeployUi.startedAt) {
+                return;
+            }
+            var elapsedMs = Date.now() - hsDeployUi.startedAt;
+            var maxMs = hsDeployUi.isFull ? 480000 : 120000;
+            var timePct = 3 + (elapsedMs / maxMs) * 82;
+            if (timePct > hsDeployUi.lastPct) {
+                hsUpdateDeployProgressBar(timePct, false);
+            }
+            if (hsDeployUi.elapsedEl) {
+                hsDeployUi.elapsedEl.textContent = 'Durée : ' + hsDeployFormatElapsed(hsDeployUi.startedAt);
+            }
+        }
+
+        function hsShowDeployProgress(isFull, message) {
+            hsDeployEnsureUi();
+            hsDeployUi.isFull = !!isFull;
+            hsDeployUi.startedAt = Date.now();
+            hsDeployUi.lastPct = 0;
+            if (hsDeployUi.titleEl) {
+                hsDeployUi.titleEl.textContent = isFull ? 'Déploiement complet en cours' : 'Envoi login.html en cours';
+            }
+            if (hsDeployUi.overlay) {
+                hsDeployUi.overlay.hidden = false;
+                hsDeployUi.overlay.setAttribute('aria-busy', 'true');
+            }
+            hsUpdateDeployProgress(
+                message || (isFull ? 'Préparation du déploiement complet…' : 'Préparation de l\'envoi login.html…'),
+                null
+            );
+            hsUpdateDeployProgressBar(0, true);
+            if (hsDeployUi.timer) {
+                clearInterval(hsDeployUi.timer);
+            }
+            hsDeployUi.timer = setInterval(hsDeployProgressTick, 1000);
+        }
+
+        function hsHideDeployProgress() {
+            hsDeployEnsureUi();
+            if (hsDeployUi.timer) {
+                clearInterval(hsDeployUi.timer);
+                hsDeployUi.timer = null;
+            }
+            if (hsDeployUi.overlay) {
+                hsDeployUi.overlay.hidden = true;
+                hsDeployUi.overlay.setAttribute('aria-busy', 'false');
+            }
+            hsDeployUi.startedAt = 0;
+            hsDeployUi.lastPct = 0;
+            if (hsDeployUi.barEl) {
+                hsDeployUi.barEl.classList.remove('hs-deploy-indeterminate');
+                hsDeployUi.barEl.style.width = '0';
+            }
+        }
 
         function hsStoreSendButtonLabels() {
             [sendBtn, sendFullBtn, sendPppoeBtn].forEach(function (btn) {
@@ -969,11 +1198,10 @@
                                 return;
                             }
                             if (data.running) {
-                                var secs = Math.round((Date.now() - startedAt) / 1000);
-                                var mins = Math.floor(secs / 60);
-                                var rem = secs % 60;
-                                var elapsed = mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
-                                var statusLine = (data.message || 'Envoi MikroTik en cours…') + ' ' + elapsed;
+                                var elapsedLabel = hsDeployFormatElapsed(startedAt);
+                                var statusLine = (data.message || 'Envoi MikroTik en cours…') + ' (' + elapsedLabel + ')';
+                                var msgPct = hsDeployProgressFromMessage(data.message, hsDeployUi.isFull);
+                                hsUpdateDeployProgress(statusLine, msgPct);
                                 if (sendBtn && sendBtn.disabled) {
                                     sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> ' + statusLine;
                                 }
@@ -1008,23 +1236,20 @@
             } else if (data && data.notify_type === 'e') {
                 icon = 'error';
             }
+            if (icon === 'success' && isSendFull) {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: icon,
+                        title: 'Déploiement complet réussi',
+                        confirmButtonText: 'OK, compris'
+                    });
+                }
+                return;
+            }
             var serverMessage = (data && data.message) ? String(data.message) : '';
             var title = 'Envoi réussi';
             var html = '';
-            if (icon === 'success' && isSendFull) {
-                title = 'Déploiement complet réussi';
-                html = '<p style="margin:0 0 12px;text-align:left;">'
-                    + 'Le hotspot a été déployé sur le routeur MikroTik :</p>'
-                    + '<ul style="margin:0 0 12px 18px;text-align:left;line-height:1.5;">'
-                    + '<li>Pool, bridge et DHCP hotspot</li>'
-                    + '<li>Profils et forfaits synchronisés</li>'
-                    + '<li>login.html et walled-garden</li>'
-                    + '<li>Proxy API captif (paiements)</li>'
-                    + '</ul>'
-                    + (serverMessage
-                        ? '<p style="margin:0;text-align:left;font-size:13px;color:#64748b;">' + hsEscapeHtml(serverMessage) + '</p>'
-                        : '<p style="margin:0;text-align:left;">Vous pouvez tester le portail captif depuis un client Wi‑Fi.</p>');
-            } else if (icon === 'warning') {
+            if (icon === 'warning') {
                 title = 'Attention';
             } else if (icon === 'error') {
                 title = 'Échec';
@@ -1044,6 +1269,9 @@
 
         function runHotspotAsyncDeploy(isSendFull) {
             hsSetSendButtonsLoading(isSendFull, false);
+            hsShowDeployProgress(isSendFull, isSendFull
+                ? 'Connexion au serveur et démarrage du déploiement complet…'
+                : 'Connexion au serveur et démarrage de l\'envoi login.html…');
             var startedAt = Date.now();
             var extra = {
                 ajax_hotspot_deploy: '1',
@@ -1056,15 +1284,27 @@
                     if (!data || !data.ok) {
                         throw new Error((data && data.message) || 'Impossible de démarrer l\'envoi MikroTik.');
                     }
+                    hsUpdateDeployProgress(
+                        (data.message || 'Tâche de déploiement démarrée.') + ' Suivi en cours…',
+                        8
+                    );
                     if (data.async && data.job_id) {
                         return pollHotspotDeployJob(data.job_id, startedAt);
                     }
                     return data;
                 })
                 .then(function (data) {
-                    hsShowDeployResult(data, isSendFull);
+                    hsUpdateDeployProgress(
+                        hsDeployUi.isFull ? 'Déploiement terminé avec succès.' : 'Envoi terminé avec succès.',
+                        100
+                    );
+                    setTimeout(function () {
+                        hsHideDeployProgress();
+                        hsShowDeployResult(data, isSendFull);
+                    }, 450);
                 })
                 .catch(function (err) {
+                    hsHideDeployProgress();
                     if (typeof Swal !== 'undefined') {
                         Swal.fire({
                             icon: 'error',

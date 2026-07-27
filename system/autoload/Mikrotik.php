@@ -1649,6 +1649,12 @@ class Mikrotik
         }
     }
 
+    private static function mikrotikPauseAfterRouterScript(&$client, $routerRow, $timeout = 30)
+    {
+        sleep(2);
+        self::refreshMikrotikClient($client, $routerRow, $timeout);
+    }
+
     private static function runMikrotikClientStep(&$client, $routerRow, $timeout, callable $step)
     {
         try {
@@ -1657,7 +1663,17 @@ class Mikrotik
             if (self::mikrotikClientErrorIsRetriable($e->getMessage())) {
                 sleep(2);
                 if (self::refreshMikrotikClient($client, $routerRow, $timeout)) {
-                    return $step($client);
+                    try {
+                        return $step($client);
+                    } catch (Throwable $retryError) {
+                        if (self::mikrotikClientErrorIsRetriable($retryError->getMessage())) {
+                            sleep(2);
+                            if (self::refreshMikrotikClient($client, $routerRow, $timeout)) {
+                                return $step($client);
+                            }
+                        }
+                        throw $retryError;
+                    }
                 }
             }
             throw $e;
@@ -1665,11 +1681,33 @@ class Mikrotik
             if (self::mikrotikClientErrorIsRetriable($e->getMessage())) {
                 sleep(2);
                 if (self::refreshMikrotikClient($client, $routerRow, $timeout)) {
-                    return $step($client);
+                    try {
+                        return $step($client);
+                    } catch (Exception $retryError) {
+                        if (self::mikrotikClientErrorIsRetriable($retryError->getMessage())) {
+                            sleep(2);
+                            if (self::refreshMikrotikClient($client, $routerRow, $timeout)) {
+                                return $step($client);
+                            }
+                        }
+                        throw $retryError;
+                    }
                 }
             }
             throw $e;
         }
+    }
+
+    /** @param array<int, string> $errors */
+    private static function mikrotikSetupHasRetriableErrors(array $errors): bool
+    {
+        foreach ($errors as $err) {
+            if (self::mikrotikClientErrorIsRetriable((string) $err)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function isUserLogin($client, $username)
@@ -7789,7 +7827,7 @@ class Mikrotik
             try {
                 self::refreshMikrotikClient($client, $routerRow, 20);
                 $bridgeFwInterface = $interface;
-                $bridgeFwResult = self::runMikrotikClientStep($client, $routerRow, 30, static function ($apiClient) use ($bridgeFwInterface) {
+                $bridgeFwResult = self::runMikrotikClientStep($client, $routerRow, 45, static function ($apiClient) use ($bridgeFwInterface) {
                     $result = self::ensureHotspotBridgeFirewall($apiClient, $bridgeFwInterface);
                     self::throwIfMikrotikResultRetriable($result);
 
@@ -7804,12 +7842,15 @@ class Mikrotik
             } catch (Exception $e) {
                 $errors[] = 'configuration bridge firewall: ' . $e->getMessage();
             }
+            self::mikrotikPauseAfterRouterScript($client, $routerRow, 45);
         } else {
             $actions[] = 'bridge settings ignorés (hotspot déjà déployé)';
         }
 
+        self::mikrotikPauseAfterRouterScript($client, $routerRow, 45);
+
         try {
-            self::runMikrotikClientStep($client, $routerRow, 30, static function ($apiClient) use (
+            self::runMikrotikClientStep($client, $routerRow, 45, static function ($apiClient) use (
                 $hotspotName,
                 $interface,
                 $profileName,
@@ -7825,9 +7866,13 @@ class Mikrotik
             $errors[] = 'serveur hotspot: ' . $e->getMessage();
         }
 
+        if (self::mikrotikSetupHasRetriableErrors($errors)) {
+            self::mikrotikPauseAfterRouterScript($client, $routerRow, 45);
+        }
+
         // DHCP sur le bridge/interface hotspot (obligatoire pour les clients Wi‑Fi).
         try {
-            $dhcpResult = self::runMikrotikClientStep($client, $routerRow, 30, static function ($apiClient) use (
+            $dhcpResult = self::runMikrotikClientStep($client, $routerRow, 45, static function ($apiClient) use (
                 $interface,
                 $poolName,
                 $localAddress,
@@ -10098,23 +10143,6 @@ class Mikrotik
             }
         }
 
-        $escapedIface = str_replace(['\\', '"'], '', $interface);
-        self::runRouterOneShotScript(
-            $client,
-            'dyrsia_bridge_hs',
-            '/interface bridge settings set use-ip-firewall=yes use-ip-firewall-for-vlan=no allow-fast-path=no' . "\n"
-            . '/interface bridge set ' . $escapedIface . ' fast-forward=no' . "\n"
-            . '/interface bridge port set [find bridge=' . $escapedIface . '] hw=no'
-        );
-
-        if ($needsIpFirewall) {
-            $actions[] = 'bridge settings : use-ip-firewall=yes';
-        }
-        if ($needsNoFastPath) {
-            $actions[] = 'bridge settings : allow-fast-path=no';
-        }
-        $actions[] = 'bridge « ' . $interface . ' » : fast-forward=no';
-
         $dhcpFwResult = self::ensureHotspotDhcpFirewallPass($client, $interface);
         $errors = array_merge($errors, $dhcpFwResult['errors'] ?? []);
         $actions = array_merge($actions, $dhcpFwResult['actions'] ?? []);
@@ -10123,16 +10151,30 @@ class Mikrotik
         $errors = array_merge($errors, $hwResult['errors'] ?? []);
         $actions = array_merge($actions, $hwResult['actions'] ?? []);
 
-        self::ensureHotspotBridgeBootScript($client, $interface);
+        if ($needsIpFirewall) {
+            $actions[] = 'bridge settings : use-ip-firewall=yes';
+        }
+        if ($needsNoFastPath) {
+            $actions[] = 'bridge settings : allow-fast-path=no';
+        }
 
-        $ipFw = self::readBridgeUseIpFirewall($client);
-        $fastPath = self::readBridgeAllowFastPath($client);
-        if ($ipFw === false) {
-            $errors[] = 'use-ip-firewall toujours désactivé après sync.';
+        $bridgeId = self::routerEntityId($client, '/interface/bridge', 'name', $interface);
+        if ($bridgeId !== null) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/set'))
+                        ->setArgument('numbers', $bridgeId)
+                        ->setArgument('fast-forward', 'no')
+                );
+                $actions[] = 'bridge « ' . $interface . ' » : fast-forward=no';
+            } catch (Throwable $e) {
+                $errors[] = 'bridge fast-forward API : ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'bridge fast-forward API : ' . $e->getMessage();
+            }
         }
-        if ($fastPath === true) {
-            $errors[] = 'allow-fast-path toujours actif : le trafic bridge peut contourner le hotspot.';
-        }
+
+        self::ensureHotspotBridgeBootScript($client, $interface);
 
         return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
     }
