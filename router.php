@@ -8,6 +8,7 @@ if (php_sapi_name() !== 'cli') {
     $uri = strtolower((string) ($_SERVER['REQUEST_URI'] ?? ''));
     $isDev = (getenv('APP_STAGE') ?: '') === 'Dev';
     $longRequest = !empty($_POST['ajax_deploy'])
+        || !empty($_POST['ajax_hotspot_deploy'])
         || !empty($_POST['send_mikrotik'])
         || !empty($_GET['fetch_router_setup'])
         || strpos($uri, 'pppoe-setup') !== false

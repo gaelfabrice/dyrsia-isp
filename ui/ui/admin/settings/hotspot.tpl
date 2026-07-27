@@ -880,6 +880,210 @@
         var sendField = document.getElementById('hs-send-mikrotik-field');
         var syncPlansBtn = document.getElementById('hs-sync-plans-btn');
         var syncPlansField = document.getElementById('hs-sync-plans-field');
+        var HS_DEPLOY_POLL_INTERVAL_MS = 2500;
+        var HS_DEPLOY_POLL_MAX_MS = 600000;
+        var hsDeployDefaultLabels = {};
+
+        function hsStoreSendButtonLabels() {
+            [sendBtn, sendFullBtn, sendPppoeBtn].forEach(function (btn) {
+                if (btn) {
+                    hsDeployDefaultLabels[btn.id] = btn.innerHTML;
+                }
+            });
+        }
+        hsStoreSendButtonLabels();
+
+        function hsResetSendButtons() {
+            [sendBtn, sendFullBtn, sendPppoeBtn].forEach(function (btn) {
+                if (btn && hsDeployDefaultLabels[btn.id]) {
+                    btn.disabled = false;
+                    btn.innerHTML = hsDeployDefaultLabels[btn.id];
+                }
+            });
+        }
+
+        function hsSetSendButtonsLoading(isFull, isPppoe) {
+            if (sendBtn && !isFull && !isPppoe) {
+                sendBtn.disabled = true;
+                sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi login.html…';
+            }
+            if (sendFullBtn && isFull) {
+                sendFullBtn.disabled = true;
+                sendFullBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi complet…';
+            }
+            if (sendPppoeBtn && isPppoe) {
+                sendPppoeBtn.disabled = true;
+                sendPppoeBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi PPPoE…';
+            }
+        }
+
+        function postHotspotDeployForm(extraFields, timeoutMs) {
+            var fd = new FormData(wizardForm);
+            Object.keys(extraFields || {}).forEach(function (key) {
+                fd.set(key, extraFields[key]);
+            });
+            var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            var abortTimer = abortController && timeoutMs ? setTimeout(function () {
+                try { abortController.abort(); } catch (err) {}
+            }, timeoutMs) : null;
+
+            return fetch(wizardForm.action, {
+                method: 'POST',
+                body: fd,
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                signal: abortController ? abortController.signal : undefined
+            }).then(function (r) {
+                return r.text().then(function (body) {
+                    if (!r.ok) {
+                        throw new Error('Erreur serveur (' + r.status + ').');
+                    }
+                    try {
+                        return JSON.parse(body);
+                    } catch (e) {
+                        throw new Error('Réponse serveur invalide pendant l\'envoi MikroTik.');
+                    }
+                });
+            }).finally(function () {
+                if (abortTimer) {
+                    clearTimeout(abortTimer);
+                }
+            });
+        }
+
+        function pollHotspotDeployJob(jobId, startedAt) {
+            var deadline = Date.now() + HS_DEPLOY_POLL_MAX_MS;
+            return new Promise(function (resolve, reject) {
+                function tick() {
+                    if (Date.now() > deadline) {
+                        reject(new Error('Délai dépassé (~10 min) en attendant la fin de l\'envoi MikroTik.'));
+                        return;
+                    }
+                    postHotspotDeployForm({ ajax_hotspot_deploy: 'status', job_id: jobId, send_mikrotik: '1' }, 30000)
+                        .then(function (data) {
+                            if (!data) {
+                                reject(new Error('Réponse serveur vide.'));
+                                return;
+                            }
+                            if (data.running) {
+                                var secs = Math.round((Date.now() - startedAt) / 1000);
+                                var mins = Math.floor(secs / 60);
+                                var rem = secs % 60;
+                                var elapsed = mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
+                                var statusLine = (data.message || 'Envoi MikroTik en cours…') + ' ' + elapsed;
+                                if (sendBtn && sendBtn.disabled) {
+                                    sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> ' + statusLine;
+                                }
+                                if (sendFullBtn && sendFullBtn.disabled) {
+                                    sendFullBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> ' + statusLine;
+                                }
+                                setTimeout(tick, HS_DEPLOY_POLL_INTERVAL_MS);
+                                return;
+                            }
+                            if (!data.ok) {
+                                reject(new Error(data.message || 'Envoi MikroTik échoué.'));
+                                return;
+                            }
+                            resolve(data);
+                        })
+                        .catch(reject);
+                }
+                tick();
+            });
+        }
+
+        function hsEscapeHtml(text) {
+            return String(text || '').replace(/[&<>"']/g, function (c) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+            });
+        }
+
+        function hsShowDeployResult(data, isSendFull) {
+            var icon = 'success';
+            if (data && data.notify_type === 'w') {
+                icon = 'warning';
+            } else if (data && data.notify_type === 'e') {
+                icon = 'error';
+            }
+            var serverMessage = (data && data.message) ? String(data.message) : '';
+            var title = 'Envoi réussi';
+            var html = '';
+            if (icon === 'success' && isSendFull) {
+                title = 'Déploiement complet réussi';
+                html = '<p style="margin:0 0 12px;text-align:left;">'
+                    + 'Le hotspot a été déployé sur le routeur MikroTik :</p>'
+                    + '<ul style="margin:0 0 12px 18px;text-align:left;line-height:1.5;">'
+                    + '<li>Pool, bridge et DHCP hotspot</li>'
+                    + '<li>Profils et forfaits synchronisés</li>'
+                    + '<li>login.html et walled-garden</li>'
+                    + '<li>Proxy API captif (paiements)</li>'
+                    + '</ul>'
+                    + (serverMessage
+                        ? '<p style="margin:0;text-align:left;font-size:13px;color:#64748b;">' + hsEscapeHtml(serverMessage) + '</p>'
+                        : '<p style="margin:0;text-align:left;">Vous pouvez tester le portail captif depuis un client Wi‑Fi.</p>');
+            } else if (icon === 'warning') {
+                title = 'Attention';
+            } else if (icon === 'error') {
+                title = 'Échec';
+            } else if (!isSendFull) {
+                title = 'login.html envoyé';
+            }
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: icon,
+                    title: title,
+                    text: html ? undefined : (serverMessage || 'Opération terminée.'),
+                    html: html || undefined,
+                    confirmButtonText: icon === 'success' ? 'OK, compris' : 'OK'
+                });
+            }
+        }
+
+        function runHotspotAsyncDeploy(isSendFull) {
+            hsSetSendButtonsLoading(isSendFull, false);
+            var startedAt = Date.now();
+            var extra = {
+                ajax_hotspot_deploy: '1',
+                send_mikrotik: '1',
+                send_full: isSendFull ? '1' : '',
+                sync_hotspot_plans: ''
+            };
+            postHotspotDeployForm(extra, 120000)
+                .then(function (data) {
+                    if (!data || !data.ok) {
+                        throw new Error((data && data.message) || 'Impossible de démarrer l\'envoi MikroTik.');
+                    }
+                    if (data.async && data.job_id) {
+                        return pollHotspotDeployJob(data.job_id, startedAt);
+                    }
+                    return data;
+                })
+                .then(function (data) {
+                    hsShowDeployResult(data, isSendFull);
+                })
+                .catch(function (err) {
+                    if (typeof Swal !== 'undefined') {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Envoi MikroTik',
+                            text: err && err.message ? err.message : String(err),
+                            confirmButtonText: 'OK'
+                        });
+                    }
+                })
+                .finally(function () {
+                    if (sendField) {
+                        sendField.value = '';
+                    }
+                    if (sendFullField) {
+                        sendFullField.value = '';
+                    }
+                    hsResetSendButtons();
+                });
+        }
 
         function hsRequireRouterSelected(event) {
             var routerName = (window.hsGetPersistedRouter && window.hsGetPersistedRouter()) || '';
@@ -1045,18 +1249,15 @@
                     }
                     return;
                 }
-                if (sendBtn) {
-                    sendBtn.disabled = true;
-                    sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi login.html…';
+                if (isSendPppoe) {
+                    if (sendBtn) {
+                        sendBtn.disabled = true;
+                        sendBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi PPPoE…';
+                    }
+                    return;
                 }
-                if (sendFullBtn) {
-                    sendFullBtn.disabled = true;
-                    sendFullBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi complet…';
-                }
-                if (sendPppoeBtn) {
-                    sendPppoeBtn.disabled = true;
-                    sendPppoeBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Envoi PPPoE…';
-                }
+                event.preventDefault();
+                runHotspotAsyncDeploy(isSendFull);
             });
 
             // A required field hidden in a previous wizard step blocks submission silently.

@@ -95,7 +95,7 @@ function router_normalize_ip_port($ip_address, $api_port = '8728')
 function router_scoped_query($admin)
 {
     $query = ORM::for_table('tbl_routers');
-    if (!empty($admin['id'])) {
+    if (($admin['user_type'] ?? '') !== 'SuperAdmin' && !empty($admin['id'])) {
         $query->where('admin_id', (int) $admin['id']);
     }
 
@@ -375,6 +375,12 @@ switch ($action) {
 
         run_hook('router_delete'); #HOOK
         try {
+            $routerName = trim((string) ($d->name ?? ''));
+            $ownerId = (int) ($d->admin_id ?? 0);
+            if ($routerName !== '' && $ownerId > 0) {
+                WifiZoneHotspot::detachPlansFromDeletedRouter($routerName, $ownerId);
+                WifiZoneHotspot::purgeAdminRouterReferences($routerName, $ownerId);
+            }
             $d->delete();
             if ($admin['user_type'] !== 'SuperAdmin') {
                 AdminSubscription::syncRouterCount((int) $admin['id']);
@@ -545,15 +551,23 @@ switch ($action) {
             }
             $d->save();
             if ($name != $oldname) {
-                $p = ORM::for_table('tbl_plans')->where('routers', $oldname)->find_result_set();
-                $p->set('routers', $name);
-                $p->save();
+                $ownerId = (int) ($d->admin_id ?? 0);
+                $scopedPlanUpdate = static function ($table, $oldRouter, $newRouter) use ($ownerId) {
+                    $query = ORM::for_table($table)->where('routers', $oldRouter);
+                    if ($ownerId > 0 && in_array($table, ['tbl_plans', 'tbl_pool'], true)) {
+                        $query->where('admin_id', $ownerId);
+                    }
+                    $rows = $query->find_result_set();
+                    if ($rows && count($rows) > 0) {
+                        $rows->set('routers', $newRouter);
+                        $rows->save();
+                    }
+                };
+                $scopedPlanUpdate('tbl_plans', $oldname, $name);
                 $p = ORM::for_table('tbl_payment_gateway')->where('routers', $oldname)->find_result_set();
                 $p->set('routers', $name);
                 $p->save();
-                $p = ORM::for_table('tbl_pool')->where('routers', $oldname)->find_result_set();
-                $p->set('routers', $name);
-                $p->save();
+                $scopedPlanUpdate('tbl_pool', $oldname, $name);
                 $p = ORM::for_table('tbl_transactions')->where('routers', $oldname)->find_result_set();
                 $p->set('routers', $name);
                 $p->save();
@@ -563,6 +577,7 @@ switch ($action) {
                 $p = ORM::for_table('tbl_voucher')->where('routers', $oldname)->find_result_set();
                 $p->set('routers', $name);
                 $p->save();
+                WifiZoneHotspot::clearHotspotPlanCache();
             }
             r2(getUrl('routers/list'), 's', Lang::T('Data Updated Successfully'));
         } else {

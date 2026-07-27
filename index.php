@@ -24,6 +24,7 @@ if (php_sapi_name() !== 'cli') {
         || strpos($uri, 'services/sync') !== false
         || !empty($_GET['fetch_router_setup'])
         || !empty($_POST['ajax_deploy'])
+        || !empty($_POST['ajax_hotspot_deploy'])
         || !empty($_POST['send_mikrotik'])
         || !empty($_POST['sync_hotspot_plans'])
         || ($isDev && (strpos($uri, 'settings/') !== false || strpos($uri, 'services/') !== false));

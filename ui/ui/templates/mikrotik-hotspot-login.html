@@ -131,6 +131,8 @@ body{padding-top:10px;padding-bottom:10px}
 <script>
 window.HOTSPOT_INLINE_MD5=true;
 const APP_URL = "";
+const HOTSPOT_PROXY_PORT = 8080;
+const HOTSPOT_BACKEND_URL = "";
 const HOTSPOT_ROUTER_NAME = "";
 const HOTSPOT_EMBEDDED_PLANS = [];
 const HOTSPOT_DNS_NAME = "";
@@ -144,6 +146,17 @@ function hotspotRouterName(){
   if(!n || n.indexOf('$(')===0) n=mkField('mk-identity');
   // Pas de fallback vers un autre routeur (évite les forfaits d'une autre instance).
   return n || '';
+}
+function hotspotPaymentRouterName(fallback){
+  var value=String(fallback||'').trim();
+  if(value && value.indexOf('$(')!==0 && value.toLowerCase()!=='hp') return value;
+  var cfg=String(typeof HOTSPOT_ROUTER_NAME!=='undefined'?HOTSPOT_ROUTER_NAME:'').trim();
+  if(cfg && cfg.indexOf('$(')!==0 && cfg.toLowerCase()!=='hp') return cfg;
+  if(typeof HOTSPOT_EMBEDDED_PLANS!=='undefined'&&HOTSPOT_EMBEDDED_PLANS&&HOTSPOT_EMBEDDED_PLANS.length){
+    var embeddedRouter=String(HOTSPOT_EMBEDDED_PLANS[0].routerName||HOTSPOT_EMBEDDED_PLANS[0].routername||'').trim();
+    if(embeddedRouter && embeddedRouter.indexOf('$(')!==0) return embeddedRouter;
+  }
+  return '';
 }
 let CLIENT_MAC = '';
 (function(){
@@ -370,10 +383,11 @@ async function fetchWithTimeout(url,opts,ms){
 
 async function api(route,opts){
   const bases=hotspotApiBases();
+  const timeoutMs=(route.indexOf('hotspot_pay')>=0||route.indexOf('hotspot_verify')>=0)?60000:30000;
   let last;
   for(const b of bases){
     try{
-      const r=await fetchWithTimeout(apiRouteUrl(b,route),opts,25000);
+      const r=await fetchWithTimeout(apiRouteUrl(b,route),opts,timeoutMs);
       const ct=(r.headers.get('content-type')||'').toLowerCase();
       if(r.ok&&ct.includes('json'))return r;
       if(r.ok){
@@ -392,6 +406,7 @@ async function api(route,opts){
 function hotspotApiBases(){
   const bases=[];
   const appBase=(APP_URL||'').replace(/\/$/,'');
+  if(appBase&&!bases.includes(appBase))bases.push(appBase);
   let routerHost='';
   let onCaptive=false;
   try{
@@ -403,13 +418,15 @@ function hotspotApiBases(){
   }catch(e){}
   if(/localhost|127\.0\.0\.1|:8082/i.test(window.location.origin||'')){
     const local=window.location.origin.replace(/\/$/,'');
-    if(local&&!bases.includes(local))bases.push(local);
+    if(local&&!bases.includes(local))bases.unshift(local);
   }
+  const proxyPort=(typeof HOTSPOT_PROXY_PORT!=='undefined'&&HOTSPOT_PROXY_PORT)?Number(HOTSPOT_PROXY_PORT):8080;
   if(onCaptive&&routerHost){
-    const proxy='http://'+routerHost+':8080';
-    if(!bases.includes(proxy))bases.push(proxy);
+    const proxy='http://'+routerHost+(proxyPort===80?'':(':'+proxyPort));
+    if(proxy&&!bases.includes(proxy))bases.push(proxy);
   }
-  if(appBase&&!bases.includes(appBase))bases.push(appBase);
+  const backendBase=(typeof HOTSPOT_BACKEND_URL!=='undefined'?HOTSPOT_BACKEND_URL:'').replace(/\/$/,'');
+  if(backendBase&&!bases.includes(backendBase))bases.push(backendBase);
   return [...new Set(bases.filter(Boolean))];
 }
 
@@ -437,7 +454,7 @@ function handlePlanTap(el){
       el.getAttribute('data-plan-currency')||el.dataset.planCurrency||'Fcfa',
       el.getAttribute('data-plan-validity')||el.dataset.planValidity||'',
       planid,
-      el.getAttribute('data-router-name')||el.dataset.routerName||hotspotRouterName()
+      hotspotPaymentRouterName(el.getAttribute('data-router-name')||el.dataset.routerName||'')
     );
   }catch(e){
     alert('Action forfait: '+(e&&e.message?e.message:e));
@@ -449,11 +466,11 @@ window.handlePlanTap=handlePlanTap;
 function renderPlans(plans){
   const c=document.getElementById('plansList');
   if(!plans||!plans.length){c.innerHTML='<div style="text-align:center;color:#f87171">Aucun forfait disponible</div>';c.dataset.plansReady='1';return;}
-  const rn=hotspotRouterName();
+  const rn=hotspotPaymentRouterName('');
   c.innerHTML=plans.map(p=>{
     const id=p.planid||p.planId||p.id||'';
     const name=p.planname||p.name||p.name_plan||'';
-    const router=p.routerName||p.routername||rn;
+    const router=hotspotPaymentRouterName(p.routerName||p.routername||rn);
     return`<div class="plan" role="button" tabindex="0" data-plan-name="${escHtml(name)}" data-plan-price="${escHtml(p.price||'')}" data-plan-currency="${escHtml(p.currency||'Fcfa')}" data-plan-validity="${escHtml(p.validity||'')}" data-plan-id="${escHtml(String(id))}" data-router-name="${escHtml(router)}"><div><div class="plan-name">⚡ ${escHtml(name)}</div><div class="plan-detail">⏱️ ${escHtml(p.validity||'')}</div></div><div><span class="plan-price">${escHtml(p.price||'')} ${escHtml(p.currency||'Fcfa')}</span><span class="badge">ILLIMITÉ</span></div></div>`;
   }).join('');
   c.dataset.plansReady='1';
@@ -587,8 +604,9 @@ function connecter(user,pass,nom){
 async function payer(nom,prix,currency,validite,planid,routername){
   const SwalUi=hotspotSwal();
   planid=String(planid||'').trim();
-  routername=String(routername||hotspotRouterName()||'').trim();
+  routername=hotspotPaymentRouterName(routername);
   if(!planid){SwalUi.fire('Erreur','Forfait invalide (identifiant manquant). Rechargez la page.','error');return;}
+  if(!routername){SwalUi.fire('Erreur','Routeur hotspot non configuré. Renvoyez login.html depuis Settings → Hotspot.','error');return;}
   const phoneResult=await SwalUi.fire({title:'💰 '+(nom||'')+' — '+(prix||'')+' '+(currency||'Fcfa'),text:'Numéro Mobile Money (9 chiffres obligatoires)',input:'tel',inputPlaceholder:'677123456',inputAttributes:hotspotPhoneInputAttrs(),showCancelButton:true,confirmButtonText:'Payer',cancelButtonText:'Annuler',didOpen:function(){bindHotspotPhoneField(SwalUi.getInput&&SwalUi.getInput());},inputValidator:validateHotspotPhoneLen});
   if(!phoneResult||phoneResult.isDismissed||phoneResult.isConfirmed===false)return;
   const phone=phoneResult.value;
@@ -615,7 +633,6 @@ async function payer(nom,prix,currency,validite,planid,routername){
       method:'POST',
       headers:{
         'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8',
-        'X-Requested-With':'XMLHttpRequest',
         'Accept':'application/json'
       },
       body:body

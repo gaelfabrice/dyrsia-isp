@@ -48,6 +48,7 @@ if (!function_exists('wifizone_bootstrap_long_request_limits')) {
             || str_contains($uri, 'routers/test-connection')
             || !empty($_GET['fetch_router_setup'])
             || !empty($_POST['ajax_deploy'])
+            || !empty($_POST['ajax_hotspot_deploy'])
             || !empty($_POST['send_mikrotik'])
             || !empty($_POST['sync_hotspot_plans'])
             || ($isDev && (str_contains($uri, 'settings/') || str_contains($uri, 'services/') || str_contains($uri, 'routers/')));
@@ -522,6 +523,9 @@ function wifizone_json_response_requested()
         return true;
     }
     if ($handler === 'settings' && $action === 'pppoe-setup' && !empty($_POST['ajax_deploy'])) {
+        return true;
+    }
+    if ($handler === 'settings' && $action === 'hotspot' && !empty($_POST['ajax_hotspot_deploy'])) {
         return true;
     }
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH'])

@@ -18,11 +18,7 @@ $ui->assign('_admin', $admin);
 
 function autoload_scoped_router_query($admin)
 {
-    $query = ORM::for_table('tbl_routers');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('admin_id', $admin['id']);
-    }
-    return $query;
+    return AdminScope::applyRoutersQuery(ORM::for_table('tbl_routers'), $admin);
 }
 
 function autoload_scoped_customer_query($admin)
@@ -90,10 +86,7 @@ switch ($action) {
             if ($jenis !== '') {
                 $radiusPlans->where('type', $jenis);
             }
-            if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'], true)) {
-                $rootId = !empty($admin['root']) ? (int) $admin['root'] : (int) $admin['id'];
-                $radiusPlans->where('admin_id', $rootId);
-            }
+            AdminScope::applyPlansQuery($radiusPlans, $admin);
             $showRadius = (int) $radiusPlans->count() > 0;
         }
         $ui->assign('d', $d);
@@ -130,27 +123,14 @@ switch ($action) {
     case 'plan':
         $server = _post('server');
         $jenis = _post('jenis');
-        if (in_array($admin['user_type'], array('SuperAdmin', 'Admin'))) {
-            switch ($server) {
-                case 'radius':
-                    $d = ORM::for_table('tbl_plans')->where('is_radius', 1)->where('type', $jenis)->find_many();
-                    break;
-                case '':
-                    break;
-                default:
-                    $d = ORM::for_table('tbl_plans')->where('routers', $server)->where('type', $jenis)->find_many();
-                    break;
-            }
-        } else {
-            switch ($server) {
-                case 'radius':
-                    $d = ORM::for_table('tbl_plans')->where('is_radius', 1)->where('type', $jenis)->find_many();
-                    break;
-                case '':
-                    break;
-                default:
-                    $d = ORM::for_table('tbl_plans')->where('routers', $server)->where('type', $jenis)->find_many();
-                    break;
+        $d = [];
+        if ($server !== '') {
+            $planQuery = ORM::for_table('tbl_plans')->where('type', $jenis);
+            AdminScope::applyPlansQuery($planQuery, $admin);
+            if ($server === 'radius') {
+                $d = $planQuery->where('is_radius', 1)->find_many();
+            } else {
+                $d = $planQuery->where('routers', $server)->where('is_radius', 0)->find_many();
             }
         }
         $ui->assign('d', $d);

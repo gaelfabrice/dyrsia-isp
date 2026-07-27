@@ -476,15 +476,6 @@
             }
         }
 
-        global $config;
-        $configured = trim((string) ($config['hotspot_login_router'] ?? ''));
-        if ($configured !== '') {
-            $router = ORM::for_table('tbl_routers')->where('name', $configured)->find_one();
-            if ($router) {
-                return $router;
-            }
-        }
-
         return null;
     }
 
@@ -571,8 +562,7 @@
     {
         $routerInput = trim((string) $routerInput);
         if ($routerInput === '' || preg_match('/^\$\(/', $routerInput)) {
-            global $config;
-            $routerInput = trim((string) ($config['hotspot_login_router'] ?? ''));
+            $routerInput = WifiZoneHotspot::resolvePublicRouterName('');
         }
         if ($routerInput === '') {
             return '';
@@ -718,7 +708,7 @@
         $routername = $checkrouter['name'];
 
         $cacheDir = 'system/cache/';
-        $cacheKey = "hotspot_plan_" . md5($routername);
+        $cacheKey = WifiZoneHotspot::hotspotPlanCacheKey($routername);
         $cacheFile = "$cacheDir$cacheKey.json";
         $cacheTime = 0;
 
@@ -1053,6 +1043,7 @@
     function hotspot_getHotspotPlan($planid, $routerName = '', $planName = '')
     {
         $planid = (int) $planid;
+        $rawRouter = trim((string) $routerName);
         $routerName = hotspot_normalize_router_name($routerName);
         $planName = trim((string) $planName);
         $ownerId = ($routerName !== '' && class_exists('WifiZoneHotspot'))
@@ -1070,9 +1061,29 @@
 
         if ($planid > 0) {
             $byId = $baseQuery()->where('id', $planid)->find_one();
+            if (!$byId && $ownerId <= 0) {
+                $candidate = ORM::for_table('tbl_plans')
+                    ->where('type', 'Hotspot')
+                    ->where('enabled', 1)
+                    ->where('id', $planid)
+                    ->find_one();
+                if ($candidate) {
+                    $planRouter = hotspot_normalize_router_name((string) $candidate->routers);
+                    $expectedOwner = class_exists('WifiZoneHotspot') ? WifiZoneHotspot::routerAdminId($planRouter) : 0;
+                    if ($expectedOwner <= 0 || (int) $candidate->admin_id === $expectedOwner) {
+                        $byId = $candidate;
+                    }
+                }
+            }
+
             if ($byId) {
                 $planRouter = hotspot_normalize_router_name((string) $byId->routers);
                 if ($routerName !== '' && strcasecmp($planRouter, $routerName) !== 0) {
+                    // Identité MikroTik ($(identity), ex. 92KG) ≠ nom DYRSIA (ex. rbo) : faire confiance au planid.
+                    if ($rawRouter !== '' && hotspot_resolve_router($rawRouter) === null) {
+                        return $byId;
+                    }
+
                     _log(
                         'Hotspot pay: forfait #' . $planid
                         . ' routeur=' . $planRouter
@@ -1097,6 +1108,15 @@
         }
 
         return null;
+    }
+
+    function hotspot_plan_router_name($plan)
+    {
+        if (!$plan) {
+            return '';
+        }
+
+        return hotspot_normalize_router_name((string) ($plan->routers ?? $plan['routers'] ?? ''));
     }
 
     function hotspot_resolve_payment_phone(array $data)
@@ -1225,6 +1245,7 @@
         }
         $email = hotspot_getEmailAddress($phone);
         $plan_name = $plan['name_plan'];
+        $routername = hotspot_plan_router_name($plan);
         return [
             'routername' => $routername,
             'planid' => (string) $plan['id'],
@@ -3331,7 +3352,7 @@
     {
         global $config;
         wifizone_hotspot_plugin_cors();
-        $routerName = trim((string) ($_GET['routername'] ?? ''));
+        $routerName = WifiZoneHotspot::resolvePublicRouterName(trim((string) ($_GET['routername'] ?? '')));
         if ($routerName === '') {
             try {
                 $sessionAdmin = Admin::_info();
@@ -3342,9 +3363,6 @@
                 }
             } catch (Throwable $e) {
             }
-        }
-        if ($routerName === '') {
-            $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
         }
         WifiZoneHotspot::renderCaptivePortalHtml('', '', $routerName);
     }

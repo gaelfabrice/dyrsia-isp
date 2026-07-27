@@ -13,20 +13,12 @@ $ui->assign('_admin', $admin);
 
 function services_scoped_router_query($admin)
 {
-    $query = ORM::for_table('tbl_routers');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('admin_id', $admin['id']);
-    }
-    return $query;
+    return AdminScope::applyRoutersQuery(ORM::for_table('tbl_routers'), $admin);
 }
 
 function services_scoped_plan_query($admin)
 {
-    $query = ORM::for_table('tbl_plans');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('admin_id', $admin['id']);
-    }
-    return $query;
+    return AdminScope::applyPlansQuery(ORM::for_table('tbl_plans'), $admin);
 }
 
 /** Propriétaire du forfait = propriétaire du routeur (isolation multi-comptes). */
@@ -37,8 +29,8 @@ function services_plan_owner_admin_id($admin, $routers, $isRadius = false)
         $router = ORM::for_table('tbl_routers')->where('name', $routers)->find_one();
         if ($router && !empty($router['admin_id'])) {
             $ownerId = (int) $router['admin_id'];
-            if ($admin['user_type'] != 'SuperAdmin' && $ownerId !== (int) $admin['id']) {
-                return 0; // routeur d'un autre compte
+            if ($ownerId !== (int) $admin['id']) {
+                return 0; // routeur d'un autre compte (SuperAdmin inclus : utiliser impersonation)
             }
 
             return $ownerId;
@@ -51,13 +43,15 @@ function services_plan_owner_admin_id($admin, $routers, $isRadius = false)
 function services_backfill_plan_admin_ids()
 {
     try {
+        // Uniquement les forfaits sans propriétaire — ne jamais voler un forfait d'un autre compte
+        // si le même nom de routeur est réutilisé sur un autre admin.
         ORM::raw_execute(
             "UPDATE tbl_plans p
              INNER JOIN tbl_routers r ON r.name = p.routers
              SET p.admin_id = r.admin_id
              WHERE r.admin_id IS NOT NULL
                AND r.admin_id > 0
-               AND (p.admin_id IS NULL OR p.admin_id = 0 OR p.admin_id <> r.admin_id)
+               AND (p.admin_id IS NULL OR p.admin_id = 0)
                AND p.routers IS NOT NULL
                AND p.routers <> ''
                AND LOWER(p.routers) <> 'radius'"
@@ -86,9 +80,7 @@ function services_ensure_pppoe_expire_plans($admin)
         ->where('type', 'PPPOE')
         ->where('is_radius', 0)
         ->where_not_equal('routers', '');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $routerQuery->where('admin_id', $admin['id']);
-    }
+    AdminScope::applyPlansQuery($routerQuery, $admin);
 
     $routers = [];
     foreach ($routerQuery->find_many() as $row) {
@@ -201,12 +193,8 @@ try {
             ORM::raw_execute("ALTER TABLE $table ADD COLUMN admin_id INT NULL DEFAULT NULL AFTER id");
         }
     }
-    // Aligner les forfaits sur le propriétaire du routeur (jamais globaux)
+    // Aligner les forfaits sans propriétaire sur le routeur lié (migration)
     services_backfill_plan_admin_ids();
-    ORM::raw_execute(
-        "UPDATE tbl_plans SET admin_id = " . intval($admin['id'])
-        . " WHERE admin_id IS NULL AND (routers IS NULL OR routers = '' OR LOWER(routers) = 'radius')"
-    );
 } catch (Exception $e) {
 }
 
@@ -433,7 +421,9 @@ switch ($action) {
             . "&status=" . urlencode($status)
             . "&router=" . urlencode($router);
 
-        $bws = ORM::for_table('tbl_plans')->distinct()->select("id_bw")->where('tbl_plans.type', 'Hotspot')->findArray();
+        $bwsQuery = ORM::for_table('tbl_plans')->distinct()->select("id_bw")->where('tbl_plans.type', 'Hotspot');
+        AdminScope::applyPlansQuery($bwsQuery, $admin);
+        $bws = $bwsQuery->findArray();
         $ids = array_column($bws, 'id_bw');
         if (count($ids)) {
             $ui->assign('bws', ORM::for_table('tbl_bandwidth')->select("id")->select('name_bw')->where_id_in($ids)->findArray());
@@ -460,9 +450,7 @@ switch ($action) {
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
             ->where('tbl_plans.type', 'Hotspot');
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $query->where('tbl_plans.admin_id', $admin['id']);
-        }
+        AdminScope::applyPlansQuery($query, $admin, 'tbl_plans.admin_id');
 
         if (!empty($type1)) {
             $query->where('tbl_plans.prepaid', $type1);
@@ -649,12 +637,16 @@ case 'hotspot-bulk-delete':
                 $msg .= Lang::T('All field is required') . '<br>';
             }
         }
-        // Unicité du nom par routeur : le même nom de forfait est autorisé sur des routeurs différents
+        // Unicité du nom par routeur et par compte admin
+        $ownerId = services_plan_owner_admin_id($admin, $routers, !empty($radius));
         $dup = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'Hotspot');
         if (empty($radius)) {
             $dup->where('routers', $routers);
         } else {
             $dup->where('is_radius', 1);
+        }
+        if ($ownerId > 0) {
+            $dup->where('admin_id', $ownerId);
         }
         if ($dup->find_one()) {
             $msg .= Lang::T('Name Plan Already Exist') . (empty($radius) ? ' (' . $routers . ')' : ' (Radius)') . '<br>';
@@ -664,7 +656,6 @@ case 'hotspot-bulk-delete':
 
         if ($msg == '') {
             // Create new plan
-            $ownerId = services_plan_owner_admin_id($admin, $routers, !empty($radius));
             if ($ownerId <= 0) {
                 r2(getUrl('services/add'), 'e', 'Ce routeur appartient à un autre compte.');
             }
@@ -874,7 +865,9 @@ case 'hotspot-bulk-delete':
             . "&status=" . urlencode($status)
             . "&router=" . urlencode($router);
 
-        $bws = ORM::for_table('tbl_plans')->distinct()->select("id_bw")->where('tbl_plans.type', 'PPPOE')->findArray();
+        $bwsQuery = ORM::for_table('tbl_plans')->distinct()->select("id_bw")->where('tbl_plans.type', 'PPPOE');
+        AdminScope::applyPlansQuery($bwsQuery, $admin);
+        $bws = $bwsQuery->findArray();
         $ids = array_column($bws, 'id_bw');
         if (count($ids)) {
             $ui->assign('bws', ORM::for_table('tbl_bandwidth')->select("id")->select('name_bw')->where_id_in($ids)->findArray());
@@ -884,7 +877,11 @@ case 'hotspot-bulk-delete':
         $ui->assign('type2s', ORM::for_table('tbl_plans')->getEnum("plan_type"));
         $ui->assign('type3s', ORM::for_table('tbl_plans')->getEnum("typebp"));
         $ui->assign('valids', ORM::for_table('tbl_plans')->getEnum("validity_unit"));
-        $ui->assign('routers', array_column(ORM::for_table('tbl_plans')->distinct()->select("routers")->whereNotEqual('routers', '')->findArray(), 'routers'));
+        $registeredRouters = [];
+        foreach (services_scoped_router_query($admin)->order_by_asc('name')->find_many() as $routerRow) {
+            $registeredRouters[] = (string) $routerRow->name;
+        }
+        $ui->assign('routers', $registeredRouters);
         $devices = [];
         $files = scandir($DEVICE_PATH);
         foreach ($files as $file) {
@@ -907,9 +904,7 @@ case 'hotspot-bulk-delete':
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
             ->where('tbl_plans.type', 'PPPOE');
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $query->where('tbl_plans.admin_id', $admin['id']);
-        }
+        AdminScope::applyPlansQuery($query, $admin, 'tbl_plans.admin_id');
         if (!empty($type1)) {
             $query->where('tbl_plans.prepaid', $type1);
         }
@@ -1122,12 +1117,16 @@ break;
             }
         }
 
-        // Unicité du nom par routeur : le même nom de forfait est autorisé sur des routeurs différents
+        // Unicité du nom par routeur et par compte admin
+        $ownerId = services_plan_owner_admin_id($admin, $routers, !empty($radius));
         $dup = ORM::for_table('tbl_plans')->where('name_plan', $name)->where('type', 'PPPOE');
         if (empty($radius)) {
             $dup->where('routers', $routers);
         } else {
             $dup->where('is_radius', 1);
+        }
+        if ($ownerId > 0) {
+            $dup->where('admin_id', $ownerId);
         }
         if ($dup->find_one()) {
             $msg .= Lang::T('Name Plan Already Exist') . (empty($radius) ? ' (' . $routers . ')' : ' (Radius)') . '<br>';
@@ -1488,7 +1487,9 @@ break;
             . "&status=" . urlencode($status)
             . "&router=" . urlencode($router);
 
-        $bws = ORM::for_table('tbl_plans')->distinct()->select("id_bw")->where('tbl_plans.type', 'VPN')->findArray();
+        $bwsQuery = ORM::for_table('tbl_plans')->distinct()->select("id_bw")->where('tbl_plans.type', 'VPN');
+        AdminScope::applyPlansQuery($bwsQuery, $admin);
+        $bws = $bwsQuery->findArray();
         $ids = array_column($bws, 'id_bw');
         if (count($ids)) {
             $ui->assign('bws', ORM::for_table('tbl_bandwidth')->select("id")->select('name_bw')->where_id_in($ids)->findArray());
@@ -1498,7 +1499,11 @@ break;
         $ui->assign('type2s', ORM::for_table('tbl_plans')->getEnum("plan_type"));
         $ui->assign('type3s', ORM::for_table('tbl_plans')->getEnum("typebp"));
         $ui->assign('valids', ORM::for_table('tbl_plans')->getEnum("validity_unit"));
-        $ui->assign('routers', array_column(ORM::for_table('tbl_plans')->distinct()->select("routers")->whereNotEqual('routers', '')->findArray(), 'routers'));
+        $registeredRouters = [];
+        foreach (services_scoped_router_query($admin)->order_by_asc('name')->find_many() as $routerRow) {
+            $registeredRouters[] = (string) $routerRow->name;
+        }
+        $ui->assign('routers', $registeredRouters);
         $devices = [];
         $files = scandir($DEVICE_PATH);
         foreach ($files as $file) {
@@ -1511,6 +1516,7 @@ break;
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
             ->where('tbl_plans.type', 'VPN');
+        AdminScope::applyPlansQuery($query, $admin, 'tbl_plans.admin_id');
         if (!empty($type1)) {
             $query->where('tbl_plans.prepaid', $type1);
         }

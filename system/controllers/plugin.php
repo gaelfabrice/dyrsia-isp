@@ -62,11 +62,24 @@ if ($pluginFn === 'hotspot_log' && !function_exists('hotspot_log')) {
 if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')) {
     function hotspot_login_file()
     {
-        global $UPLOAD_PATH;
-        $loginDir = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot';
-        $file = $loginDir . DIRECTORY_SEPARATOR . 'login.html';
+        global $UPLOAD_PATH, $config;
+        $routerName = WifiZoneHotspot::resolvePublicRouterName('');
+        if ($routerName === '') {
+            $message = 'Paramètre router requis pour servir login.html.';
+            if (!headers_sent()) {
+                header('HTTP/1.1 400 Bad Request');
+                header('Content-Type: text/plain; charset=utf-8');
+                header('Content-Length: ' . strlen($message));
+            }
+            echo $message;
+            exit;
+        }
+        WifiZoneHotspot::loadHotspotConfigForRouter($config, $routerName);
+        $ownerId = WifiZoneHotspot::routerAdminId($routerName);
+        $file = WifiZoneHotspot::hotspotLoginHtmlPath($ownerId, $UPLOAD_PATH);
         if (!is_file($file) || !is_readable($file)) {
             $templateFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'mikrotik-hotspot-login.html';
+            $loginDir = WifiZoneHotspot::hotspotLoginHtmlDir($ownerId, $UPLOAD_PATH);
             if (is_file($templateFile)) {
                 if (!is_dir($loginDir)) {
                     @mkdir($loginDir, 0755, true);
@@ -75,7 +88,7 @@ if ($pluginFn === 'hotspot_login_file' && !function_exists('hotspot_login_file')
             }
         }
         if (!is_file($file) || !is_readable($file)) {
-            $message = 'login.html introuvable — enregistrez Paramètres Hotspot pour générer la page.';
+            $message = 'login.html introuvable pour le routeur « ' . $routerName . ' » — enregistrez Paramètres Hotspot pour générer la page.';
             if (!headers_sent()) {
                 header('HTTP/1.1 404 Not Found');
                 header('Content-Type: text/plain; charset=utf-8');

@@ -412,18 +412,14 @@ switch ($action) {
         }
         $ui->assign('xheader', $leafletpickerHeader);
         $routersQuery = ORM::for_table('tbl_routers')->where('enabled', '1')->order_by_asc('name');
-        if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
-            $routersQuery->where('admin_id', (int) ($admin['id'] ?? 0));
-        }
+        AdminScope::applyRoutersQuery($routersQuery, $admin);
         $ui->assign('r', $routersQuery->find_many());
         $plansQuery = ORM::for_table('tbl_plans')
             ->where('enabled', 1)
             ->where_in('type', ['Hotspot', 'PPPOE', 'VPN'])
             ->order_by_asc('type')
             ->order_by_asc('name_plan');
-        if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
-            $plansQuery->where('admin_id', (int) ($admin['id'] ?? 0));
-        }
+        AdminScope::applyPlansQuery($plansQuery, $admin);
         $ui->assign('plans', $plansQuery->find_many());
         run_hook('view_add_customer'); #HOOK
         $ui->assign('csrf_token',  Csrf::generateAndStoreToken());

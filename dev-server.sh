@@ -10,7 +10,7 @@ PIDFILE=".dev-server.pid"
 # Multi-process via PHP_CLI_SERVER_WORKERS (ex. 4). Sur certains macOS/PHP,
 # les workers plantent ("Failed to poll event") — défaut stable = 1.
 # Pour forcer le multi : PHP_CLI_SERVER_WORKERS=4 ./dev-server.sh
-WORKERS="${PHP_CLI_SERVER_WORKERS:-1}"
+WORKERS="${PHP_CLI_SERVER_WORKERS:-4}"
 
 stop_port() {
   pkill -f "php .* -S localhost:${PORT}" 2>/dev/null || true

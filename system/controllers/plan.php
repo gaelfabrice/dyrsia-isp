@@ -16,20 +16,12 @@ $appUrl = APP_URL;
 
 function plan_scoped_router_query($admin)
 {
-    $query = ORM::for_table('tbl_routers');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('admin_id', $admin['id']);
-    }
-    return $query;
+    return AdminScope::applyRoutersQuery(ORM::for_table('tbl_routers'), $admin);
 }
 
 function plan_scoped_plan_query($admin)
 {
-    $query = ORM::for_table('tbl_plans');
-    if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('admin_id', $admin['id']);
-    }
-    return $query;
+    return AdminScope::applyPlansQuery(ORM::for_table('tbl_plans'), $admin);
 }
 
 function plan_list_apply_filters($query, $admin, $search, $router, $plan, $type, $status = null)

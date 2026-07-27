@@ -28,7 +28,7 @@ class voucher_stocks
     public function getWidget()
     {
         global $CACHE_PATH,$ui,$admin;
-        $cacheKey = ($admin && $admin['user_type'] != 'SuperAdmin') ? ('Admin' . (int) $admin['id']) : 'SuperAdmin';
+        $cacheKey = ($admin && !empty($admin['id'])) ? ('Admin' . (int) $admin['id']) : 'Guest';
         $cacheStocksfile = $CACHE_PATH . File::pathFixer('/VoucherStocks_' . $cacheKey . '.temp');
         $cachePlanfile = $CACHE_PATH . File::pathFixer('/VoucherPlans_' . $cacheKey . '.temp');
         //Cache for 5 minutes
@@ -38,9 +38,7 @@ class voucher_stocks
         } else {
             // Count stock
             $plansQuery = ORM::for_table('tbl_plans')->select('id')->select('name_plan');
-            if ($admin && $admin['user_type'] != 'SuperAdmin') {
-                $plansQuery->where('admin_id', !empty($admin['root']) ? (int) $admin['root'] : (int) $admin['id']);
-            }
+            AdminScope::applyPlansQuery($plansQuery, $admin);
             $tmp = $plansQuery->find_many();
             $plans = array();
             $stocks = array("used" => 0, "unused" => 0);

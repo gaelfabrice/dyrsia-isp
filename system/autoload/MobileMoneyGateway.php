@@ -736,9 +736,22 @@ class MobileMoneyGateway
             return $html;
         }
 
+        public static function isModernSelfContainedHotspotLogin($html)
+        {
+            return strpos($html, 'window.HOTSPOT_INLINE_MD5') !== false
+                && strpos($html, 'function hotspotModalFire') !== false
+                && strpos($html, 'function handlePlanTap') !== false
+                && strpos($html, 'id="plansList"') !== false;
+        }
+
         public static function patchModernHotspotChapLogin($html)
         {
             if (strpos($html, 'window.HOTSPOT_INLINE_MD5') === false) {
+                return $html;
+            }
+
+            // Template moderne (modal inline + handlePlanTap) : ne pas re-patcher (corrompt le JS).
+            if (self::isModernSelfContainedHotspotLogin($html)) {
                 return $html;
             }
 
@@ -851,6 +864,10 @@ class MobileMoneyGateway
 
         public static function repairHotspotLoginHtml($html)
         {
+            if (self::isModernSelfContainedHotspotLogin($html)) {
+                return self::stripHotspotLightTheme($html);
+            }
+
             if (strpos($html, '/* ===== CONNEXION ===== */') === false && strpos($html, 'function showVoucherError') !== false) {
                 $html = preg_replace(
                     '/(?=function showVoucherError\s*\()/',
@@ -1043,25 +1060,44 @@ class MobileMoneyGateway
             return $html;
         }
 
-        public static function syncHotspotCaptivePaymentUi()
+        public static function syncHotspotCaptivePaymentUi($adminId = null)
         {
             global $UPLOAD_PATH;
             if (empty($UPLOAD_PATH)) {
                 return false;
             }
-            $loginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
-            if (!is_file($loginFile)) {
-                return false;
-            }
-            $html = file_get_contents($loginFile);
-            if ($html === false) {
-                return false;
-            }
-            $patched = self::repairHotspotLoginHtml($html);
-            if ($patched === $html) {
-                return false;
+
+            $syncFile = static function ($loginFile) {
+                if (!is_file($loginFile)) {
+                    return false;
+                }
+                $html = file_get_contents($loginFile);
+                if ($html === false) {
+                    return false;
+                }
+                $patched = self::repairHotspotLoginHtml($html);
+                if ($patched === $html) {
+                    return false;
+                }
+
+                return file_put_contents($loginFile, $patched) !== false;
+            };
+
+            if ($adminId !== null && (int) $adminId > 0) {
+                return $syncFile(WifiZoneHotspot::hotspotLoginHtmlPath((int) $adminId, $UPLOAD_PATH));
             }
 
-            return file_put_contents($loginFile, $patched) !== false;
+            $synced = false;
+            foreach (glob($UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'admin_*' . DIRECTORY_SEPARATOR . 'login.html') ?: [] as $loginFile) {
+                if ($syncFile($loginFile)) {
+                    $synced = true;
+                }
+            }
+            $legacyFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+            if ($syncFile($legacyFile)) {
+                $synced = true;
+            }
+
+            return $synced;
         }
     }

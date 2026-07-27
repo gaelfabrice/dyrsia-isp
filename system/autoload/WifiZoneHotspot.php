@@ -161,16 +161,272 @@ class WifiZoneHotspot
     }
 
     /**
+     * @return array<int, string>
+     */
+    public static function hotspotSettingKeys()
+    {
+        return [
+            'hotspot_page_title',
+            'hotspot_page_tagline',
+            'hotspot_api_url',
+            'hotspot_login_color',
+            'hotspot_card_shape',
+            'hotspot_card_display',
+            'hotspot_plan_order',
+            'hotspot_banner_text',
+            'hotspot_help_title',
+            'hotspot_help_text',
+            'hotspot_contact',
+            'hotspot_contact_phone',
+            'hotspot_help_whatsapp',
+            'hotspot_help_whatsapp_label',
+            'hotspot_chat_service',
+            'hotspot_name',
+            'hotspot_interface',
+            'hotspot_profile',
+            'hotspot_dns_name',
+            'hotspot_local_address',
+            'hotspot_masquerade',
+            'hotspot_address_pool',
+            'hotspot_dns_server',
+            'hotspot_pool_mode',
+            'hotspot_pool_name',
+            'hotspot_pool_range',
+            'hotspot_login_methods',
+            'hotspot_cookie_lifetime',
+            'hotspot_idle_timeout',
+            'hotspot_keepalive_timeout',
+            'hotspot_address_per_mac',
+            'hotspot_smtp_server',
+            'hotspot_use_radius',
+            'hotspot_radius_secret',
+            'hotspot_bridge_ports',
+            'lan_hotspot_access_ports',
+            'lan_management_bridge_name',
+            'lan_management_interface',
+            'lan_management_address',
+            'lan_wan_interface',
+        ];
+    }
+
+    public static function hotspotConfigStorageKey($settingKey, $adminId)
+    {
+        return trim((string) $settingKey) . '_admin_' . max(0, (int) $adminId);
+    }
+
+    /**
+     * Propriétaire des réglages hotspot (SuperAdmin édite le compte du routeur).
+     */
+    public static function resolveHotspotAdminId($admin, $routerName = '')
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '') {
+            $ownerId = self::routerAdminId($routerName);
+            if ($ownerId > 0) {
+                return $ownerId;
+            }
+        }
+
+        return max(0, (int) (is_array($admin) ? ($admin['id'] ?? 0) : 0));
+    }
+
+    public static function clearHotspotConfigInMemory(&$config)
+    {
+        if (!is_array($config)) {
+            return;
+        }
+        foreach (self::hotspotSettingKeys() as $key) {
+            unset($config[$key]);
+        }
+    }
+
+    /**
+     * Supprime la config hotspot copiée par erreur depuis les clés globales (migration bug multi-tenant).
+     */
+    public static function purgeMisassignedHotspotConfig($adminId)
+    {
+        $adminId = (int) $adminId;
+        if ($adminId <= 0) {
+            return 0;
+        }
+
+        $ownsRouter = (bool) ORM::for_table('tbl_routers')->where('admin_id', $adminId)->find_one();
+        if ($ownsRouter) {
+            return 0;
+        }
+
+        $removed = 0;
+        foreach (self::hotspotSettingKeys() as $key) {
+            $storageKey = self::hotspotConfigStorageKey($key, $adminId);
+            $scoped = ORM::for_table('tbl_appconfig')->where('setting', $storageKey)->find_one();
+            if (!$scoped) {
+                continue;
+            }
+            $legacy = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+            if (!$legacy) {
+                continue;
+            }
+            if (trim((string) $legacy->value) !== trim((string) $scoped->value)) {
+                continue;
+            }
+            $scoped->delete();
+            $removed++;
+        }
+
+        return $removed;
+    }
+
+    /**
+     * Config hotspot de l'admin connecté (assistant, aperçu, enregistrement).
+     */
+    public static function loadHotspotConfigForSessionAdmin($admin, &$config, $routerName = '')
+    {
+        $adminId = (int) (is_array($admin) ? ($admin['id'] ?? 0) : 0);
+        self::clearHotspotConfigInMemory($config);
+        if ($adminId > 0) {
+            self::purgeMisassignedHotspotConfig($adminId);
+            self::loadHotspotConfigForAdmin($adminId, $config, $routerName);
+        }
+    }
+
+    /**
+     * Config hotspot du propriétaire du routeur (déploiement MikroTik / portail public).
+     */
+    public static function loadHotspotConfigForDeploy(&$config, $routerName)
+    {
+        self::clearHotspotConfigInMemory($config);
+        self::loadHotspotConfigForRouter($config, $routerName);
+    }
+
+    public static function saveHotspotSettingForAdmin($adminId, $settingKey, $value)
+    {
+        $adminId = (int) $adminId;
+        $settingKey = trim((string) $settingKey);
+        if ($adminId <= 0 || $settingKey === '' || $settingKey === 'hotspot_login_router') {
+            return;
+        }
+        $storageKey = self::hotspotConfigStorageKey($settingKey, $adminId);
+        $row = ORM::for_table('tbl_appconfig')->where('setting', $storageKey)->find_one();
+        if ($row) {
+            $row->value = $value;
+            $row->save();
+        } else {
+            $row = ORM::for_table('tbl_appconfig')->create();
+            $row->setting = $storageKey;
+            $row->value = $value;
+            $row->save();
+        }
+    }
+
+    /**
+     * Charge la config hotspot isolée par admin (clés scopées uniquement).
+     */
+    public static function loadHotspotConfigForAdmin($adminId, &$config, $routerName = '')
+    {
+        $adminId = (int) $adminId;
+        if ($adminId <= 0) {
+            return;
+        }
+        if (!is_array($config)) {
+            $config = [];
+        }
+
+        $legacyOwnerId = 0;
+        $legacyRouterRow = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_login_router')->find_one();
+        $legacyRouterName = $legacyRouterRow ? trim((string) $legacyRouterRow->value) : '';
+        if ($legacyRouterName !== '') {
+            $legacyOwnerId = self::routerAdminId($legacyRouterName);
+        }
+
+        foreach (self::hotspotSettingKeys() as $key) {
+            $storageKey = self::hotspotConfigStorageKey($key, $adminId);
+            $row = ORM::for_table('tbl_appconfig')->where('setting', $storageKey)->find_one();
+            if ($row) {
+                $config[$key] = $row->value;
+                continue;
+            }
+            // Migration legacy : uniquement pour le propriétaire du routeur global historique.
+            if ($legacyOwnerId !== $adminId) {
+                continue;
+            }
+            $legacy = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+            $legacyValue = $legacy ? trim((string) $legacy->value) : '';
+            if ($legacyValue !== '') {
+                $config[$key] = $legacyValue;
+                self::saveHotspotSettingForAdmin($adminId, $key, $legacyValue);
+            }
+        }
+    }
+
+    public static function loadHotspotConfigForRouter(&$config, $routerName)
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName === '') {
+            return;
+        }
+        $ownerId = self::routerAdminId($routerName);
+        if ($ownerId <= 0) {
+            return;
+        }
+        self::loadHotspotConfigForAdmin($ownerId, $config, $routerName);
+        $config['hotspot_login_router'] = $routerName;
+    }
+
+    public static function hotspotLoginHtmlPath($adminId, $uploadPath = null)
+    {
+        global $UPLOAD_PATH;
+        $base = $uploadPath ?? $UPLOAD_PATH ?? '';
+        $dir = rtrim((string) $base, '/\\') . DIRECTORY_SEPARATOR . 'mikrotik_hotspot'
+            . DIRECTORY_SEPARATOR . 'admin_' . max(0, (int) $adminId);
+
+        return $dir . DIRECTORY_SEPARATOR . 'login.html';
+    }
+
+    public static function hotspotLoginHtmlDir($adminId, $uploadPath = null)
+    {
+        return dirname(self::hotspotLoginHtmlPath($adminId, $uploadPath));
+    }
+
+    /**
+     * Routeur obligatoire sur les endpoints publics (pas de fallback global).
+     */
+    public static function resolvePublicRouterName($routerInput = '')
+    {
+        $routerInput = trim((string) $routerInput);
+        if ($routerInput === '' || preg_match('/^\$\(/', $routerInput)) {
+            $routerInput = trim((string) (
+                $_GET['router'] ?? $_GET['routername'] ?? $_POST['router'] ?? $_POST['routername'] ?? ''
+            ));
+        }
+        if ($routerInput === '') {
+            return '';
+        }
+
+        $router = ORM::for_table('tbl_routers')->where('name', $routerInput)->find_one();
+        if (!$router) {
+            $router = ORM::for_table('tbl_routers')->where('description', $routerInput)->find_one();
+        }
+        if (!$router) {
+            $routerIp = explode(':', $routerInput)[0];
+            if ($routerIp !== '') {
+                $router = ORM::for_table('tbl_routers')->where_like('ip_address', $routerIp . '%')->find_one();
+            }
+        }
+
+        return $router ? trim((string) $router->name) : '';
+    }
+
+    /**
      * @return array<string, true> Noms de routeurs visibles pour cet admin
      */
     public static function validRouterNamesForAdmin($admin)
     {
         $names = [];
-        if (!is_array($admin) || empty($admin['id'])) {
+        if (!is_array($admin)) {
             return $names;
         }
         $query = ORM::for_table('tbl_routers');
-        if (!empty($admin['id'])) {
+        if (($admin['user_type'] ?? '') !== 'SuperAdmin' && !empty($admin['id'])) {
             $query->where('admin_id', (int) $admin['id']);
         }
         foreach ($query->find_many() as $router) {
@@ -219,19 +475,26 @@ class WifiZoneHotspot
         $saved = $row ? trim((string) $row->value) : '';
 
         if ($saved !== '' && isset($valid[$saved])) {
+            $routerOwnerId = self::routerAdminId($saved);
+            if (($admin['user_type'] ?? '') !== 'SuperAdmin' && $routerOwnerId > 0 && $routerOwnerId !== $adminId) {
+                self::saveLoginRouterForAdmin($adminId, '');
+                $saved = '';
+            }
+        }
+        if ($saved !== '' && isset($valid[$saved])) {
             if (is_array($config)) {
                 $config['hotspot_login_router'] = $saved;
             }
             return $saved;
         }
 
-        // Migration ponctuelle : clé globale legacy uniquement si le routeur appartient à cet admin.
-        $legacy = trim((string) (is_array($config) ? ($config['hotspot_login_router'] ?? '') : ''));
-        if ($legacy === '' && is_array($config)) {
-            $legacyRow = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_login_router')->find_one();
-            $legacy = $legacyRow ? trim((string) $legacyRow->value) : '';
+        // Migration legacy : routeur global uniquement si ce compte en est propriétaire.
+        $legacy = '';
+        $legacyRow = ORM::for_table('tbl_appconfig')->where('setting', 'hotspot_login_router')->find_one();
+        if ($legacyRow) {
+            $legacy = trim((string) $legacyRow->value);
         }
-        if ($legacy !== '' && isset($valid[$legacy])) {
+        if ($legacy !== '' && isset($valid[$legacy]) && self::routerAdminId($legacy) === $adminId) {
             self::saveLoginRouterForAdmin($adminId, $legacy);
             if (is_array($config)) {
                 $config['hotspot_login_router'] = $legacy;
@@ -248,6 +511,86 @@ class WifiZoneHotspot
         }
 
         return '';
+    }
+
+    public static function detachPlansFromDeletedRouter($routerName, $adminId)
+    {
+        $routerName = trim((string) $routerName);
+        $adminId = (int) $adminId;
+        if ($routerName === '' || $adminId <= 0) {
+            return 0;
+        }
+
+        $updated = 0;
+        foreach (ORM::for_table('tbl_plans')
+            ->where('admin_id', $adminId)
+            ->where('routers', $routerName)
+            ->find_many() as $plan) {
+            $plan->routers = '';
+            $plan->save();
+            $updated++;
+        }
+
+        if ($updated > 0) {
+            self::clearHotspotPlanCache();
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Nettoie les références hotspot quand un routeur est supprimé ou remplacé.
+     */
+    public static function purgeAdminRouterReferences($routerName, $adminId)
+    {
+        $routerName = trim((string) $routerName);
+        $adminId = (int) $adminId;
+        if ($routerName === '' || $adminId <= 0) {
+            return;
+        }
+
+        $key = self::loginRouterConfigKey($adminId);
+        $row = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+        if ($row && trim((string) $row->value) === $routerName) {
+            self::saveLoginRouterForAdmin($adminId, '');
+        }
+    }
+
+    /**
+     * Réinitialise la config matérielle hotspot après changement de routeur
+     * (évite de réutiliser interface/nom d'un ancien MikroTik).
+     */
+    public static function resetHotspotDeployDefaultsForAdmin($adminId)
+    {
+        $adminId = (int) $adminId;
+        if ($adminId <= 0) {
+            return;
+        }
+
+        $defaults = [
+            'hotspot_interface' => 'bridge-hotspot',
+            'hotspot_name' => '',
+            'hotspot_pool_mode' => 'existing',
+        ];
+        foreach ($defaults as $setting => $value) {
+            self::saveHotspotSettingForAdmin($adminId, $setting, $value);
+        }
+        self::clearHotspotPlanCache();
+    }
+
+    public static function clearHotspotPlanCache()
+    {
+        foreach (glob('system/cache/hotspot_plan_*.json') ?: [] as $cacheFile) {
+            @unlink($cacheFile);
+        }
+    }
+
+    public static function hotspotPlanCacheKey($routerName)
+    {
+        $routerName = trim((string) $routerName);
+        $ownerId = self::routerAdminId($routerName);
+
+        return 'hotspot_plan_' . md5($routerName . '|' . $ownerId);
     }
 
     public static function routerAdminId($routerName)
@@ -341,20 +684,32 @@ class WifiZoneHotspot
     {
         global $config, $root_path;
 
-        $routerName = trim((string) $routerName);
+        $routerName = self::resolvePublicRouterName($routerName);
         if ($routerName === '') {
-            $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+            http_response_code(400);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'Paramètre router/routername requis.';
+            exit;
         }
+
+        self::loadHotspotConfigForRouter($config, $routerName);
+        $ownerId = self::routerAdminId($routerName);
 
         $gatewayIp = trim((string) ($config['hotspot_local_address'] ?? '10.10.0.1'));
         if (strpos($gatewayIp, '/') !== false) {
             $gatewayIp = (string) explode('/', $gatewayIp)[0];
         }
-        $captiveApiUrl = 'http://' . $gatewayIp . ':8080';
+        $backendApiUrl = Mikrotik::resolveHotspotBackendApiUrl($config);
+        $captiveApiUrl = Mikrotik::resolveHotspotCaptiveProxyUrl($gatewayIp);
+        if ($captiveApiUrl === '') {
+            $captiveApiUrl = rtrim($backendApiUrl, '/');
+        }
 
         $templateFile = $root_path . 'ui/ui/templates/mikrotik-hotspot-login.html';
-        $uploadFile = $root_path . 'system/uploads/mikrotik_hotspot/login.html';
-        $htmlFile = is_file($templateFile) ? $templateFile : $uploadFile;
+        $uploadFile = $ownerId > 0
+            ? self::hotspotLoginHtmlPath($ownerId, $root_path . 'system/uploads')
+            : $root_path . 'system/uploads/mikrotik_hotspot/login.html';
+        $htmlFile = is_file($uploadFile) ? $uploadFile : (is_file($templateFile) ? $templateFile : $uploadFile);
         if (!is_file($htmlFile)) {
             return null;
         }
@@ -385,7 +740,12 @@ class WifiZoneHotspot
         ];
         $html = str_replace(array_keys($replacements), array_values($replacements), $html);
 
-        $html = Mikrotik::patchHotspotLoginCaptiveApi($html, $captiveApiUrl, trim((string) ($config['hotspot_dns_name'] ?? '')));
+        $html = Mikrotik::patchHotspotLoginCaptiveApi(
+            $html,
+            $captiveApiUrl,
+            trim((string) ($config['hotspot_dns_name'] ?? '')),
+            $backendApiUrl
+        );
 
         if ($routerName !== '') {
             $routerJs = 'const HOTSPOT_ROUTER_NAME = ' . json_encode($routerName) . ';';
@@ -455,7 +815,12 @@ class WifiZoneHotspot
         global $config;
         $username = trim((string) ($_POST['username'] ?? ''));
         $password = trim((string) ($_POST['password'] ?? ''));
-        $routerName = trim((string) ($config['hotspot_login_router'] ?? ''));
+        $routerName = self::resolvePublicRouterName(
+            trim((string) ($_POST['router'] ?? $_POST['routername'] ?? ''))
+        );
+        if ($routerName !== '') {
+            self::loadHotspotConfigForRouter($config, $routerName);
+        }
 
         $clientIp = trim((string) ($_POST['ip'] ?? ''));
         if ($clientIp === '' || !filter_var($clientIp, FILTER_VALIDATE_IP)) {

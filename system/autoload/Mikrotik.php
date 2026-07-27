@@ -1642,6 +1642,13 @@ class Mikrotik
         }
     }
 
+    private static function mikrotikRethrowIfRetriable(Throwable $e)
+    {
+        if (self::mikrotikClientErrorIsRetriable($e->getMessage())) {
+            throw $e;
+        }
+    }
+
     private static function runMikrotikClientStep(&$client, $routerRow, $timeout, callable $step)
     {
         try {
@@ -2692,8 +2699,11 @@ class Mikrotik
             ->where('enabled', 1)
             ->where('routers', $routerName)
             ->where('is_radius', 0);
-        if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
-            $plansQuery->where('admin_id', (int) ($admin['id'] ?? 0));
+        $ownerId = WifiZoneHotspot::routerAdminId($routerName);
+        if ($ownerId > 0) {
+            $plansQuery->where('admin_id', $ownerId);
+        } elseif (is_array($admin) && !empty($admin['id'])) {
+            $plansQuery->where('admin_id', (int) $admin['id']);
         }
 
         $expectedNames = [];
@@ -3010,8 +3020,11 @@ class Mikrotik
             ->where('enabled', 1)
             ->where('routers', $routerName)
             ->where('is_radius', 0);
-        if (is_array($admin) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
-            $plansQuery->where_raw('(admin_id = ? OR name_plan = ?)', [(int) ($admin['id'] ?? 0), 'EXPIRE']);
+        $ownerId = WifiZoneHotspot::routerAdminId($routerName);
+        if ($ownerId > 0) {
+            $plansQuery->where_raw('(admin_id = ? OR name_plan = ?)', [$ownerId, 'EXPIRE']);
+        } elseif (is_array($admin) && !empty($admin['id'])) {
+            $plansQuery->where_raw('(admin_id = ? OR name_plan = ?)', [(int) $admin['id'], 'EXPIRE']);
         }
 
         $expectedNames = ['default', 'EXPIRE'];
@@ -5368,11 +5381,13 @@ class Mikrotik
     /**
      * @return array<int, string>
      */
-    public static function buildHotspotLoginFetchUrls($apiUrl, $appUrl, $fetchTs = null, array $preferredBases = [], $includePublicDeploy = false)
+    public static function buildHotspotLoginFetchUrls($apiUrl, $appUrl, $fetchTs = null, array $preferredBases = [], $includePublicDeploy = false, $routerName = '')
     {
         $fetchTs = $fetchTs ?? time();
         $apiUrl = rtrim(trim((string) $apiUrl), '/');
         $appUrl = rtrim(trim((string) $appUrl), '/');
+        $routerName = trim((string) $routerName);
+        $routerParam = $routerName !== '' ? '&router=' . rawurlencode($routerName) : '';
 
         // Priorité : API configurée (VPN 10.0.0.x) → bases préférées → APP_URL.
         // Ne jamais placer wifizones.org en premier : beaucoup de routeurs n'ont pas de DNS public.
@@ -5405,10 +5420,18 @@ class Mikrotik
             return [];
         }
 
+        $uploadPath = '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs;
+        if ($routerName !== '') {
+            $ownerId = WifiZoneHotspot::routerAdminId($routerName);
+            if ($ownerId > 0) {
+                $uploadPath = '/system/uploads/mikrotik_hotspot/admin_' . $ownerId . '/login.html?ts=' . $fetchTs;
+            }
+        }
+
         $paths = [
-            '/system/uploads/mikrotik_hotspot/login.html?ts=' . $fetchTs,
-            '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs,
-            '/hotspot_login.html?ts=' . $fetchTs,
+            $uploadPath,
+            '/index.php?_route=plugin/hotspot_login_file&ts=' . $fetchTs . $routerParam,
+            '/hotspot_login.html?ts=' . $fetchTs . $routerParam,
         ];
 
         $urls = [];
@@ -5422,6 +5445,82 @@ class Mikrotik
         }
 
         return array_values(array_unique($urls));
+    }
+
+    /**
+     * APP_URL utilisable (corrige localhost. / localhost sans port en dev).
+     */
+    public static function normalizeLocalAppUrl($url = null)
+    {
+        $url = rtrim(trim((string) ($url ?? (defined('APP_URL') ? APP_URL : ''))), '/');
+        if ($url === '') {
+            return 'http://127.0.0.1:8082';
+        }
+        if (preg_match('#^https?://localhost\.?$#i', $url) || str_ends_with($url, '://localhost.')) {
+            return 'http://127.0.0.1:8082';
+        }
+        $parts = parse_url($url);
+        if (!$parts || empty($parts['host'])) {
+            return $url;
+        }
+        $host = strtolower((string) $parts['host']);
+        if (in_array($host, ['localhost', '127.0.0.1', '::1'], true) && empty($parts['port'])) {
+            $scheme = $parts['scheme'] ?? 'http';
+
+            return $scheme . '://127.0.0.1:8082';
+        }
+
+        return $url;
+    }
+
+    /**
+     * URL API pour login.html et paiements captifs.
+     * - Dev (localhost / APP_STAGE=Dev) → APP_URL (ex. http://127.0.0.1:8082)
+     * - Production → hotspot_api_url en base (ex. https://wifizones.org)
+     */
+    public static function resolveHotspotCaptiveApiUrl(array $config, bool $previewMode = false)
+    {
+        $configured = rtrim(trim((string) ($config['hotspot_api_url'] ?? '')), '/');
+        $appUrl = self::normalizeLocalAppUrl();
+
+        if ($previewMode || self::isLocalHotspotDevEnvironment($configured !== '' ? $configured : $appUrl)) {
+            return self::normalizeHotspotBackendApiUrl($appUrl);
+        }
+
+        if ($configured !== '') {
+            return self::normalizeHotspotBackendApiUrl($configured);
+        }
+
+        return self::normalizeHotspotBackendApiUrl($appUrl !== '' ? $appUrl : 'https://wifizones.org');
+    }
+
+    /**
+     * URL du serveur PHP vue depuis le MikroTik (NAT proxy, fetch login.html).
+     * Dev local : IP VPN (ex. http://10.0.0.2:8082), pas localhost ni wifizones.org.
+     */
+    public static function resolveHotspotBackendApiUrl(array $config)
+    {
+        $configured = rtrim(trim((string) ($config['hotspot_api_url'] ?? '')), '/');
+        $appUrl = self::normalizeLocalAppUrl();
+
+        if (!self::isLocalHotspotDevEnvironment($configured !== '' ? $configured : $appUrl)) {
+            return self::resolveHotspotCaptiveApiUrl($config, false);
+        }
+
+        if ($configured !== '') {
+            $host = strtolower((string) parse_url($configured, PHP_URL_HOST));
+            // En dev : ignorer wifizones.org en base — utiliser l'IP VPN du Mac (10.0.0.2:8082).
+            $isProdHost = ($host === 'wifizones.org' || str_ends_with($host, '.wifizones.org'));
+            if ($host !== ''
+                && !in_array($host, ['localhost', '127.0.0.1', '::1'], true)
+                && !$isProdHost) {
+                return self::normalizeHotspotBackendApiUrl($configured);
+            }
+        }
+
+        $vpnUrl = trim((string) (getenv('HOTSPOT_VPN_API_URL') ?: 'http://10.0.0.2:8082'));
+
+        return self::normalizeHotspotBackendApiUrl($vpnUrl);
     }
 
     /**
@@ -5814,6 +5913,7 @@ class Mikrotik
         $proxyComment = 'WifiZone hotspot API proxy';
         $snatComment = 'WifiZone hotspot API SNAT';
         $inputComment = 'WifiZone hotspot API input';
+        $forwardComment = 'WifiZone hotspot API forward';
         $errors = [];
 
         try {
@@ -5845,6 +5945,7 @@ class Mikrotik
             self::removeFirewallRulesByComment($client, $proxyComment);
             self::removeFirewallRulesByComment($client, $snatComment);
             self::removeFirewallRulesByComment($client, $inputComment);
+            self::removeFirewallRulesByComment($client, $forwardComment);
 
             $client->sendSync(
                 (new RouterOS\Request('/ip/firewall/nat/add'))
@@ -5876,6 +5977,16 @@ class Mikrotik
                     ->setArgument('dst-port', (string) $listenPort)
                     ->setArgument('action', 'accept')
                     ->setArgument('comment', $inputComment)
+            );
+
+            $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/add'))
+                    ->setArgument('chain', 'forward')
+                    ->setArgument('protocol', 'tcp')
+                    ->setArgument('dst-address', $backendHost)
+                    ->setArgument('dst-port', (string) $backendPort)
+                    ->setArgument('action', 'accept')
+                    ->setArgument('comment', $forwardComment)
             );
 
             $verify = $client->sendSync(
@@ -5993,10 +6104,7 @@ class Mikrotik
 
         $captiveApiUrl = rtrim(trim((string) $captiveApiUrl), '/');
         if ($captiveApiUrl === '') {
-            $captiveApiUrl = rtrim(trim((string) ($config['hotspot_api_url'] ?? 'https://wifizones.org')), '/');
-        }
-        if ($captiveApiUrl === '') {
-            $captiveApiUrl = 'https://wifizones.org';
+            $captiveApiUrl = self::resolveHotspotCaptiveApiUrl($config, false);
         }
 
         $templateFile = $root_path . 'ui/ui/templates/mikrotik-hotspot-login.html';
@@ -6074,10 +6182,30 @@ class Mikrotik
     }
 
     /**
+     * URL proxy captif sur la passerelle hotspot (ex. http://10.10.0.1:8080).
+     */
+    public static function resolveHotspotCaptiveProxyUrl($gatewayIp, $proxyPort = 8080)
+    {
+        $gatewayIp = trim((string) $gatewayIp);
+        if (strpos($gatewayIp, '/') !== false) {
+            $gatewayIp = (string) explode('/', $gatewayIp, 2)[0];
+        }
+        if ($gatewayIp === '' || !filter_var($gatewayIp, FILTER_VALIDATE_IP)) {
+            return '';
+        }
+        $proxyPort = (int) $proxyPort;
+        if ($proxyPort <= 0) {
+            $proxyPort = 8080;
+        }
+
+        return 'http://' . $gatewayIp . ($proxyPort === 80 ? '' : ':' . $proxyPort);
+    }
+
+    /**
      * Met à jour APP_URL, assets (SweetAlert) et liens de paiement dans login.html
      * pour le réseau captif (proxy NAT 10.x.x.1:8080 ou Hotspot API URL).
      */
-    public static function patchHotspotLoginCaptiveApi($html, $captiveApiUrl, $dnsName = '')
+    public static function patchHotspotLoginCaptiveApi($html, $captiveApiUrl, $dnsName = '', $backendApiUrl = '')
     {
         $html = (string) $html;
         $captiveApiUrl = rtrim(trim((string) $captiveApiUrl), '/');
@@ -6100,6 +6228,35 @@ class Mikrotik
             $html,
             1
         ) ?? $html;
+
+        $proxyPort = 8080;
+        $captiveParts = parse_url($captiveApiUrl);
+        if (!empty($captiveParts['port'])) {
+            $proxyPort = (int) $captiveParts['port'];
+        }
+        $backendApiUrl = rtrim(trim((string) $backendApiUrl), '/');
+        $proxyJs = 'const HOTSPOT_PROXY_PORT = ' . $proxyPort . ';';
+        $backendJs = 'const HOTSPOT_BACKEND_URL = ' . json_encode($backendApiUrl) . ';';
+        if (preg_match('/const HOTSPOT_PROXY_PORT = .*?;/', $html)) {
+            $html = preg_replace('/const HOTSPOT_PROXY_PORT = .*?;/', $proxyJs, $html, 1) ?? $html;
+        } else {
+            $html = preg_replace(
+                '/(const APP_URL = .*?;)/s',
+                '$1' . "\n    " . $proxyJs,
+                $html,
+                1
+            ) ?? $html;
+        }
+        if (preg_match('/const HOTSPOT_BACKEND_URL = .*?;/', $html)) {
+            $html = preg_replace('/const HOTSPOT_BACKEND_URL = .*?;/', $backendJs, $html, 1) ?? $html;
+        } else {
+            $html = preg_replace(
+                '/(const HOTSPOT_PROXY_PORT = .*?;)/s',
+                '$1' . "\n    " . $backendJs,
+                $html,
+                1
+            ) ?? $html;
+        }
 
         // Assets must use the same captive base as APP_URL — hotspot clients cannot
         // reach the VPN peer IP (10.0.0.2) directly; only the NAT proxy on the gateway.
@@ -6271,7 +6428,7 @@ class Mikrotik
      *
      * @return true|string
      */
-    public static function verifyHotspotFetchUrl($url, $timeout = 5)
+    public static function verifyHotspotFetchUrl($url, $timeout = 5, $routerName = '')
     {
         $url = trim((string) $url);
         if ($url === '' || !self::isRouterFetchableUrl($url)) {
@@ -6284,6 +6441,24 @@ class Mikrotik
                 return true;
             }
             $loginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot' . DIRECTORY_SEPARATOR . 'login.html';
+            $routerName = trim((string) $routerName);
+            if ($routerName === '') {
+                $query = parse_url($url, PHP_URL_QUERY);
+                if (is_string($query) && $query !== '') {
+                    parse_str($query, $params);
+                    $routerName = trim((string) ($params['router'] ?? $params['routername'] ?? ''));
+                }
+            }
+            if ($routerName !== '') {
+                $ownerId = WifiZoneHotspot::routerAdminId($routerName);
+                if ($ownerId > 0) {
+                    $loginFile = WifiZoneHotspot::hotspotLoginHtmlPath($ownerId, $UPLOAD_PATH);
+                }
+            } elseif (preg_match('#/mikrotik_hotspot/admin_(\d+)/login\.html#', $url, $matches)) {
+                $loginFile = $UPLOAD_PATH . DIRECTORY_SEPARATOR . 'mikrotik_hotspot'
+                    . DIRECTORY_SEPARATOR . 'admin_' . (int) $matches[1]
+                    . DIRECTORY_SEPARATOR . 'login.html';
+            }
             if (is_file($loginFile) && is_readable($loginFile) && filesize($loginFile) > 0) {
                 return true;
             }
@@ -6329,7 +6504,7 @@ class Mikrotik
      * @param array<int, string> $urls
      * @return true|string
      */
-    public static function verifyHotspotFetchUrls(array $urls, $timeout = 5)
+    public static function verifyHotspotFetchUrls(array $urls, $timeout = 5, $routerName = '')
     {
         $urls = array_values(array_filter(array_map('trim', $urls)));
         if (empty($urls)) {
@@ -6338,7 +6513,7 @@ class Mikrotik
 
         $errors = [];
         foreach ($urls as $url) {
-            $result = self::verifyHotspotFetchUrl($url, $timeout);
+            $result = self::verifyHotspotFetchUrl($url, $timeout, $routerName);
             if ($result === true) {
                 return true;
             }
@@ -6504,11 +6679,22 @@ class Mikrotik
     }
 
     /**
-     * Admin lancé depuis localhost (php -S) : le routeur ne peut pas fetcher login.html
-     * depuis cette machine — déploiement API MikroTik uniquement.
+     * Environnement dev local (php -S / APP_STAGE=Dev).
+     * En prod (APP_URL = wifizones.org), retourne false → hotspot_api_url configurée en base.
      */
     public static function isLocalHotspotDevEnvironment($apiUrl = null)
     {
+        global $_app_stage;
+
+        $appUrl = self::normalizeLocalAppUrl();
+        $appHost = strtolower((string) parse_url($appUrl, PHP_URL_HOST));
+        if (in_array($appHost, ['localhost', '127.0.0.1', '::1'], true)) {
+            return true;
+        }
+        if (!empty($_app_stage) && strcasecmp((string) $_app_stage, 'Dev') === 0) {
+            return true;
+        }
+
         $apiUrl = trim((string) $apiUrl);
         $apiHost = strtolower((string) parse_url($apiUrl, PHP_URL_HOST));
         if ($apiHost !== ''
@@ -7653,6 +7839,10 @@ class Mikrotik
                 $actions[] = $action;
             }
             $errors = array_merge($errors, $dhcpResult['errors'] ?? []);
+            if (!empty($dhcpResult['errors'])) {
+                self::refreshMikrotikClient($client, $routerRow, 30);
+                sleep(1);
+            }
         } catch (Throwable $e) {
             $errors[] = 'DHCP hotspot: ' . $e->getMessage();
         } catch (Exception $e) {
@@ -7660,7 +7850,8 @@ class Mikrotik
         }
 
         try {
-            $intercept = self::runMikrotikClientStep($client, $routerRow, 30, static function ($apiClient) use (
+            self::refreshMikrotikClient($client, $routerRow, 30);
+            $intercept = self::runMikrotikClientStep($client, $routerRow, 45, static function ($apiClient) use (
                 $interface,
                 $localAddress,
                 $poolName,
@@ -10219,8 +10410,10 @@ class Mikrotik
                 $actions[] = 'walled-garden DHCP udp/' . $rule['dst-port'];
             }
         } catch (Throwable $e) {
+            self::mikrotikRethrowIfRetriable($e);
             $errors[] = 'walled-garden DHCP : ' . $e->getMessage();
         } catch (Exception $e) {
+            self::mikrotikRethrowIfRetriable($e);
             $errors[] = 'walled-garden DHCP : ' . $e->getMessage();
         }
 
@@ -10864,8 +11057,10 @@ class Mikrotik
             $errors = array_merge($errors, $dhcpFwResult['errors'] ?? []);
             $actions = array_merge($actions, $dhcpFwResult['actions'] ?? []);
         } catch (Throwable $e) {
+            self::mikrotikRethrowIfRetriable($e);
             $errors[] = 'DHCP hotspot : ' . $e->getMessage();
         } catch (Exception $e) {
+            self::mikrotikRethrowIfRetriable($e);
             $errors[] = 'DHCP hotspot : ' . $e->getMessage();
         }
 

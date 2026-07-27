@@ -85,6 +85,26 @@ class AdminScope
         return ['(' . implode(' OR ', $parts) . ')', $params];
     }
 
+    public static function applyPlansQuery($query, $admin, $adminIdColumn = 'admin_id')
+    {
+        $adminId = self::adminId($admin);
+        if ($adminId > 0) {
+            $query->where($adminIdColumn, $adminId);
+        }
+
+        return $query;
+    }
+
+    public static function applyRoutersQuery($query, $admin)
+    {
+        $adminId = self::adminId($admin);
+        if ($adminId > 0) {
+            $query->where('admin_id', $adminId);
+        }
+
+        return $query;
+    }
+
     public static function applyTransactionsQuery($query, $admin)
     {
         if (!self::isScoped($admin)) {
