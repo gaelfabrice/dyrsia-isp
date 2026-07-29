@@ -877,6 +877,7 @@ switch ($action) {
             }
             run_hook('delete_admin'); #HOOK
             if ($d['user_type'] == 'Admin') {
+                WifiZoneHotspot::purgeAdminAccountCompletely((int) $d['id']);
                 Tenant::deleteInstanceForAdmin((int) $d['id']);
             }
             $d->delete();

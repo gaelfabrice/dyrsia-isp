@@ -908,4 +908,99 @@ class WifiZoneHotspot
 
         return $result;
     }
+
+    /**
+     * Supprime toutes les traces DYRSIA d'un routeur (NAS RADIUS, config hotspot, cache).
+     * À appeler avant suppression du routeur ou réattribution à un autre compte/IP.
+     */
+    public static function purgeRouterFromPlatform($routerName, $adminId, $routerNasIp = null)
+    {
+        $routerName = trim((string) $routerName);
+        $adminId = (int) $adminId;
+        if ($routerName === '' || $adminId <= 0) {
+            return;
+        }
+
+        self::detachPlansFromDeletedRouter($routerName, $adminId);
+        self::purgeAdminRouterReferences($routerName, $adminId);
+        Mikrotik::removeHotspotNasRecord($routerName, $routerNasIp);
+
+        $cacheFile = self::hotspotPlanCachePath($routerName);
+        if ($cacheFile !== '' && is_file($cacheFile)) {
+            @unlink($cacheFile);
+        }
+        self::clearHotspotPlanCache();
+    }
+
+    /**
+     * Purge complète d'un compte Admin : config hotspot, login.html, jobs async, NAS de ses routeurs.
+     */
+    public static function purgeAdminAccountCompletely($adminId, $uploadPath = null)
+    {
+        global $root_path, $UPLOAD_PATH;
+
+        $adminId = (int) $adminId;
+        if ($adminId <= 0) {
+            return;
+        }
+
+        if ($uploadPath === null) {
+            $uploadPath = $UPLOAD_PATH ?? ($root_path . 'system' . DIRECTORY_SEPARATOR . 'uploads');
+        }
+
+        foreach (ORM::for_table('tbl_routers')->where('admin_id', $adminId)->find_many() as $router) {
+            $routerName = trim((string) ($router->name ?? ''));
+            $routerIp = Mikrotik::parseEndpoint((string) ($router->ip_address ?? ''))['host'];
+            if ($routerName !== '') {
+                self::purgeRouterFromPlatform($routerName, $adminId, $routerIp);
+            }
+        }
+
+        foreach (self::hotspotSettingKeys() as $key) {
+            $storageKey = self::hotspotConfigStorageKey($key, $adminId);
+            $row = ORM::for_table('tbl_appconfig')->where('setting', $storageKey)->find_one();
+            if ($row) {
+                $row->delete();
+            }
+        }
+        $loginRouterKey = self::loginRouterConfigKey($adminId);
+        $loginRow = ORM::for_table('tbl_appconfig')->where('setting', $loginRouterKey)->find_one();
+        if ($loginRow) {
+            $loginRow->delete();
+        }
+
+        try {
+            ORM::raw_execute(
+                'DELETE FROM tbl_appconfig WHERE setting LIKE ?',
+                ['%_admin_' . $adminId]
+            );
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        $loginDir = self::hotspotLoginHtmlDir($adminId, $uploadPath);
+        if (is_dir($loginDir)) {
+            foreach (glob($loginDir . DIRECTORY_SEPARATOR . '*') ?: [] as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                }
+            }
+            @rmdir($loginDir);
+        }
+
+        $cacheDir = realpath(__DIR__ . '/../cache') ?: (__DIR__ . '/../cache');
+        foreach (glob(rtrim($cacheDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'hotspot_deploy_' . $adminId . '_*.json') ?: [] as $jobFile) {
+            @unlink($jobFile);
+        }
+
+        self::clearHotspotPlanCache();
+    }
+
+    private static function hotspotPlanCachePath($routerName)
+    {
+        $key = self::hotspotPlanCacheKey($routerName);
+        $cacheDir = realpath(__DIR__ . '/../cache') ?: (__DIR__ . '/../cache');
+
+        return rtrim($cacheDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $key . '.json';
+    }
 }

@@ -1586,6 +1586,22 @@ class Mikrotik
     /** Budget global de reconnexions API par requête (évite une boucle sans fin). */
     private static $mikrotikReconnectBudget = 6;
 
+    /** @var array<string, mixed>|null Routeur actif pendant un déploiement hotspot (reconnexion auto après script). */
+    private static $mikrotikDeployRouterRow = null;
+
+    public static function setMikrotikDeployRouterContext($routerRow)
+    {
+        if (is_object($routerRow) && method_exists($routerRow, 'as_array')) {
+            $routerRow = $routerRow->as_array();
+        }
+        self::$mikrotikDeployRouterRow = is_array($routerRow) ? $routerRow : null;
+    }
+
+    public static function clearMikrotikDeployRouterContext()
+    {
+        self::$mikrotikDeployRouterRow = null;
+    }
+
     public static function resetMikrotikReconnectBudget($budget = 6)
     {
         self::$mikrotikReconnectBudget = max(0, (int) $budget);
@@ -5330,7 +5346,7 @@ class Mikrotik
         return self::runRouterOneShotScript($client, $scriptName, $source);
     }
 
-    private static function runRouterOneShotScript($client, $scriptName, $source)
+    private static function runRouterOneShotScript(&$client, $scriptName, $source)
     {
         $scriptName = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $scriptName);
         if ($scriptName === '') {
@@ -5390,6 +5406,14 @@ class Mikrotik
             }
         } catch (Throwable $e) {
         } catch (Exception $e) {
+        }
+
+        if (self::$mikrotikDeployRouterRow !== null) {
+            try {
+                self::mikrotikPauseAfterRouterScript($client, self::$mikrotikDeployRouterRow, 35);
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
         }
 
         return true;
@@ -8638,6 +8662,66 @@ class Mikrotik
         }
 
         return ['ok' => true, 'secret' => $secret, 'nas_ip' => $routerNasIp];
+    }
+
+    /**
+     * Supprime l'entrée NAS FreeRADIUS liée à un routeur (nom et/ou IP).
+     */
+    public static function removeHotspotNasRecord($routerName, $routerNasIp = null)
+    {
+        if (!function_exists('wifizone_ensure_radius_orm') || !wifizone_ensure_radius_orm()) {
+            return 0;
+        }
+
+        $removed = 0;
+        $routerName = trim((string) $routerName);
+        $routerNasIp = trim((string) $routerNasIp);
+        if ($routerNasIp !== '' && strpos($routerNasIp, ':') !== false) {
+            $routerNasIp = self::parseEndpoint($routerNasIp)['host'];
+        }
+
+        if ($routerName !== '') {
+            foreach (ORM::for_table('nas', 'radius')->where('routers', $routerName)->find_many() as $nas) {
+                $nas->delete();
+                $removed++;
+            }
+        }
+        if ($routerNasIp !== '' && filter_var($routerNasIp, FILTER_VALIDATE_IP)) {
+            foreach (ORM::for_table('nas', 'radius')->where('nasname', $routerNasIp)->find_many() as $nas) {
+                $nas->delete();
+                $removed++;
+            }
+        }
+
+        return $removed;
+    }
+
+    /**
+     * Renomme la référence NAS quand le routeur MikroTik est renommé dans DYRSIA.
+     */
+    public static function renameHotspotNasRouter($oldRouterName, $newRouterName)
+    {
+        if (!function_exists('wifizone_ensure_radius_orm') || !wifizone_ensure_radius_orm()) {
+            return 0;
+        }
+
+        $oldRouterName = trim((string) $oldRouterName);
+        $newRouterName = trim((string) $newRouterName);
+        if ($oldRouterName === '' || $newRouterName === '' || $oldRouterName === $newRouterName) {
+            return 0;
+        }
+
+        $updated = 0;
+        foreach (ORM::for_table('nas', 'radius')->where('routers', $oldRouterName)->find_many() as $nas) {
+            $nas->routers = $newRouterName;
+            if (trim((string) ($nas['shortname'] ?? '')) === $oldRouterName) {
+                $nas->shortname = $newRouterName;
+            }
+            $nas->save();
+            $updated++;
+        }
+
+        return $updated;
     }
 
     public static function ensureHotspotRadiusClient($client, $serverIp, $secret)

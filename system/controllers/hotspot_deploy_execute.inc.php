@@ -6,7 +6,7 @@
 if (!isset($hotspotDeployExecuteReady) || !$hotspotDeployExecuteReady) {
     return;
 }
-                Mikrotik::resetMikrotikReconnectBudget($sendFullDeploy ? 18 : 8);
+                Mikrotik::resetMikrotikReconnectBudget($sendFullDeploy ? 28 : 12);
                 if (isset($hotspotDeployProgress) && is_callable($hotspotDeployProgress)) {
                     $hotspotDeployProgress('Connexion API MikroTik…');
                 }
@@ -17,6 +17,13 @@ if (!isset($hotspotDeployExecuteReady) || !$hotspotDeployExecuteReady) {
                         'Connexion MikroTik impossible : compte démo ou synchronisation routeur désactivée pour cet utilisateur.'
                     );
                 }
+                $hotspotDeployRouterRow = is_array($mikrotik)
+                    ? $mikrotik
+                    : (is_object($mikrotik) && method_exists($mikrotik, 'as_array') ? $mikrotik->as_array() : null);
+                Mikrotik::setMikrotikDeployRouterContext($hotspotDeployRouterRow);
+                register_shutdown_function(static function () {
+                    Mikrotik::clearMikrotikDeployRouterContext();
+                });
                 $hotspotServerName = trim((string) ($config['hotspot_name'] ?? ''));
                 $fetchTs = time();
                 $apiUrlForFetch = Mikrotik::resolveHotspotBackendApiUrl($config);

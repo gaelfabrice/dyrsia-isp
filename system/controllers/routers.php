@@ -377,9 +377,9 @@ switch ($action) {
         try {
             $routerName = trim((string) ($d->name ?? ''));
             $ownerId = (int) ($d->admin_id ?? 0);
+            $routerIp = Mikrotik::parseEndpoint((string) ($d->ip_address ?? ''))['host'];
             if ($routerName !== '' && $ownerId > 0) {
-                WifiZoneHotspot::detachPlansFromDeletedRouter($routerName, $ownerId);
-                WifiZoneHotspot::purgeAdminRouterReferences($routerName, $ownerId);
+                WifiZoneHotspot::purgeRouterFromPlatform($routerName, $ownerId, $routerIp);
             }
             $d->delete();
             if ($admin['user_type'] !== 'SuperAdmin') {
@@ -509,6 +509,7 @@ switch ($action) {
             }
         }
         $oldname = $d['name'];
+        $oldIp = Mikrotik::parseEndpoint((string) ($d['ip_address'] ?? ''))['host'];
 
         if($enabled || _post("testIt")){
             if ($d['ip_address'] != $ip_address) {
@@ -551,6 +552,7 @@ switch ($action) {
             }
             $d->save();
             if ($name != $oldname) {
+                Mikrotik::renameHotspotNasRouter($oldname, $name);
                 $ownerId = (int) ($d->admin_id ?? 0);
                 $scopedPlanUpdate = static function ($table, $oldRouter, $newRouter) use ($ownerId) {
                     $query = ORM::for_table($table)->where('routers', $oldRouter);
@@ -578,6 +580,10 @@ switch ($action) {
                 $p->set('routers', $name);
                 $p->save();
                 WifiZoneHotspot::clearHotspotPlanCache();
+            }
+            $newIp = Mikrotik::parseEndpoint((string) $ip_address)['host'];
+            if ($oldIp !== '' && $newIp !== '' && $oldIp !== $newIp) {
+                Mikrotik::removeHotspotNasRecord($name, $oldIp);
             }
             r2(getUrl('routers/list'), 's', Lang::T('Data Updated Successfully'));
         } else {
