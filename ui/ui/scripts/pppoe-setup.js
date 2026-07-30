@@ -19,12 +19,63 @@
         return Array.isArray(ports) ? ports.slice() : [];
     }
 
-    function resolvePortVisualState(portName, selected, portBridgeMap, pppoeBridge, routerPppoePorts) {
+    function getHotspotBridgeName(data) {
+        data = data || {};
+        if (data.suggested && data.suggested.hotspot_interface) {
+            var name = String(data.suggested.hotspot_interface || '').trim();
+            if (name !== '') {
+                return name;
+            }
+        }
+        return 'bridge-hotspot';
+    }
+
+    function getHotspotBridgePortsOnRouter(data, hotspotBridge) {
+        data = data || {};
+        hotspotBridge = hotspotBridge || getHotspotBridgeName(data);
+        var ports = data.bridge_ports && data.bridge_ports[hotspotBridge];
+        if (Array.isArray(ports) && ports.length) {
+            return ports.slice();
+        }
+        if (data.suggested && data.suggested.hotspot_bridge_ports) {
+            return parsePortsCsv(data.suggested.hotspot_bridge_ports);
+        }
+        return [];
+    }
+
+    function isHotspotReservedPort(portName, portBridgeMap, pppoeBridge, hotspotBridge, hotspotPorts) {
+        if ((hotspotPorts || []).some(function (p) { return portEquals(p, portName); })) {
+            return true;
+        }
+        var bridge = getPortBridge(portName, portBridgeMap, pppoeBridge);
+        return bridge !== '' && portEquals(bridge, hotspotBridge);
+    }
+
+    function filterPortsForPppoeSelection(ports, data) {
+        data = data || lastSnapshot || {};
+        var pppoeBridge = getPppoeBridgeName();
+        var portBridgeMap = buildPortBridgeMap(data);
+        var hotspotBridge = getHotspotBridgeName(data);
+        var hotspotPorts = getHotspotBridgePortsOnRouter(data, hotspotBridge);
+        return (ports || []).filter(function (p) {
+            return !isWanPort(p)
+                && !isHotspotReservedPort(p, portBridgeMap, pppoeBridge, hotspotBridge, hotspotPorts);
+        });
+    }
+
+    function resolvePortVisualState(portName, selected, portBridgeMap, pppoeBridge, routerPppoePorts, hotspotBridge, hotspotPorts) {
         if (isWanPort(portName)) {
             return {
                 state: 'wan',
                 role: 'WAN',
                 title: 'Port 1 (ether1) — WAN Internet, non modifiable'
+            };
+        }
+        if (isHotspotReservedPort(portName, portBridgeMap, pppoeBridge, hotspotBridge, hotspotPorts)) {
+            return {
+                state: 'hotspot',
+                role: 'Hotspot',
+                title: 'Port sur « ' + hotspotBridge + ' » (Hotspot) — non disponible pour PPPoE'
             };
         }
         var isSelected = isPortInList(portName, selected);
@@ -51,7 +102,7 @@
         visual = visual || {};
         var state = visual.state || 'free';
         var cls = 'ps-port-btn ' + state + (isWlanPort(portName) ? ' wlan' : '');
-        var disabled = state === 'wan' ? ' disabled="disabled" aria-disabled="true"' : '';
+        var disabled = (state === 'wan' || state === 'hotspot') ? ' disabled="disabled" aria-disabled="true"' : '';
         return '<button type="button" class="' + cls + '" data-port="' + escapeHtml(portName) + '" data-state="' + state + '" title="' + escapeHtml(visual.title || '') + '"' + disabled + '>'
             + '<span class="ps-port-led" aria-hidden="true"></span>'
             + '<span class="ps-port-jack-wrap" aria-hidden="true">'
@@ -70,7 +121,10 @@
         if (!root || !root.contains(event.target)) return;
 
         var btn = event.target.closest('.ps-port-btn');
-        if (!btn || btn.classList.contains('wan') || btn.getAttribute('data-state') === 'wan') return;
+        if (!btn || btn.classList.contains('wan') || btn.classList.contains('hotspot')
+            || btn.getAttribute('data-state') === 'wan' || btn.getAttribute('data-state') === 'hotspot') {
+            return;
+        }
 
         event.preventDefault();
         event.stopPropagation();
@@ -83,7 +137,7 @@
             portsField.dataset.userTouched = '1';
         }
 
-        var current = getBridgePortsValue().filter(function (p) { return !isWanPort(p); });
+        var current = filterPortsForPppoeSelection(getBridgePortsValue(), lastSnapshot);
         if (isPortInList(port, current)) {
             current = current.filter(function (p) { return !portEquals(p, port); });
         } else {
@@ -402,6 +456,13 @@
         var pppoeBridge = getPppoeBridgeName();
         var portBridgeMap = buildPortBridgeMap(data);
         var routerPppoePorts = getPppoeBridgePortsOnRouter(data, pppoeBridge);
+        var hotspotBridge = getHotspotBridgeName(data);
+        var hotspotPorts = getHotspotBridgePortsOnRouter(data, hotspotBridge);
+
+        function portAllowedForPppoe(portName) {
+            return !isWanPort(portName)
+                && !isHotspotReservedPort(portName, portBridgeMap, pppoeBridge, hotspotBridge, hotspotPorts);
+        }
 
         if (!memberPorts.length) {
             root.innerHTML = '<div class="ps-port-picker-empty">Sélectionnez un routeur pour afficher les ports.</div>';
@@ -413,16 +474,14 @@
 
         var portsField = $('pppoe_setup_bridge_ports');
         var userTouched = portsField && portsField.dataset.userTouched === '1';
-        var selected = getBridgePortsValue().filter(function (p) { return !isWanPort(p); });
+        var selected = getBridgePortsValue().filter(portAllowedForPppoe);
 
         if (!userTouched) {
             if (!selected.length && routerPppoePorts.length) {
-                selected = sortPortsNatural(routerPppoePorts.filter(function (p) { return !isWanPort(p); }));
+                selected = sortPortsNatural(routerPppoePorts.filter(portAllowedForPppoe));
             }
             if (!selected.length && data.suggested && data.suggested.pppoe_setup_bridge_ports) {
-                selected = parsePortsCsv(data.suggested.pppoe_setup_bridge_ports).filter(function (p) {
-                    return !isWanPort(p);
-                });
+                selected = parsePortsCsv(data.suggested.pppoe_setup_bridge_ports).filter(portAllowedForPppoe);
             }
             selected = sortPortsNatural(selected);
             syncPortsInputFromPicker(selected);
@@ -465,14 +524,18 @@
         html += '<div class="ps-mtk-port-group wan-group">';
         html += '<span class="ps-mtk-group-label">WAN</span>';
         wanPorts.forEach(function (portName) {
-            html += buildPortButtonHtml(portName, resolvePortVisualState(portName, selected, portBridgeMap, pppoeBridge, routerPppoePorts));
+            html += buildPortButtonHtml(portName, resolvePortVisualState(
+                portName, selected, portBridgeMap, pppoeBridge, routerPppoePorts, hotspotBridge, hotspotPorts
+            ));
         });
         html += '</div>';
 
         html += '<div class="ps-mtk-port-group lan-group">';
         html += '<span class="ps-mtk-group-label">LAN</span>';
         lanPorts.forEach(function (portName) {
-            html += buildPortButtonHtml(portName, resolvePortVisualState(portName, selected, portBridgeMap, pppoeBridge, routerPppoePorts));
+            html += buildPortButtonHtml(portName, resolvePortVisualState(
+                portName, selected, portBridgeMap, pppoeBridge, routerPppoePorts, hotspotBridge, hotspotPorts
+            ));
         });
         html += '</div>';
 
@@ -487,14 +550,21 @@
         var selected = getBridgePortsValue();
         var physicalCount = parseInt(snapshot.physical_port_count, 10) || 0;
         var modelName = guessRouterModelLabel(physicalCount || 5);
+        var hotspotBridge = getHotspotBridgeName(snapshot);
+        var hotspotPorts = getHotspotBridgePortsOnRouter(snapshot, hotspotBridge);
+        var hotspotHint = hotspotPorts.length
+            ? (' · Hotspot bloqués : ' + hotspotPorts.join(', '))
+            : (' · Ports « ' + hotspotBridge + ' » bloqués');
         if (physicalCount > 0) {
             box.textContent = modelName + ' · ' + physicalCount + ' port(s)'
-                + ' · Vert = PPPoE · Orange = libre · ether1 bloqué'
+                + ' · Vert = PPPoE · Orange = libre · ether1 WAN bloqué'
+                + hotspotHint
                 + (selected.length ? ' · Sélection : ' + selected.join(', ') : '');
             return;
         }
         if (val('pppoe_setup_router')) {
-            box.textContent = 'Cliquez les ports orange (libres) ou vert (déjà PPPoE) · ether1 seul est bloqué'
+            box.textContent = 'Cliquez les ports orange (libres) ou vert (PPPoE) · ether1 WAN et ports Hotspot bloqués'
+                + hotspotHint
                 + (selected.length ? ' · ' + selected.join(', ') : '');
             return;
         }

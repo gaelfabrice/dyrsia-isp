@@ -166,12 +166,10 @@ if (!isset($hotspotDeployExecuteReady) || !$hotspotDeployExecuteReady) {
                 $hotspotSetupNote = '';
                 @set_time_limit(600);
                 // Hotspot déjà sur le routeur : ne pas refaire pool/bridge/firewall (5–10 min via VPN).
-                // Send complet = login.html + forfaits + walled-garden + vérif portail (~1–3 min).
-                // DHCP bridge-hotspot : toujours assuré (même si l'infra hotspot existe déjà).
+                // Send complet sur infra existante = réparation DHCP/firewall + login.html + forfaits (~1–3 min).
                 $hotspotAlreadyDeployed = $hotspotListenIp !== '';
-                // Send complet = toujours refaire pool/bridge/firewall/DHCP (config partielle ou routeur remplacé).
-                $skipHotspotSetup = $hotspotAlreadyDeployed && !$sendFullDeploy;
-                $skipBridgeHardening = $hotspotAlreadyDeployed && !$sendFullDeploy;
+                $skipHotspotSetup = $hotspotAlreadyDeployed;
+                $skipBridgeHardening = $hotspotAlreadyDeployed;
                 if (!$skipHotspotSetup) {
                 if (isset($hotspotDeployProgress) && is_callable($hotspotDeployProgress)) {
                     $hotspotDeployProgress('Configuration hotspot (pool, bridge, profil, serveur, DHCP)…');

@@ -187,9 +187,10 @@
     pointer-events: auto; touch-action: manipulation;
     transition: transform .1s, filter .15s;
 }
-.ps-port-btn:hover:not(.wan) { transform: translateY(-1px); filter: brightness(1.08); }
-.ps-port-btn:active:not(.wan) { transform: translateY(0); }
-.ps-port-btn.wan { cursor: not-allowed; opacity: .85; pointer-events: none; }
+.ps-port-btn:hover:not(.wan):not(.hotspot) { transform: translateY(-1px); filter: brightness(1.08); }
+.ps-port-btn:active:not(.wan):not(.hotspot) { transform: translateY(0); }
+.ps-port-btn.wan,
+.ps-port-btn.hotspot { cursor: not-allowed; opacity: .85; pointer-events: none; }
 
 .ps-port-led {
     width: 6px; height: 6px; border-radius: 50%;
@@ -198,7 +199,8 @@
 }
 .ps-port-btn.free .ps-port-led { background: #fb923c; box-shadow: 0 0 6px rgba(251,146,60,.9); }
 .ps-port-btn.configured .ps-port-led { background: #22c55e; box-shadow: 0 0 7px rgba(34,197,94,.95); }
-.ps-port-btn.wan .ps-port-led { background: #64748b; box-shadow: none; }
+.ps-port-btn.wan .ps-port-led,
+.ps-port-btn.hotspot .ps-port-led { background: #64748b; box-shadow: none; }
 
 .ps-port-jack-wrap {
     padding: 2px 3px 1px; border-radius: 3px;
@@ -216,7 +218,8 @@
     border-color: #15803d;
     box-shadow: 0 0 0 1px rgba(34,197,94,.4), 0 2px 4px rgba(0,0,0,.25);
 }
-.ps-port-btn.wan .ps-port-jack-wrap {
+.ps-port-btn.wan .ps-port-jack-wrap,
+.ps-port-btn.hotspot .ps-port-jack-wrap {
     background: linear-gradient(180deg, #94a3b8, #475569);
     border-color: #334155;
 }
@@ -249,7 +252,8 @@
 }
 .ps-port-btn.free .ps-port-label { color: #fed7aa; }
 .ps-port-btn.configured .ps-port-label { color: #bbf7d0; }
-.ps-port-btn.wan .ps-port-label { color: #94a3b8; }
+.ps-port-btn.wan .ps-port-label,
+.ps-port-btn.hotspot .ps-port-label { color: #94a3b8; }
 
 .ps-port-role {
     font-size: 7px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
@@ -257,7 +261,8 @@
 }
 .ps-port-btn.free .ps-port-role { color: #fdba74; }
 .ps-port-btn.configured .ps-port-role { color: #86efac; }
-.ps-port-btn.wan .ps-port-role { color: #94a3b8; }
+.ps-port-btn.wan .ps-port-role,
+.ps-port-btn.hotspot .ps-port-role { color: #94a3b8; }
 
 .ps-port-picker-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 12px; color: #64748b; }
 .ps-port-picker-legend span { display: inline-flex; align-items: center; gap: 8px; }
@@ -267,7 +272,8 @@
 }
 .ps-legend-dot.configured { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.6); }
 .ps-legend-dot.free { background: #f97316; box-shadow: 0 0 6px rgba(249,115,22,.5); }
-.ps-legend-dot.wan { background: #64748b; }
+.ps-legend-dot.wan,
+.ps-legend-dot.hotspot { background: #64748b; }
 .ps-port-picker-empty {
     padding: 24px 16px; text-align: center; color: #64748b; font-size: 13px;
     border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc;
@@ -396,9 +402,10 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                                 <span><span class="ps-legend-dot configured"></span> Configuré PPPoE (vert)</span>
                                 <span><span class="ps-legend-dot free"></span> Port libre (orange)</span>
                                 <span><span class="ps-legend-dot wan"></span> ether1 WAN (bloqué)</span>
+                                <span><span class="ps-legend-dot hotspot"></span> Hotspot / bridge-hotspot (bloqué)</span>
                             </div>
                             <div id="ps-port-hints" class="ps-port-hints"></div>
-                            <p class="help-block">Cliquez un port <strong>orange</strong> pour l'ajouter au bridge PPPoE. Les ports <strong>verts</strong> sont déjà sélectionnés ou configurés sur le routeur. Seul <strong>ether1</strong> (port 1) est bloqué.</p>
+                            <p class="help-block">Cliquez un port <strong>orange</strong> pour l'ajouter au bridge PPPoE. Les ports <strong>verts</strong> sont déjà sélectionnés ou configurés sur le routeur. <strong>ether1</strong> (WAN) et les ports déjà sur <strong>bridge-hotspot</strong> sont grisés et non cliquables.</p>
                         </div>
                     </div>
 
@@ -557,7 +564,7 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
     </div>
 </div>
 
-<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.25b"></script>
+<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.29"></script>
 <script>
 window.PPPOE_FETCH_URL = '{$pppoe_fetch_url|escape:'javascript'}';
 window.PPPOE_INITIAL_ROUTER = '{$ps_router|escape:'javascript'}';

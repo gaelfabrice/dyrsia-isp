@@ -1477,14 +1477,20 @@ class Mikrotik
             }
         }
 
-        if ($hotspotInterface !== '' && self::routerEntityId($client, '/ip/dhcp-server', 'name', self::hotspotDhcpServerName())) {
-            $dhcpFw = self::ensureHotspotDhcpFirewallPass($client, $hotspotInterface);
-            if (!empty($dhcpFw['actions'])) {
-                $actions = array_merge($actions, $dhcpFw['actions']);
+        if ($hotspotInterface !== ''
+            && self::routerHasHotspotCoexistence($client, ['hotspot_interface' => $hotspotInterface])) {
+            $hsConfig = is_array($params['hotspotConfig'] ?? null) ? $params['hotspotConfig'] : [];
+            if ($hotspotInterface !== '') {
+                $hsConfig['hotspot_interface'] = $hotspotInterface;
             }
-            $wgDhcp = self::ensureHotspotWalledGardenDhcp($client);
-            if (!empty($wgDhcp['actions'])) {
-                $actions = array_merge($actions, $wgDhcp['actions']);
+            $coexist = self::ensureHotspotDhcpCoexistenceEssential($client, $hsConfig);
+            if (!empty($coexist['actions'])) {
+                $actions = array_merge($actions, $coexist['actions']);
+            }
+            if (!empty($coexist['errors'])) {
+                foreach ($coexist['errors'] as $coexistError) {
+                    _log('[PPPoE hotspot DHCP] ' . $coexistError);
+                }
             }
         }
 
@@ -6915,6 +6921,14 @@ class Mikrotik
         ));
         $errors = [];
 
+        $deviceMode = self::ensureHotspotDeviceMode($client);
+        if (empty($deviceMode['ok'])) {
+            return [
+                'ok' => false,
+                'errors' => $deviceMode['errors'] ?? ['Hotspot bloqué par le mode appareil RouterOS 7.'],
+            ];
+        }
+
         self::ensureRouterDirectory($client, 'hotspot');
 
         $tmpPath = 'hotspot/dyrsia-login-new.html';
@@ -7668,6 +7682,16 @@ class Mikrotik
         if ($interface === '') {
             return ['ok' => false, 'errors' => ['Interface hotspot manquante (étape 2 de l\'assistant).']];
         }
+
+        $deviceMode = self::ensureHotspotDeviceMode($client);
+        if (empty($deviceMode['ok'])) {
+            return [
+                'ok' => false,
+                'errors' => $deviceMode['errors'] ?? ['Hotspot bloqué par le mode appareil RouterOS 7.'],
+                'actions' => $deviceMode['actions'] ?? [],
+            ];
+        }
+
         $resolvedSimple = self::resolveSimpleHotspotInterface($client, $config);
         if ($resolvedSimple !== '') {
             $interface = $resolvedSimple;
@@ -8203,6 +8227,17 @@ class Mikrotik
             }
 
             foreach ($wlanPorts as $wlanInterface) {
+                $wifiRos7 = self::routerEntityId($client, '/interface/wifi', 'name', $wlanInterface) !== null;
+
+                if ($wifiRos7) {
+                    $dp = self::ensureRouterWifi7DatapathForHotspotBridge($client, $targetInterface, $wlanInterface);
+                    $actions = array_merge($actions, $dp['actions'] ?? []);
+                    if (!empty($dp['errors'])) {
+                        $errors = array_merge($errors, $dp['errors']);
+                    }
+                    continue;
+                }
+
                 $alreadyMember = false;
                 try {
                     foreach ($client->sendSync(
@@ -8232,17 +8267,8 @@ class Mikrotik
                 }
 
                 try {
-                    $wlanId = self::routerEntityId($client, '/interface/wireless', 'name', $wlanInterface);
-                    if ($wlanId !== null) {
-                        $client->sendSync(
-                            (new RouterOS\Request('/interface/wireless/set'))
-                                ->setArgument('numbers', $wlanId)
-                                ->setArgument('mode', 'ap-bridge')
-                                ->setArgument('bridge-mode', 'disabled')
-                                ->setArgument('vlan-mode', 'no-tag')
-                                ->setArgument('disabled', 'no')
-                        );
-                        $actions[] = $wlanInterface . ' : ap-bridge, bridge-mode=disabled';
+                    if (self::configureRouterWifiInterfaceForHotspotBridge($client, $wlanInterface)) {
+                        $actions[] = $wlanInterface . ' : Wi‑Fi AP (mode bridge hotspot)';
                     }
                 } catch (Throwable $e) {
                     $errors[] = 'wireless ' . $wlanInterface . ' : ' . $e->getMessage();
@@ -8298,6 +8324,42 @@ class Mikrotik
             return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
         }
 
+        if (self::routerEntityId($client, '/interface/wifi', 'name', $targetInterface) !== null) {
+            $bridgeForDp = '';
+            try {
+                foreach ($client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/port/print'))
+                        ->setArgument('.proplist', 'bridge')
+                        ->setQuery(RouterOS\Query::where('interface', $targetInterface))
+                ) as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    $bridgeForDp = trim((string) $row->getProperty('bridge'));
+                    break;
+                }
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+            if ($bridgeForDp !== '') {
+                $dp = self::ensureRouterWifi7DatapathForHotspotBridge($client, $bridgeForDp, $targetInterface);
+                $actions = array_merge($actions, $dp['actions'] ?? []);
+                if (!empty($dp['errors'])) {
+                    $errors = array_merge($errors, $dp['errors']);
+                }
+            } else {
+                try {
+                    if (self::configureRouterWifiInterfaceForHotspotBridge($client, $targetInterface)) {
+                        $actions[] = $targetInterface . ' : Wi‑Fi AP (mode wlan direct)';
+                    }
+                } catch (Throwable $e) {
+                    $errors[] = 'wireless : ' . $e->getMessage();
+                }
+            }
+
+            return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
+        }
+
         try {
             foreach ($client->sendSync(
                 (new RouterOS\Request('/interface/bridge/port/print'))
@@ -8325,17 +8387,8 @@ class Mikrotik
         }
 
         try {
-            $wlanId = self::routerEntityId($client, '/interface/wireless', 'name', $targetInterface);
-            if ($wlanId !== null) {
-                $client->sendSync(
-                    (new RouterOS\Request('/interface/wireless/set'))
-                        ->setArgument('numbers', $wlanId)
-                        ->setArgument('mode', 'ap-bridge')
-                        ->setArgument('bridge-mode', 'disabled')
-                        ->setArgument('vlan-mode', 'no-tag')
-                        ->setArgument('disabled', 'no')
-                );
-                $actions[] = $targetInterface . ' : ap-bridge, bridge-mode=disabled';
+            if (self::configureRouterWifiInterfaceForHotspotBridge($client, $targetInterface)) {
+                $actions[] = $targetInterface . ' : Wi‑Fi AP (mode wlan direct)';
             }
         } catch (Throwable $e) {
             $errors[] = 'wireless : ' . $e->getMessage();
@@ -8347,6 +8400,183 @@ class Mikrotik
     private static function isWlanInterfaceName($name)
     {
         return preg_match('/^(wlan|wifi)/i', trim((string) $name)) === 1;
+    }
+
+    /**
+     * RouterOS 7 : /interface/wifi (L009, hAP ax). Anciens : /interface/wireless ou wifiwave2.
+     */
+    private static function configureRouterWifiInterfaceForHotspotBridge($client, $wlanInterface)
+    {
+        $wlanInterface = trim((string) $wlanInterface);
+        if ($wlanInterface === '') {
+            return false;
+        }
+
+        $configured = false;
+        $wifiId = self::routerEntityId($client, '/interface/wifi', 'name', $wlanInterface);
+        if ($wifiId !== null) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/wifi/set'))
+                        ->setArgument('numbers', $wifiId)
+                        ->setArgument('disabled', 'no')
+                        ->setArgument('configuration.mode', 'ap')
+                );
+                $configured = true;
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        $wlanId = self::routerEntityId($client, '/interface/wireless', 'name', $wlanInterface);
+        if ($wlanId !== null) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/wireless/set'))
+                        ->setArgument('numbers', $wlanId)
+                        ->setArgument('disabled', 'no')
+                        ->setArgument('mode', 'ap-bridge')
+                        ->setArgument('bridge-mode', 'disabled')
+                        ->setArgument('vlan-mode', 'no-tag')
+                );
+                $configured = true;
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        return $configured;
+    }
+
+    /**
+     * RouterOS 7 (L009, ax) : le Wi‑Fi `/interface/wifi` doit utiliser un datapath vers le bridge hotspot
+     * (sinon les clients s'associent mais ne reçoivent pas DHCP / hotspot).
+     *
+     * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
+     */
+    private static function ensureRouterWifi7DatapathForHotspotBridge($client, $bridgeName, $wifiInterface)
+    {
+        $bridgeName = trim((string) $bridgeName);
+        $wifiInterface = trim((string) $wifiInterface);
+        if ($bridgeName === '' || $wifiInterface === '') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $wifiId = self::routerEntityId($client, '/interface/wifi', 'name', $wifiInterface);
+        if ($wifiId === null) {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $errors = [];
+        $actions = [];
+        $datapathName = 'dyrsia-hotspot-dp';
+        $configName = 'dyrsia-hotspot-ap';
+
+        $ssid = '';
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/interface/wifi/print'))
+                    ->setArgument('.proplist', 'name,configuration.ssid,configuration')
+                    ->setQuery(RouterOS\Query::where('name', $wifiInterface))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $ssid = trim((string) $row->getProperty('configuration.ssid'));
+                if ($ssid === '') {
+                    $ssid = trim((string) $row->getProperty('configuration.ssid'));
+                }
+                break;
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+        if ($ssid === '') {
+            $ssid = 'WIFI ZONE';
+        }
+
+        try {
+            $dpId = self::routerEntityId($client, '/interface/wifi/datapath', 'name', $datapathName);
+            if ($dpId === null) {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/wifi/datapath/add'))
+                        ->setArgument('name', $datapathName)
+                        ->setArgument('bridge', $bridgeName)
+                );
+                $actions[] = 'Wi‑Fi datapath « ' . $datapathName . ' » → « ' . $bridgeName . ' »';
+            } else {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/wifi/datapath/set'))
+                        ->setArgument('numbers', $dpId)
+                        ->setArgument('bridge', $bridgeName)
+                );
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'wifi datapath : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'wifi datapath : ' . $e->getMessage();
+        }
+
+        try {
+            $cfgId = self::routerEntityId($client, '/interface/wifi/configuration', 'name', $configName);
+            if ($cfgId === null) {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/wifi/configuration/add'))
+                        ->setArgument('name', $configName)
+                        ->setArgument('mode', 'ap')
+                        ->setArgument('ssid', $ssid)
+                        ->setArgument('datapath', $datapathName)
+                );
+                $actions[] = 'Wi‑Fi configuration « ' . $configName . ' » (AP, SSID « ' . $ssid . ' »)';
+            } else {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/wifi/configuration/set'))
+                        ->setArgument('numbers', $cfgId)
+                        ->setArgument('mode', 'ap')
+                        ->setArgument('ssid', $ssid)
+                        ->setArgument('datapath', $datapathName)
+                );
+            }
+
+            $client->sendSync(
+                (new RouterOS\Request('/interface/wifi/set'))
+                    ->setArgument('numbers', $wifiId)
+                    ->setArgument('configuration', $configName)
+                    ->setArgument('disabled', 'no')
+            );
+            $actions[] = $wifiInterface . ' : configuration « ' . $configName . ' » (datapath bridge)';
+        } catch (Throwable $e) {
+            $errors[] = 'wifi configuration : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'wifi configuration : ' . $e->getMessage();
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/interface/bridge/port/print'))
+                    ->setArgument('.proplist', '.id,interface,bridge')
+                    ->setQuery(RouterOS\Query::where('interface', $wifiInterface))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $portId = $row->getProperty('.id');
+                if ($portId === null || $portId === '') {
+                    continue;
+                }
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/port/remove'))
+                        ->setArgument('numbers', $portId)
+                );
+                $actions[] = $wifiInterface . ' retiré du bridge (datapath RouterOS 7)';
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'retrait bridge port wifi : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'retrait bridge port wifi : ' . $e->getMessage();
+        }
+
+        return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
     }
 
     private static function isVlanInterfaceName($name)
@@ -9211,6 +9441,16 @@ class Mikrotik
         if ($hotspotName === '') {
             $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
         }
+
+        $deviceMode = self::ensureHotspotDeviceMode($client);
+        if (empty($deviceMode['ok'])) {
+            return [
+                'ok' => false,
+                'errors' => array_merge($deviceMode['errors'] ?? [], $errors),
+                'actions' => array_merge($deviceMode['actions'] ?? [], $actions),
+            ];
+        }
+        $actions = array_merge($actions, $deviceMode['actions'] ?? []);
 
         $configuredProfile = trim((string) ($config['hotspot_profile'] ?? 'hotspot'));
         $primaryProfile = self::resolveHotspotProfileNameForSync($client, $hotspotName, $configuredProfile);
@@ -10152,6 +10392,250 @@ class Mikrotik
     }
 
     /**
+     * RouterOS 7+ (L009, hAP ax³, etc.) : le hotspot peut être bloqué par /system device-mode.
+     *
+     * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>, needs_physical_confirm?: bool}
+     */
+    public static function ensureHotspotDeviceMode($client)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $flags = self::readHotspotDeviceModeFlags($client);
+        if ($flags === null) {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $actions = [];
+        $errors = [];
+        $needsPhysicalConfirm = false;
+
+        if (self::deviceModeAllowsHotspot($flags)) {
+            return ['ok' => true, 'errors' => [], 'actions' => $actions];
+        }
+
+        $board = trim((string) ($flags['board-name'] ?? ''));
+        $mode = strtolower(trim((string) ($flags['mode'] ?? '')));
+        self::setClientSocketTimeout($client, 15);
+        try {
+            $update = new RouterOS\Request('/system/device-mode/update');
+            if (in_array($mode, ['home', 'basic'], true)) {
+                $update->setArgument('mode', 'advanced');
+                $actions[] = 'device-mode : demande mode=advanced (hotspot autorisé sur RouterOS 7)';
+            } else {
+                $update->setArgument('hotspot', 'yes');
+                $update->setArgument('fetch', 'yes');
+                $update->setArgument('scheduler', 'yes');
+                $actions[] = 'device-mode : hotspot/fetch/scheduler=yes demandé';
+            }
+            $client->sendSync($update);
+            $needsPhysicalConfirm = true;
+        } catch (Throwable $e) {
+            $needsPhysicalConfirm = true;
+            $actions[] = 'device-mode : commande envoyée — confirmation physique requise sur le routeur';
+        } catch (Exception $e) {
+            $needsPhysicalConfirm = true;
+            $actions[] = 'device-mode : commande envoyée — confirmation physique requise sur le routeur';
+        }
+        self::setClientSocketTimeout($client, 45);
+
+        $flags = self::readHotspotDeviceModeFlags($client);
+        if ($flags !== null && !self::deviceModeAllowsHotspot($flags)) {
+            $errors[] = self::formatDeviceModeHotspotUserHint($flags, $board, $needsPhysicalConfirm);
+        } elseif ($flags !== null && !empty($flags['flagged'])) {
+            $actions[] = 'device-mode : confirmation physique possible (bouton Mode) — hotspot autorisé côté logiciel';
+        }
+
+        if ($errors === []) {
+            self::reactivateHotspotServersAfterDeviceMode($client, $actions, $errors);
+        }
+
+        return [
+            'ok' => empty($errors),
+            'errors' => $errors,
+            'actions' => $actions,
+            'needs_physical_confirm' => $needsPhysicalConfirm && !empty($flags['flagged']),
+        ];
+    }
+
+    /**
+     * @return array<string, string>|null
+     */
+    private static function readHotspotDeviceModeFlags($client)
+    {
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/system/device-mode/print'))
+                    ->setArgument('.proplist', 'mode,hotspot,flagged,flagging-enabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+
+                return [
+                    'mode' => trim((string) $row->getProperty('mode')),
+                    'hotspot' => trim((string) $row->getProperty('hotspot')),
+                    'flagged' => trim((string) $row->getProperty('flagged')),
+                    'flagging-enabled' => trim((string) $row->getProperty('flagging-enabled')),
+                    'board-name' => self::readRouterBoardName($client),
+                ];
+            }
+        } catch (Throwable $e) {
+            return null;
+        } catch (Exception $e) {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static function readRouterBoardName($client)
+    {
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/system/resource/print'))
+                    ->setArgument('.proplist', 'board-name')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $name = trim((string) $row->getProperty('board-name'));
+                if ($name !== '') {
+                    return $name;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    /**
+     * @param array<string, string> $flags
+     */
+    private static function deviceModeAllowsHotspot(array $flags)
+    {
+        $mode = strtolower(trim((string) ($flags['mode'] ?? '')));
+        if (in_array($mode, ['home', 'basic'], true)) {
+            return false;
+        }
+
+        $hotspot = strtolower(trim((string) ($flags['hotspot'] ?? '')));
+        if (in_array($hotspot, ['false', 'no', 'off'], true)) {
+            return false;
+        }
+
+        return in_array($hotspot, ['true', 'yes', 'on'], true);
+    }
+
+    /**
+     * Instructions utilisateur (device-mode n’a pas de menu graphique dédié sur la plupart des routeurs).
+     *
+     * @param array<string, string> $flags
+     */
+    private static function formatDeviceModeHotspotUserHint(array $flags, $boardName = '', $awaitingPhysicalConfirm = false)
+    {
+        $mode = trim((string) ($flags['mode'] ?? ''));
+        $lines = [
+            'RouterOS 7 bloque le hotspot (device-mode, mode actuel : « ' . ($mode !== '' ? $mode : '?') . ' »).',
+            'Ce réglage ne se trouve pas dans un menu Winbox : ouvrez le Terminal Winbox (ou SSH) sur le routeur et exécutez :',
+            '/system device-mode update mode=advanced',
+            'Le routeur affiche alors un délai (~5 min) : confirmez en coupant l’alimentation 10 s (rebrancher) ou en appuyant sur le bouton Reset/Mode du L009, puis vérifiez : /system device-mode print (mode=advanced, hotspot=yes).',
+            'Ensuite relancez « Send complet » hotspot dans DYRSIA.',
+        ];
+        if ($boardName !== '') {
+            $lines[0] .= ' Modèle : « ' . $boardName . ' ».';
+        }
+        if ($awaitingPhysicalConfirm) {
+            $lines[] = 'Une demande de changement est peut‑être déjà en attente : faites la confirmation physique maintenant, sinon elle expire.';
+        }
+
+        return implode(' ', $lines);
+    }
+
+    private static function reactivateHotspotServersAfterDeviceMode($client, &$actions, &$errors)
+    {
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', '.id,name,disabled,invalid')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $id = $row->getProperty('.id');
+                if ($id === null || $id === '') {
+                    continue;
+                }
+                $name = trim((string) $row->getProperty('name'));
+                $invalid = strtolower(trim((string) $row->getProperty('invalid'))) === 'true';
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/hotspot/set'))
+                        ->setArgument('numbers', $id)
+                        ->setArgument('disabled', 'yes')
+                );
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/hotspot/set'))
+                        ->setArgument('numbers', $id)
+                        ->setArgument('disabled', 'no')
+                );
+                $label = $name !== '' ? $name : (string) $id;
+                $actions[] = 'hotspot « ' . $label . ' » réactivé'
+                    . ($invalid ? ' (après device-mode)' : '');
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'réactivation hotspot après device-mode : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'réactivation hotspot après device-mode : ' . $e->getMessage();
+        }
+    }
+
+    /**
+     * @return array{blocked: bool, message: string}
+     */
+    public static function hotspotServerDeviceModeStatus($client, $hotspotName = '')
+    {
+        $hotspotName = trim((string) $hotspotName);
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', 'name,invalid,.about,disabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $name = trim((string) $row->getProperty('name'));
+                if ($hotspotName !== '' && strcasecmp($name, $hotspotName) !== 0) {
+                    continue;
+                }
+                if (strtolower(trim((string) $row->getProperty('invalid'))) !== 'true') {
+                    continue;
+                }
+                $about = strtolower(trim((string) $row->getProperty('.about')));
+                if (strpos($about, 'device-mode') !== false || strpos($about, 'not allowed') !== false) {
+                    $flags = self::readHotspotDeviceModeFlags($client);
+
+                    return [
+                        'blocked' => true,
+                        'message' => $flags !== null
+                            ? self::formatDeviceModeHotspotUserHint($flags, self::readRouterBoardName($client))
+                            : 'Serveur hotspot inactif : device-mode RouterOS 7 (hotspot non autorisé).',
+                    ];
+                }
+
+                return ['blocked' => true, 'message' => 'Serveur hotspot invalide : ' . $row->getProperty('.about')];
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return ['blocked' => false, 'message' => ''];
+    }
+
+    /**
      * Reglages bridge requis pour le hotspot (RouterOS 7).
      * use-ip-firewall-for-vlan=yes casse la redirection captive — doit rester a no.
      *
@@ -10269,28 +10753,348 @@ class Mikrotik
      *
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
      */
-    public static function ensureHotspotDhcpFirewallPass($client, $interface)
+    /**
+     * Interfaces à couvrir pour le DHCP hotspot (bridge + ports membres physiques).
+     * Avec use-ip-firewall=yes, le trafic wlan1/ether arrive avec in-interface=port physique.
+     *
+     * @return array<int, string>
+     */
+    private static function collectHotspotDhcpFirewallInterfaces($client, $interface)
+    {
+        $interface = trim((string) $interface);
+        $interfaces = [];
+        if ($interface !== '') {
+            $interfaces[] = $interface;
+        }
+
+        if ($interface !== '' && self::isBridgeInterface($client, $interface)) {
+            foreach (self::listBridgeMemberInterfaceNames($client, $interface) as $member) {
+                if ($member !== '' && !in_array($member, $interfaces, true)) {
+                    $interfaces[] = $member;
+                }
+            }
+        }
+
+        return $interfaces;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function listBridgeMemberInterfaceNames($client, $bridgeName)
+    {
+        $bridgeName = trim((string) $bridgeName);
+        if ($bridgeName === '') {
+            return [];
+        }
+
+        $members = [];
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/interface/bridge/port/print'))
+                    ->setArgument('.proplist', 'interface,bridge,disabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('bridge') !== $bridgeName) {
+                    continue;
+                }
+                if (self::isRouterOsDisabledFlag($row->getProperty('disabled'))) {
+                    continue;
+                }
+                $member = trim((string) $row->getProperty('interface'));
+                if ($member !== '' && !in_array($member, $members, true)) {
+                    $members[] = $member;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return $members;
+    }
+
+    /**
+     * Complète hotspot_bridge_ports depuis les membres réels du bridge routeur.
+     *
+     * @return array<string, mixed>
+     */
+    private static function enrichHotspotConfigFromRouter($client, array $config)
+    {
+        $iface = trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot'));
+        if ($iface === '') {
+            $iface = 'bridge-hotspot';
+        }
+
+        $portsRaw = trim((string) ($config['hotspot_bridge_ports'] ?? ''));
+        if ($portsRaw === '') {
+            $portsRaw = trim((string) ($config['lan_hotspot_access_ports'] ?? ''));
+        }
+        if ($portsRaw === '' && self::isBridgeInterface($client, $iface)) {
+            $members = self::listBridgeMemberInterfaceNames($client, $iface);
+            if ($members !== []) {
+                $config['hotspot_bridge_ports'] = implode(',', $members);
+            }
+        }
+
+        return $config;
+    }
+
+    private static function findFirstFirewallRuleIdInChain($client, $chain)
+    {
+        $chain = trim((string) $chain);
+        if ($chain === '') {
+            return null;
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', '.id,chain')
+                    ->setQuery(RouterOS\Query::where('chain', $chain))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $id = $row->getProperty('.id');
+                if ($id !== null && $id !== '') {
+                    return $id;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return null;
+    }
+
+    /**
+     * Replace une règle en tête de chaîne (avant jump Hotspot / drop).
+     */
+    private static function repositionFirewallFilterRuleToChainTop($client, $chain, $ruleId)
+    {
+        $chain = trim((string) $chain);
+        $ruleId = trim((string) $ruleId);
+        if ($chain === '' || $ruleId === '') {
+            return false;
+        }
+
+        $firstId = self::findFirstFirewallRuleIdInChain($client, $chain);
+        if ($firstId === null || $firstId === '' || $firstId === $ruleId) {
+            return false;
+        }
+
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/move'))
+                    ->setArgument('numbers', $ruleId)
+                    ->setArgument('destination', $firstId)
+            );
+
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    private static function ensureHotspotDhcpFirewallPassRule(
+        $client,
+        $chain,
+        $port,
+        $comment,
+        array $extraArgs,
+        &$actions,
+        &$errors
+    ) {
+        $chain = trim((string) $chain);
+        $port = trim((string) $port);
+        if ($chain === '' || $port === '') {
+            return;
+        }
+
+        try {
+            $existingRuleId = null;
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', '.id,chain,protocol,dst-port,in-interface,dst-address,comment')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('chain') !== $chain) {
+                    continue;
+                }
+                if (strtolower(trim((string) $row->getProperty('protocol'))) !== 'udp') {
+                    continue;
+                }
+                if (trim((string) $row->getProperty('dst-port')) !== $port) {
+                    continue;
+                }
+                if (trim((string) $row->getProperty('comment')) !== $comment) {
+                    continue;
+                }
+                $match = true;
+                foreach ($extraArgs as $key => $value) {
+                    if (trim((string) $row->getProperty($key)) !== trim((string) $value)) {
+                        $match = false;
+                        break;
+                    }
+                }
+                if (!$match) {
+                    continue;
+                }
+                $existingRuleId = $row->getProperty('.id');
+                break;
+            }
+
+            if ($existingRuleId !== null && $existingRuleId !== '') {
+                return;
+            }
+
+            $firstRuleId = self::findFirstFirewallRuleIdInChain($client, $chain);
+            $addRequest = (new RouterOS\Request('/ip/firewall/filter/add'))
+                ->setArgument('chain', $chain)
+                ->setArgument('action', 'accept')
+                ->setArgument('protocol', 'udp')
+                ->setArgument('dst-port', $port)
+                ->setArgument('comment', $comment);
+            foreach ($extraArgs as $key => $value) {
+                $addRequest->setArgument($key, $value);
+            }
+            if ($firstRuleId !== null && $firstRuleId !== '') {
+                $addRequest->setArgument('place-before', $firstRuleId);
+            }
+            $client->sendSync($addRequest);
+            $actions[] = 'firewall ' . $chain . ' udp/' . $port . ' accept (' . $comment . ')';
+        } catch (Throwable $e) {
+            $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' : ' . $e->getMessage();
+        }
+    }
+
+    private static function ensureHotspotDhcpFirewallPassBroad($client, $gatewayIp, $wanInterface, &$actions, &$errors)
+    {
+        $gatewayIp = trim((string) $gatewayIp);
+        $wanInterface = trim((string) $wanInterface);
+        if ($wanInterface === '') {
+            $wanInterface = self::resolveWanOutInterface($client);
+        }
+        if ($wanInterface === '') {
+            $wanInterface = 'ether1';
+        }
+
+        $commentBroad = 'DYRSIA hotspot DHCP broad';
+        foreach (['input', 'forward'] as $chain) {
+            foreach (['67', '68'] as $port) {
+                self::ensureHotspotDhcpFirewallPassRule(
+                    $client,
+                    $chain,
+                    $port,
+                    $commentBroad,
+                    ['in-interface' => '!' . $wanInterface],
+                    $actions,
+                    $errors
+                );
+            }
+        }
+
+        if ($gatewayIp !== '' && filter_var($gatewayIp, FILTER_VALIDATE_IP)) {
+            $commentGw = 'DYRSIA hotspot DHCP gateway';
+            foreach (['input', 'forward'] as $chain) {
+                foreach (['67', '68'] as $port) {
+                    self::ensureHotspotDhcpFirewallPassRule(
+                        $client,
+                        $chain,
+                        $port,
+                        $commentGw,
+                        ['dst-address' => $gatewayIp],
+                        $actions,
+                        $errors
+                    );
+                }
+            }
+        }
+    }
+
+    private static function ensureHotspotDhcpFirewallPassHotspotChain($client, &$actions, &$errors)
+    {
+        $comment = 'DYRSIA hotspot DHCP hs-input';
+        foreach (['67', '68'] as $port) {
+            self::ensureHotspotDhcpFirewallPassRule(
+                $client,
+                'hs-input',
+                $port,
+                $comment,
+                [],
+                $actions,
+                $errors
+            );
+        }
+    }
+
+    /**
+     * Réactive le Wi‑Fi (hAP lite : wlan1 slave du bridge peut afficher running=false).
+     *
+     * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
+     */
+    private static function ensureHotspotWirelessRunning($client, $bridgeInterface)
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
             return ['ok' => true, 'errors' => [], 'actions' => []];
         }
 
-        $interface = trim((string) $interface);
-        if ($interface === '') {
-            return ['ok' => true, 'errors' => [], 'actions' => []];
-        }
-
+        $bridgeInterface = trim((string) $bridgeInterface);
         $errors = [];
         $actions = [];
-        $comment = 'DYRSIA hotspot DHCP';
+        $wirelessNames = self::listActiveWirelessInterfaceNames($client);
+        if ($wirelessNames === [] && self::isBridgeInterface($client, $bridgeInterface)) {
+            foreach (self::listBridgeMemberInterfaceNames($client, $bridgeInterface) as $member) {
+                if (self::isWlanInterfaceName($member)) {
+                    $wirelessNames[] = $member;
+                }
+            }
+        }
+
+        foreach ($wirelessNames as $wlanInterface) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/enable'))
+                        ->setArgument('numbers', $wlanInterface)
+                );
+                if (self::configureRouterWifiInterfaceForHotspotBridge($client, $wlanInterface)) {
+                    $actions[] = 'Wi‑Fi « ' . $wlanInterface . ' » activé (AP)';
+                } else {
+                    $actions[] = 'Wi‑Fi « ' . $wlanInterface . ' » activé';
+                }
+            } catch (Throwable $e) {
+                $errors[] = 'Wi‑Fi « ' . $wlanInterface . ' » : ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'Wi‑Fi « ' . $wlanInterface . ' » : ' . $e->getMessage();
+            }
+        }
+
+        return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
+    }
+
+    private static function ensureHotspotDhcpFirewallPassForInterface($client, $interface, $comment, &$actions, &$errors)
+    {
+        $interface = trim((string) $interface);
+        if ($interface === '') {
+            return;
+        }
+
         $chains = ['input', 'forward'];
         $ports = ['67', '68'];
 
         foreach ($chains as $chain) {
             foreach ($ports as $port) {
                 try {
-                    $exists = false;
+                    $existingRuleId = null;
                     foreach ($client->sendSync(
                         (new RouterOS\Request('/ip/firewall/filter/print'))
                             ->setArgument('.proplist', '.id,chain,protocol,dst-port,in-interface,comment,action')
@@ -10313,14 +11117,14 @@ class Mikrotik
                         if (trim((string) $row->getProperty('comment')) !== $comment) {
                             continue;
                         }
-                        $exists = true;
+                        $existingRuleId = $row->getProperty('.id');
                         break;
                     }
-                    if ($exists) {
+                    if ($existingRuleId !== null && $existingRuleId !== '') {
                         continue;
                     }
 
-                    $placeBefore = self::findFirewallDropRuleId($client, $chain);
+                    $placeBefore = self::findFirstFirewallRuleIdInChain($client, $chain);
 
                     $addRequest = (new RouterOS\Request('/ip/firewall/filter/add'))
                         ->setArgument('chain', $chain)
@@ -10335,11 +11139,595 @@ class Mikrotik
                     $client->sendSync($addRequest);
                     $actions[] = 'firewall filter ' . $chain . ' udp/' . $port . ' accept sur « ' . $interface . ' » (DHCP)';
                 } catch (Throwable $e) {
-                    $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' : ' . $e->getMessage();
+                    $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' « ' . $interface . ' » : ' . $e->getMessage();
                 } catch (Exception $e) {
-                    $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' : ' . $e->getMessage();
+                    $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' « ' . $interface . ' » : ' . $e->getMessage();
                 }
             }
+        }
+    }
+
+    public static function ensureHotspotDhcpFirewallPass($client, $interface)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $interface = trim((string) $interface);
+        if ($interface === '') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $errors = [];
+        $actions = [];
+        $comment = 'DYRSIA hotspot DHCP';
+        $interfaces = self::collectHotspotDhcpFirewallInterfaces($client, $interface);
+
+        foreach ($interfaces as $iface) {
+            self::ensureHotspotDhcpFirewallPassForInterface($client, $iface, $comment, $actions, $errors);
+        }
+
+        $gatewayIp = '';
+        $localAddress = self::resolveHotspotLocalAddressFromRouter($client, $interface);
+        if ($localAddress !== '') {
+            $gatewayIp = explode('/', $localAddress, 2)[0];
+        }
+        self::ensureHotspotDhcpFirewallPassBroad($client, $gatewayIp, self::resolveWanOutInterface($client), $actions, $errors);
+        self::ensureHotspotDhcpFirewallPassHotspotChain($client, $actions, $errors);
+        self::ensureHotspotDhcpHsUnauthReturnRules($client, $actions, $errors);
+        self::repositionHotspotDhcpFirewallRulesBatch($client, $actions);
+
+        return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
+    }
+
+    /**
+     * Règles return UDP 67/68 dans hs-unauth / hs-unauth-to (portail avant auth).
+     */
+    private static function ensureHotspotDhcpHsUnauthReturnRules($client, &$actions, &$errors)
+    {
+        $comment = 'DYRSIA hotspot DHCP';
+        $chains = [
+            'hs-unauth' => 'dst-port',
+            'hs-unauth-to' => 'src-port',
+        ];
+        foreach ($chains as $chain => $portKey) {
+            foreach (['67', '68'] as $port) {
+                self::ensureHotspotDhcpFilterReturnRule(
+                    $client,
+                    $chain,
+                    $portKey,
+                    $port,
+                    $comment,
+                    $actions,
+                    $errors
+                );
+            }
+        }
+    }
+
+    private static function ensureHotspotDhcpFilterReturnRule(
+        $client,
+        $chain,
+        $portKey,
+        $port,
+        $comment,
+        &$actions,
+        &$errors
+    ) {
+        $chain = trim((string) $chain);
+        $portKey = trim((string) $portKey);
+        $port = trim((string) $port);
+        if ($chain === '' || $portKey === '' || $port === '') {
+            return;
+        }
+
+        try {
+            $existingRuleId = null;
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', '.id,chain,protocol,action,' . $portKey . ',comment')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('chain') !== $chain) {
+                    continue;
+                }
+                if (strtolower(trim((string) $row->getProperty('protocol'))) !== 'udp') {
+                    continue;
+                }
+                if (trim((string) $row->getProperty($portKey)) !== $port) {
+                    continue;
+                }
+                if (trim((string) $row->getProperty('comment')) !== $comment) {
+                    continue;
+                }
+                $existingRuleId = $row->getProperty('.id');
+                break;
+            }
+
+            if ($existingRuleId !== null && $existingRuleId !== '') {
+                return;
+            }
+
+            $firstRuleId = self::findFirstFirewallRuleIdInChain($client, $chain);
+            $addRequest = (new RouterOS\Request('/ip/firewall/filter/add'))
+                ->setArgument('chain', $chain)
+                ->setArgument('action', 'return')
+                ->setArgument('protocol', 'udp')
+                ->setArgument($portKey, $port)
+                ->setArgument('comment', $comment);
+            if ($firstRuleId !== null && $firstRuleId !== '') {
+                $addRequest->setArgument('place-before', $firstRuleId);
+            }
+            $client->sendSync($addRequest);
+            $actions[] = 'firewall ' . $chain . ' udp/' . $port . ' return (DHCP hotspot)';
+        } catch (Throwable $e) {
+            $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'firewall DHCP ' . $chain . '/' . $port . ' : ' . $e->getMessage();
+        }
+    }
+
+    /**
+     * Raw prerouting : DHCP avant conn-tracking / isolation PPPoE (use-ip-firewall=yes).
+     * N'utilise que le bridge maître — les ports esclaves (wlan1, ether3) rendent les règles invalides.
+     */
+    private static function ensureHotspotDhcpRawPass($client, $interface, &$actions, &$errors)
+    {
+        $interface = trim((string) $interface);
+        if ($interface === '') {
+            return;
+        }
+
+        self::cleanupInvalidHotspotDhcpRawRules($client, $actions);
+
+        $wanInterface = self::resolveWanOutInterface($client);
+        if ($wanInterface === '') {
+            $wanInterface = 'ether1';
+        }
+
+        $commentBroad = 'DYRSIA hotspot DHCP raw broad';
+        foreach (['67', '68'] as $port) {
+            self::ensureHotspotRawRuleByComment(
+                $client,
+                $commentBroad . ' ' . $port,
+                [
+                    'chain' => 'prerouting',
+                    'action' => 'accept',
+                    'protocol' => 'udp',
+                    'dst-port' => $port,
+                    'in-interface' => '!' . $wanInterface,
+                ],
+                $actions,
+                $errors
+            );
+        }
+
+        if (self::isBridgeInterface($client, $interface)) {
+            foreach (['67', '68'] as $port) {
+                self::ensureHotspotRawRuleByComment(
+                    $client,
+                    'DYRSIA hotspot DHCP raw ' . $interface . ' ' . $port,
+                    [
+                        'chain' => 'prerouting',
+                        'action' => 'accept',
+                        'protocol' => 'udp',
+                        'dst-port' => $port,
+                        'in-interface' => $interface,
+                    ],
+                    $actions,
+                    $errors
+                );
+            }
+        }
+    }
+
+    /**
+     * Supprime les règles raw DHCP invalides (ports esclaves d'un bridge).
+     */
+    private static function cleanupInvalidHotspotDhcpRawRules($client, &$actions = null)
+    {
+        try {
+            $removed = 0;
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/raw/print'))
+                    ->setArgument('.proplist', '.id,comment,invalid')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $comment = (string) $row->getProperty('comment');
+                if (strpos($comment, 'DYRSIA hotspot DHCP raw') !== 0) {
+                    continue;
+                }
+                if (strtolower(trim((string) $row->getProperty('invalid'))) !== 'true') {
+                    continue;
+                }
+                $id = $row->getProperty('.id');
+                if ($id === null || $id === '') {
+                    continue;
+                }
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/raw/remove'))
+                        ->setArgument('numbers', $id)
+                );
+                $removed++;
+            }
+            if ($removed > 0 && $actions !== null) {
+                $actions[] = 'raw DHCP invalides supprimées (' . $removed . ')';
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+    }
+
+    /**
+     * Vérifie que le DHCP hotspot est opérationnel après déploiement PPPoE.
+     *
+     * @return array{ok: bool, errors: array<int, string>}
+     */
+    private static function verifyHotspotDhcpCoexistence($client, $interface)
+    {
+        $interface = trim((string) $interface);
+        $errors = [];
+        $dhcpName = self::hotspotDhcpServerName();
+        $dhcpOk = false;
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/dhcp-server/print'))
+                    ->setArgument('.proplist', 'name,interface,disabled,invalid')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('name') !== $dhcpName) {
+                    continue;
+                }
+                if (strtolower(trim((string) $row->getProperty('disabled'))) === 'true') {
+                    $errors[] = 'Serveur DHCP « ' . $dhcpName . ' » désactivé.';
+                    break;
+                }
+                if (strtolower(trim((string) $row->getProperty('invalid'))) === 'true') {
+                    $errors[] = 'Serveur DHCP « ' . $dhcpName . ' » invalide.';
+                    break;
+                }
+                if ($interface !== '' && (string) $row->getProperty('interface') !== $interface) {
+                    $errors[] = 'Serveur DHCP sur « ' . $row->getProperty('interface') . ' » au lieu de « ' . $interface . ' ».';
+                    break;
+                }
+                $dhcpOk = true;
+                break;
+            }
+            if (!$dhcpOk && $errors === []) {
+                $errors[] = 'Serveur DHCP « ' . $dhcpName . ' » introuvable.';
+            }
+
+            $firstDhcp = null;
+            $firstDrop = null;
+            $n = 0;
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', 'chain,action,protocol,dst-port,comment')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('chain') !== 'input') {
+                    continue;
+                }
+                $n++;
+                $comment = (string) $row->getProperty('comment');
+                $dport = trim((string) $row->getProperty('dst-port'));
+                $action = strtolower(trim((string) $row->getProperty('action')));
+                if ($firstDhcp === null && $dport === '67' && strpos($comment, 'DYRSIA hotspot DHCP') === 0) {
+                    $firstDhcp = $n;
+                }
+                if ($firstDrop === null && ($action === 'drop' || stripos($comment, 'drop all') !== false)) {
+                    $firstDrop = $n;
+                }
+            }
+            if ($firstDhcp === null) {
+                $errors[] = 'Aucune règle firewall input DHCP hotspot (DYRSIA).';
+            } elseif ($firstDrop !== null && $firstDhcp >= $firstDrop) {
+                $errors[] = 'Règles DHCP hotspot après le drop firewall (input #' . $firstDhcp . ' vs drop #' . $firstDrop . ').';
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'Vérification DHCP hotspot : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'Vérification DHCP hotspot : ' . $e->getMessage();
+        }
+
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+
+    private static function ensureHotspotRawRuleByComment(
+        $client,
+        $comment,
+        array $args,
+        &$actions,
+        &$errors
+    ) {
+        $comment = trim((string) $comment);
+        if ($comment === '') {
+            return;
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/raw/print'))
+                    ->setArgument('.proplist', '.id,comment')
+                    ->setQuery(RouterOS\Query::where('comment', $comment))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('comment') === $comment) {
+                    return;
+                }
+            }
+
+            $firstRawId = null;
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/raw/print'))
+                    ->setArgument('.proplist', '.id,chain')
+                    ->setQuery(RouterOS\Query::where('chain', 'prerouting'))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $firstRawId = $row->getProperty('.id');
+                break;
+            }
+
+            $addRequest = new RouterOS\Request('/ip/firewall/raw/add');
+            foreach ($args as $key => $value) {
+                $addRequest->setArgument($key, $value);
+            }
+            $addRequest->setArgument('comment', $comment);
+            if ($firstRawId !== null && $firstRawId !== '') {
+                $addRequest->setArgument('place-before', $firstRawId);
+            }
+            $client->sendSync($addRequest);
+            $actions[] = 'raw prerouting DHCP (' . $comment . ')';
+        } catch (Throwable $e) {
+            $errors[] = 'raw DHCP (' . $comment . ') : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'raw DHCP (' . $comment . ') : ' . $e->getMessage();
+        }
+    }
+
+    /**
+     * Repositionne en une passe les règles DYRSIA hotspot DHCP en tête de chaîne.
+     */
+    private static function repositionHotspotDhcpFirewallRulesBatch($client, &$actions = null)
+    {
+        $chains = ['input', 'forward', 'hs-input', 'hs-unauth', 'hs-unauth-to'];
+        $rulesByChain = [];
+        $firstByChain = [];
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', '.id,chain,comment')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $chain = trim((string) $row->getProperty('chain'));
+                $ruleId = trim((string) $row->getProperty('.id'));
+                if ($chain === '' || $ruleId === '') {
+                    continue;
+                }
+                if (!isset($firstByChain[$chain])) {
+                    $firstByChain[$chain] = $ruleId;
+                }
+                $comment = (string) $row->getProperty('comment');
+                if (strpos($comment, 'DYRSIA hotspot DHCP') === 0) {
+                    $rulesByChain[$chain][] = $ruleId;
+                }
+            }
+        } catch (Throwable $e) {
+            return;
+        } catch (Exception $e) {
+            return;
+        }
+
+        foreach ($chains as $chain) {
+            if (empty($rulesByChain[$chain]) || empty($firstByChain[$chain])) {
+                continue;
+            }
+            $firstId = (string) $firstByChain[$chain];
+            $moved = 0;
+            foreach (array_reverse($rulesByChain[$chain]) as $ruleId) {
+                if ($ruleId === $firstId) {
+                    continue;
+                }
+                try {
+                    $client->sendSync(
+                        (new RouterOS\Request('/ip/firewall/filter/move'))
+                            ->setArgument('numbers', $ruleId)
+                            ->setArgument('destination', $firstId)
+                    );
+                    $moved++;
+                } catch (Throwable $e) {
+                } catch (Exception $e) {
+                }
+            }
+            if ($moved > 0 && $actions !== null) {
+                $actions[] = 'firewall batch : ' . $moved . ' règle(s) DHCP en tête (' . $chain . ')';
+            }
+        }
+    }
+
+    /**
+     * Réparation DHCP hotspot rapide après PPPoE (sans setup bridge complet ~3 min).
+     *
+     * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
+     */
+    public static function ensureHotspotDhcpCoexistenceFast($client, array $config)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $resolved = self::resolveHotspotServiceOnRouter($client, $config);
+        if (empty($resolved['active'])) {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $config = self::mergeHotspotCoexistenceConfig($config, $resolved);
+        $config = self::enrichHotspotConfigFromRouter($client, $config);
+
+        $hsIface = trim((string) ($config['hotspot_interface'] ?? $resolved['interface'] ?? 'bridge-hotspot'));
+        if ($hsIface === '') {
+            $hsIface = 'bridge-hotspot';
+        }
+
+        $actions = [];
+        $errors = [];
+
+        $bridgePrep = self::ensureDedicatedHotspotBridge($client, $config);
+        if (!empty($bridgePrep['interface'])) {
+            $hsIface = (string) $bridgePrep['interface'];
+        }
+        $actions = array_merge($actions, $bridgePrep['actions'] ?? []);
+        $errors = array_merge($errors, $bridgePrep['errors'] ?? []);
+
+        $bridgeSettings = self::ensureHotspotBridgeSettings($client);
+        $actions = array_merge($actions, $bridgeSettings['actions'] ?? []);
+        $errors = array_merge($errors, $bridgeSettings['errors'] ?? []);
+
+        $hwResult = self::ensureHotspotBridgePortNoHwOffload($client, $hsIface);
+        $actions = array_merge($actions, $hwResult['actions'] ?? []);
+        $errors = array_merge($errors, $hwResult['errors'] ?? []);
+
+        $bridgeId = self::routerEntityId($client, '/interface/bridge', 'name', $hsIface);
+        if ($bridgeId !== null) {
+            try {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/set'))
+                        ->setArgument('numbers', $bridgeId)
+                        ->setArgument('fast-forward', 'no')
+                );
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        if (self::isBridgeInterface($client, $hsIface)) {
+            $wlanPrep = self::prepareSimpleWlanHotspotInterface($client, $hsIface);
+            $actions = array_merge($actions, $wlanPrep['actions'] ?? []);
+            $errors = array_merge($errors, $wlanPrep['errors'] ?? []);
+
+            $wlanRun = self::ensureHotspotWirelessRunning($client, $hsIface);
+            $actions = array_merge($actions, $wlanRun['actions'] ?? []);
+            $errors = array_merge($errors, $wlanRun['errors'] ?? []);
+        }
+
+        $poolName = trim((string) ($config['hotspot_pool_name'] ?? ''));
+        $poolRange = trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? ''));
+        $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
+        $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
+
+        $dhcpResult = self::ensureHotspotDhcpServer(
+            $client,
+            $hsIface,
+            $poolName,
+            $localAddress,
+            $hotspotName,
+            $poolRange
+        );
+        $actions = array_merge($actions, $dhcpResult['actions'] ?? []);
+        $errors = array_merge($errors, $dhcpResult['errors'] ?? []);
+
+        $wgDhcp = self::ensureHotspotWalledGardenDhcp($client);
+        $actions = array_merge($actions, $wgDhcp['actions'] ?? []);
+        $errors = array_merge($errors, $wgDhcp['errors'] ?? []);
+
+        self::ensureHotspotDhcpRawPass($client, $hsIface, $actions, $errors);
+
+        $anchorsPresent = self::hotspotFirewallAnchorsPresent($client);
+        if (empty($anchorsPresent['filter']) || empty($anchorsPresent['nat'])) {
+            $anchors = self::ensureHotspotFirewallAnchors($client, $hotspotName);
+            $actions = array_merge($actions, $anchors['actions'] ?? []);
+            $errors = array_merge($errors, $anchors['errors'] ?? []);
+        }
+
+        return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
+    }
+
+    /**
+     * Réparation DHCP hotspot minimale après PPPoE (~15–30 s) — sans reconfig bridge complète.
+     *
+     * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
+     */
+    public static function ensureHotspotDhcpCoexistenceEssential($client, array $config)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $resolved = self::resolveHotspotServiceOnRouter($client, $config);
+        if (empty($resolved['active'])) {
+            return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        $config = self::mergeHotspotCoexistenceConfig($config, $resolved);
+        $config = self::enrichHotspotConfigFromRouter($client, $config);
+
+        $hsIface = trim((string) ($config['hotspot_interface'] ?? $resolved['interface'] ?? 'bridge-hotspot'));
+        if ($hsIface === '') {
+            $hsIface = 'bridge-hotspot';
+        }
+
+        $actions = [];
+        $errors = [];
+
+        $bridgeSettings = self::ensureHotspotBridgeSettings($client);
+        $actions = array_merge($actions, $bridgeSettings['actions'] ?? []);
+        $errors = array_merge($errors, $bridgeSettings['errors'] ?? []);
+
+        $hwResult = self::ensureHotspotBridgePortNoHwOffload($client, $hsIface);
+        $actions = array_merge($actions, $hwResult['actions'] ?? []);
+        $errors = array_merge($errors, $hwResult['errors'] ?? []);
+
+        if (self::isBridgeInterface($client, $hsIface)) {
+            $wlanRun = self::ensureHotspotWirelessRunning($client, $hsIface);
+            $actions = array_merge($actions, $wlanRun['actions'] ?? []);
+            $errors = array_merge($errors, $wlanRun['errors'] ?? []);
+        }
+
+        $poolName = trim((string) ($config['hotspot_pool_name'] ?? ''));
+        $poolRange = trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? ''));
+        $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
+        $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
+
+        $dhcpResult = self::ensureHotspotDhcpServer(
+            $client,
+            $hsIface,
+            $poolName,
+            $localAddress,
+            $hotspotName,
+            $poolRange
+        );
+        $actions = array_merge($actions, $dhcpResult['actions'] ?? []);
+        $errors = array_merge($errors, $dhcpResult['errors'] ?? []);
+
+        $wgDhcp = self::ensureHotspotWalledGardenDhcp($client);
+        $actions = array_merge($actions, $wgDhcp['actions'] ?? []);
+        $errors = array_merge($errors, $wgDhcp['errors'] ?? []);
+
+        self::ensureHotspotDhcpRawPass($client, $hsIface, $actions, $errors);
+        self::repositionHotspotDhcpFirewallRulesBatch($client, $actions);
+
+        $verify = self::verifyHotspotDhcpCoexistence($client, $hsIface);
+        if (empty($verify['ok'])) {
+            $errors = array_merge($errors, $verify['errors'] ?? []);
         }
 
         return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
@@ -10440,7 +11828,19 @@ class Mikrotik
         $onEvent = ':delay 5s' . "\r\n"
             . '/interface bridge settings set use-ip-firewall=yes use-ip-firewall-for-vlan=no allow-fast-path=no' . "\r\n"
             . '/interface bridge set ' . $escapedIface . ' fast-forward=no' . "\r\n"
-            . '/interface bridge port set [find bridge=' . $escapedIface . '] hw=no';
+            . '/interface bridge port set [find bridge=' . $escapedIface . '] hw=no' . "\r\n"
+            . '/interface enable [find where name~"^(wlan|wifi)"]' . "\r\n"
+            . '/interface wireless set [find where name~"^wlan"] disabled=no mode=ap-bridge bridge-mode=disabled vlan-mode=no-tag' . "\r\n"
+            . ':if ([:len [/interface wifi find]]>0) do={' . "\r\n"
+            . '  :if ([:len [/interface wifi datapath find where name="dyrsia-hotspot-dp"]]=0) do={ /interface wifi datapath add name=dyrsia-hotspot-dp bridge=' . $escapedIface . ' }' . "\r\n"
+            . '  :if ([:len [/interface wifi configuration find where name="dyrsia-hotspot-ap"]]=0) do={ /interface wifi configuration add name=dyrsia-hotspot-ap mode=ap datapath=dyrsia-hotspot-dp }' . "\r\n"
+            . '  :foreach i in=[/interface wifi find] do={ /interface wifi set $i configuration=dyrsia-hotspot-ap disabled=no }' . "\r\n"
+            . '  /interface bridge port remove [find where interface~"^wifi"]' . "\r\n"
+            . '}' . "\r\n"
+            . ':local gw [/ip address get [find interface=' . $escapedIface . '] address]' . "\r\n"
+            . ':if ([:len $gw]>0) do={ :set gw [:pick $gw 0 [:find $gw "/"]] }' . "\r\n"
+            . '/ip firewall filter add place-before=[find where chain=input] chain=input action=accept protocol=udp dst-port=67 in-interface=!ether1 comment="DYRSIA hotspot DHCP broad" disabled=no' . "\r\n"
+            . '/ip firewall filter add place-before=[find where chain=input] chain=input action=accept protocol=udp dst-port=68 in-interface=!ether1 comment="DYRSIA hotspot DHCP broad" disabled=no';
 
         try {
             $schedulerName = 'dyrsia_hs_boot';
@@ -10687,6 +12087,21 @@ class Mikrotik
         $actions = [];
         $hotspotName = trim((string) $hotspotName);
 
+        $deviceModeBlock = self::hotspotServerDeviceModeStatus($client, $hotspotName);
+        if (!empty($deviceModeBlock['blocked'])) {
+            $deviceMode = self::ensureHotspotDeviceMode($client);
+            $actions = array_merge($actions, $deviceMode['actions'] ?? []);
+            if (empty($deviceMode['ok'])) {
+                $errors[] = $deviceModeBlock['message'];
+                $errors = array_merge($errors, $deviceMode['errors'] ?? []);
+            } else {
+                $deviceModeBlock = self::hotspotServerDeviceModeStatus($client, $hotspotName);
+                if (!empty($deviceModeBlock['blocked'])) {
+                    $errors[] = $deviceModeBlock['message'];
+                }
+            }
+        }
+
         $loginSize = self::getRouterFileSize($client, 'hotspot/login.html');
         if ($loginSize <= 0) {
             $errors[] = 'hotspot/login.html absent sur le routeur apres envoi.';
@@ -10711,7 +12126,7 @@ class Mikrotik
             $serverFound = false;
             foreach ($client->sendSync(
                 (new RouterOS\Request('/ip/hotspot/print'))
-                    ->setArgument('.proplist', '.id,name,disabled')
+                    ->setArgument('.proplist', '.id,name,disabled,invalid,.about')
             ) as $row) {
                 if ($row->getType() === 'trap') {
                     continue;
@@ -10721,6 +12136,16 @@ class Mikrotik
                     continue;
                 }
                 $serverFound = true;
+                if (strtolower(trim((string) $row->getProperty('invalid'))) === 'true') {
+                    $about = trim((string) $row->getProperty('.about'));
+                    $block = self::hotspotServerDeviceModeStatus($client, $name);
+                    if (!empty($block['blocked'])) {
+                        $errors[] = $block['message'];
+                    } else {
+                        $errors[] = 'Serveur hotspot « ' . $name . ' » invalide'
+                            . ($about !== '' ? ' : ' . $about : '') . '.';
+                    }
+                }
                 if ((string) $row->getProperty('disabled') === 'true') {
                     $errors[] = 'Serveur hotspot « ' . ($name !== '' ? $name : $hotspotName) . ' » désactivé.';
                 }
@@ -10998,6 +12423,321 @@ class Mikrotik
     }
 
     /**
+     * Détecte un Hotspot actif sur le routeur (serveur /ip/hotspot, DHCP canonique ou DHCP sur l'interface LAN).
+     *
+     * @return array{
+     *     active: bool,
+     *     interface: string,
+     *     hotspot_name: string,
+     *     pool_name: string,
+     *     local_address: string
+     * }
+     */
+    private static function resolveHotspotServiceOnRouter($client, array $config = [])
+    {
+        $iface = trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot'));
+        if ($iface === '') {
+            $iface = 'bridge-hotspot';
+        }
+
+        $result = [
+            'active' => false,
+            'interface' => $iface,
+            'hotspot_name' => trim((string) ($config['hotspot_name'] ?? '')),
+            'pool_name' => trim((string) ($config['hotspot_pool_name'] ?? '')),
+            'pool_range' => trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? '')),
+            'local_address' => trim((string) ($config['hotspot_local_address'] ?? '')),
+        ];
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', 'name,interface,address-pool,disabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if (strtolower(trim((string) $row->getProperty('disabled'))) === 'true') {
+                    continue;
+                }
+                $result['active'] = true;
+                $hsIface = trim((string) $row->getProperty('interface'));
+                if ($hsIface !== '') {
+                    $result['interface'] = $hsIface;
+                }
+                $hsName = trim((string) $row->getProperty('name'));
+                if ($hsName !== '' && $result['hotspot_name'] === '') {
+                    $result['hotspot_name'] = $hsName;
+                }
+                $pool = trim((string) $row->getProperty('address-pool'));
+                if ($pool !== '' && strtolower($pool) !== 'none' && $result['pool_name'] === '') {
+                    $result['pool_name'] = $pool;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        if (self::routerEntityId($client, '/ip/dhcp-server', 'name', self::hotspotDhcpServerName()) !== null) {
+            $result['active'] = true;
+        }
+
+        if (!$result['active']) {
+            try {
+                foreach ($client->sendSync(
+                    (new RouterOS\Request('/ip/dhcp-server/print'))
+                        ->setArgument('.proplist', 'name,interface,disabled')
+                        ->setQuery(RouterOS\Query::where('interface', $result['interface']))
+                ) as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    if (strtolower(trim((string) $row->getProperty('disabled'))) === 'true') {
+                        continue;
+                    }
+                    $result['active'] = true;
+                    break;
+                }
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        if ($result['local_address'] === '') {
+            try {
+                foreach ($client->sendSync(
+                    (new RouterOS\Request('/ip/address/print'))
+                        ->setArgument('.proplist', 'address,interface')
+                        ->setQuery(RouterOS\Query::where('interface', $result['interface']))
+                ) as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    $addr = trim((string) $row->getProperty('address'));
+                    if ($addr !== '' && strpos($addr, '/') !== false) {
+                        $result['local_address'] = $addr;
+                        break;
+                    }
+                }
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+
+        if ($result['pool_name'] === '') {
+            $resolvedPool = self::resolveHotspotServerPoolName(
+                $client,
+                $result['interface'],
+                $result['hotspot_name']
+            );
+            if ($resolvedPool !== '') {
+                $result['pool_name'] = $resolvedPool;
+            }
+        }
+
+        if ($result['pool_range'] === '' && $result['pool_name'] !== '') {
+            $result['pool_range'] = self::resolveHotspotPoolRangeFromRouter($client, $result['pool_name']);
+        }
+
+        return $result;
+    }
+
+    private static function routerHasHotspotCoexistence($client, array $config = [])
+    {
+        return !empty(self::resolveHotspotServiceOnRouter($client, $config)['active']);
+    }
+
+    /**
+     * Complète la config Hotspot depuis le routeur (PPPoE deploy n'envoie pas toujours tous les champs).
+     *
+     * @return array<string, mixed>
+     */
+    private static function mergeHotspotCoexistenceConfig(array $config, array $resolved)
+    {
+        if (trim((string) ($config['hotspot_interface'] ?? '')) === '' && !empty($resolved['interface'])) {
+            $config['hotspot_interface'] = (string) $resolved['interface'];
+        }
+        if (trim((string) ($config['hotspot_name'] ?? '')) === '' && !empty($resolved['hotspot_name'])) {
+            $config['hotspot_name'] = (string) $resolved['hotspot_name'];
+        }
+        if (trim((string) ($config['hotspot_pool_name'] ?? '')) === '' && !empty($resolved['pool_name'])) {
+            $config['hotspot_pool_name'] = (string) $resolved['pool_name'];
+        }
+        if (trim((string) ($config['hotspot_local_address'] ?? '')) === '' && !empty($resolved['local_address'])) {
+            $config['hotspot_local_address'] = (string) $resolved['local_address'];
+        }
+        if (trim((string) ($config['hotspot_address_pool'] ?? '')) === '' && !empty($resolved['pool_range'])) {
+            $config['hotspot_address_pool'] = (string) $resolved['pool_range'];
+        }
+
+        return $config;
+    }
+
+    private static function resolveHotspotLocalAddressFromRouter($client, $interface)
+    {
+        $interface = trim((string) $interface);
+        if ($interface === '') {
+            return '';
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/address/print'))
+                    ->setArgument('.proplist', 'address,interface')
+                    ->setQuery(RouterOS\Query::where('interface', $interface))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $addr = trim((string) $row->getProperty('address'));
+                if ($addr !== '' && strpos($addr, '/') !== false) {
+                    return $addr;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    private static function resolveHotspotPoolRangeFromRouter($client, $poolName)
+    {
+        $poolName = trim((string) $poolName);
+        if ($poolName === '') {
+            return '';
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/pool/print'))
+                    ->setArgument('.proplist', 'name,ranges')
+                    ->setQuery(RouterOS\Query::where('name', $poolName))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $ranges = trim((string) $row->getProperty('ranges'));
+                if ($ranges !== '') {
+                    return $ranges;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    /**
+     * @return array{address: string, gateway: string}|null
+     */
+    private static function resolveHotspotDhcpNetworkFromRouter($client, $interface, $localAddress = '')
+    {
+        $network = self::parseHotspotLocalNetwork($localAddress);
+        if ($network !== null) {
+            return $network;
+        }
+
+        $localAddress = self::resolveHotspotLocalAddressFromRouter($client, $interface);
+        $network = self::parseHotspotLocalNetwork($localAddress);
+        if ($network !== null) {
+            return $network;
+        }
+
+        $gateway = explode('/', $localAddress, 2)[0] ?? '';
+        if ($gateway === '') {
+            return null;
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/dhcp-server/network/print'))
+                    ->setArgument('.proplist', 'address,gateway')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if (trim((string) $row->getProperty('gateway')) === $gateway) {
+                    $address = trim((string) $row->getProperty('address'));
+                    if ($address !== '') {
+                        return [
+                            'address' => $address,
+                            'gateway' => $gateway,
+                        ];
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return null;
+    }
+
+    /**
+     * Replace une règle firewall existante avant le premier drop/reject si PPPoE l'a repoussée.
+     */
+    private static function repositionFirewallFilterRuleBeforeDrops($client, $chain, $ruleId)
+    {
+        $chain = trim((string) $chain);
+        $ruleId = trim((string) $ruleId);
+        if ($chain === '' || $ruleId === '') {
+            return false;
+        }
+
+        $dropId = self::findFirewallDropRuleId($client, $chain);
+        if ($dropId === null || $dropId === '' || $dropId === $ruleId) {
+            return false;
+        }
+
+        $ruleIndex = null;
+        $dropIndex = null;
+        $index = 0;
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', '.id,chain')
+                    ->setQuery(RouterOS\Query::where('chain', $chain))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $id = (string) $row->getProperty('.id');
+                if ($id === $ruleId) {
+                    $ruleIndex = $index;
+                }
+                if ($id === $dropId) {
+                    $dropIndex = $index;
+                }
+                $index++;
+            }
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+
+        if ($ruleIndex === null || $dropIndex === null || $ruleIndex <= $dropIndex) {
+            return false;
+        }
+
+        try {
+            $client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/move'))
+                    ->setArgument('numbers', $ruleId)
+                    ->setArgument('destination', $dropId)
+            );
+
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
      * Aligne address-pool du serveur /ip hotspot sur le pool DHCP DYRSIA.
      */
     private static function ensureHotspotServerPool($client, $poolName, $hotspotName = '', $interface = '')
@@ -11068,7 +12808,7 @@ class Mikrotik
      *
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
      */
-    public static function ensureHotspotDhcpServer($client, $interface, $poolName = '', $localAddress = '', $hotspotName = '')
+    public static function ensureHotspotDhcpServer($client, $interface, $poolName = '', $localAddress = '', $hotspotName = '', $poolRange = '')
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
@@ -11077,9 +12817,14 @@ class Mikrotik
 
         $interface = trim((string) $interface);
         $poolName = trim((string) $poolName);
+        $poolRange = trim((string) $poolRange);
         $dhcpName = self::hotspotDhcpServerName();
         if ($interface === '') {
             return ['ok' => true, 'errors' => [], 'actions' => []];
+        }
+
+        if ($localAddress === '') {
+            $localAddress = self::resolveHotspotLocalAddressFromRouter($client, $interface);
         }
 
         if ($poolName === '') {
@@ -11110,11 +12855,20 @@ class Mikrotik
             return ['ok' => true, 'errors' => [], 'actions' => []];
         }
 
-        $network = self::parseHotspotLocalNetwork($localAddress);
+        if ($poolRange === '') {
+            $poolRange = self::resolveHotspotPoolRangeFromRouter($client, $poolName);
+        }
+
+        $network = self::resolveHotspotDhcpNetworkFromRouter($client, $interface, $localAddress);
         $errors = [];
         $actions = [];
 
         try {
+            if ($poolRange !== '') {
+                self::setPool($client, $poolName, $poolRange);
+                $actions[] = 'pool DHCP « ' . $poolName . ' » (' . $poolRange . ')';
+            }
+
             $dyrsiaId = self::routerEntityId($client, '/ip/dhcp-server', 'name', $dhcpName);
             if ($dyrsiaId !== null) {
                 $client->sendSync(
@@ -11138,33 +12892,6 @@ class Mikrotik
                 $actions[] = 'DHCP « ' . $dhcpName . ' » créé (pool « ' . $poolName . ' »)';
             }
 
-            foreach ($client->sendSync(
-                (new RouterOS\Request('/ip/dhcp-server/print'))
-                    ->setArgument('.proplist', '.id,name,interface,disabled')
-                    ->setQuery(RouterOS\Query::where('interface', $interface))
-            ) as $row) {
-                if ($row->getType() === 'trap') {
-                    continue;
-                }
-                $name = trim((string) $row->getProperty('name'));
-                if ($name === $dhcpName) {
-                    continue;
-                }
-                $id = $row->getProperty('.id');
-                if ($id === null || $id === '') {
-                    continue;
-                }
-                if (strtolower(trim((string) $row->getProperty('disabled'))) === 'true') {
-                    continue;
-                }
-                $client->sendSync(
-                    (new RouterOS\Request('/ip/dhcp-server/set'))
-                        ->setArgument('numbers', $id)
-                        ->setArgument('disabled', 'yes')
-                );
-                $actions[] = 'DHCP legacy « ' . ($name !== '' ? $name : $interface) . ' » désactivé';
-            }
-
             self::ensureHotspotServerPool($client, $poolName, $hotspotName, $interface);
 
             if ($network !== null) {
@@ -11177,6 +12904,39 @@ class Mikrotik
                     $networkRequest->setArgument('numbers', $networkId);
                 }
                 $client->sendSync($networkRequest);
+                $actions[] = 'réseau DHCP « ' . $network['address'] . ' » (passerelle ' . $network['gateway'] . ')';
+            } else {
+                $errors[] = 'DHCP hotspot : réseau introuvable pour « ' . $interface
+                    . ' » — configurez hotspot_local_address (ex. 10.10.0.1/24).';
+            }
+
+            if ($network !== null) {
+                foreach ($client->sendSync(
+                    (new RouterOS\Request('/ip/dhcp-server/print'))
+                        ->setArgument('.proplist', '.id,name,interface,disabled')
+                        ->setQuery(RouterOS\Query::where('interface', $interface))
+                ) as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    $name = trim((string) $row->getProperty('name'));
+                    if ($name === $dhcpName) {
+                        continue;
+                    }
+                    $id = $row->getProperty('.id');
+                    if ($id === null || $id === '') {
+                        continue;
+                    }
+                    if (strtolower(trim((string) $row->getProperty('disabled'))) === 'true') {
+                        continue;
+                    }
+                    $client->sendSync(
+                        (new RouterOS\Request('/ip/dhcp-server/set'))
+                            ->setArgument('numbers', $id)
+                            ->setArgument('disabled', 'yes')
+                    );
+                    $actions[] = 'DHCP legacy « ' . ($name !== '' ? $name : $interface) . ' » désactivé';
+                }
             }
 
             $dhcpFwResult = self::ensureHotspotDhcpFirewallPass($client, $interface);
@@ -11383,7 +13143,7 @@ class Mikrotik
      *
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
      */
-    public static function ensureHotspotInterceptIntegrity($client, $interface, $localAddress = '', $poolName = '', $hotspotName = '')
+    public static function ensureHotspotInterceptIntegrity($client, $interface, $localAddress = '', $poolName = '', $hotspotName = '', $poolRange = '')
     {
         $errors = [];
         $actions = [];
@@ -11391,7 +13151,7 @@ class Mikrotik
             self::ensureHotspotBridgeFirewall($client, $interface),
             self::ensureHotspotWalledGardenDhcp($client),
             self::ensureHotspotFirewallAnchors($client, $hotspotName),
-            self::ensureHotspotDhcpServer($client, $interface, $poolName, $localAddress, $hotspotName),
+            self::ensureHotspotDhcpServer($client, $interface, $poolName, $localAddress, $hotspotName, $poolRange),
             self::removeHotspotBypassForwardRules($client, $localAddress),
             self::removeHotspotIpBindingBypass($client),
         ] as $result) {
@@ -12457,10 +14217,31 @@ class Mikrotik
             'blockIface' => $blockIface,
             'poolCidr' => $poolCidr,
             'hotspotInterface' => trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot')),
+            'hotspotConfig' => $config,
         ];
 
         $actions = [];
         $errors = [];
+
+        if (self::routerHasHotspotCoexistence($client, $config)) {
+            try {
+                $protect = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($config) {
+                    return self::ensureHotspotDhcpCoexistenceEssential($apiClient, $config);
+                }, 45);
+                if (!empty($protect['actions'])) {
+                    $actions[] = 'Hotspot protégé (avant PPPoE) : '
+                        . implode(', ', array_slice($protect['actions'], 0, 4))
+                        . (count($protect['actions']) > 4 ? '…' : '');
+                }
+                if (!empty($protect['errors'])) {
+                    $errors = array_merge($errors, $protect['errors']);
+                }
+            } catch (Throwable $e) {
+                $errors[] = 'Protection hotspot avant PPPoE : ' . $e->getMessage();
+            } catch (Exception $e) {
+                $errors[] = 'Protection hotspot avant PPPoE : ' . $e->getMessage();
+            }
+        }
 
         try {
             $coreResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($coreParams) {
@@ -12474,6 +14255,16 @@ class Mikrotik
             }, 30);
             if (is_array($extraActions)) {
                 $actions = array_merge($actions, $extraActions);
+            }
+
+            $coexistResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($config) {
+                return self::ensureHotspotCoexistenceAfterPppoe($apiClient, $config);
+            }, 45);
+            if (!empty($coexistResult['actions'])) {
+                $actions[] = 'Hotspot protégé après infra PPPoE : ' . implode(', ', $coexistResult['actions']);
+            }
+            if (!empty($coexistResult['errors'])) {
+                $errors = array_merge($errors, $coexistResult['errors']);
             }
         } catch (Throwable $e) {
             $errors[] = $e->getMessage();
@@ -12495,50 +14286,7 @@ class Mikrotik
      */
     public static function ensureHotspotCoexistenceAfterPppoe($client, array $config)
     {
-        global $_app_stage;
-        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
-            return ['ok' => true, 'errors' => [], 'actions' => []];
-        }
-
-        if (!self::routerEntityId($client, '/ip/dhcp-server', 'name', self::hotspotDhcpServerName())) {
-            return ['ok' => true, 'errors' => [], 'actions' => []];
-        }
-
-        $hsIface = trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot'));
-        if ($hsIface === '') {
-            $hsIface = 'bridge-hotspot';
-        }
-
-        $actions = [];
-        $errors = [];
-
-        $bridgePrep = self::ensureDedicatedHotspotBridge($client, $config);
-        if (!empty($bridgePrep['interface'])) {
-            $hsIface = (string) $bridgePrep['interface'];
-        }
-        $actions = array_merge($actions, $bridgePrep['actions'] ?? []);
-        $errors = array_merge($errors, $bridgePrep['errors'] ?? []);
-
-        $bf = self::ensureHotspotBridgeFirewall($client, $hsIface);
-        $actions = array_merge($actions, $bf['actions'] ?? []);
-        $errors = array_merge($errors, $bf['errors'] ?? []);
-
-        $poolName = trim((string) ($config['hotspot_pool_name'] ?? ''));
-        $localAddress = trim((string) ($config['hotspot_local_address'] ?? ''));
-        $hotspotName = trim((string) ($config['hotspot_name'] ?? ''));
-        $dhcp = self::ensureHotspotDhcpServer($client, $hsIface, $poolName, $localAddress, $hotspotName);
-        $actions = array_merge($actions, $dhcp['actions'] ?? []);
-        $errors = array_merge($errors, $dhcp['errors'] ?? []);
-
-        $wgDhcp = self::ensureHotspotWalledGardenDhcp($client);
-        if (!empty($wgDhcp['actions'])) {
-            $actions = array_merge($actions, $wgDhcp['actions']);
-        }
-        if (!empty($wgDhcp['errors'])) {
-            $errors = array_merge($errors, $wgDhcp['errors']);
-        }
-
-        return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
+        return self::ensureHotspotDhcpCoexistenceEssential($client, $config);
     }
 
     /**
@@ -12557,12 +14305,14 @@ class Mikrotik
     {
         global $config;
         $appConfig = is_array($config) ? $config : [];
-        $setupConfig = self::normalizePppoeSetupConfig($setupConfig);
+        $setupConfig = self::normalizePppoeSetupConfig(array_merge($appConfig, $setupConfig));
         self::resetMikrotikReconnectBudget(6);
         $routerArray = is_array($routerRow)
             ? $routerRow
             : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
         $routerName = trim((string) ($setupConfig['pppoe_setup_router'] ?? ($routerArray['name'] ?? '')));
+
+        WifiZoneHotspot::loadHotspotConfigForDeploy($setupConfig, $routerName);
 
         $infra = self::consolidatePppoeRouterSetup($client, $setupConfig, $routerArray, $admin);
         $actions = $infra['actions'] ?? [];
@@ -12591,6 +14341,15 @@ class Mikrotik
         }
 
         self::setClientSocketTimeout($client, 45);
+
+        $coexistBefore = self::ensureHotspotCoexistenceAfterPppoe($client, $setupConfig);
+        if (!empty($coexistBefore['actions'])) {
+            $actions[] = 'Hotspot préservé (avant PPPoE) : ' . implode(', ', $coexistBefore['actions']);
+        }
+        if (!empty($coexistBefore['errors'])) {
+            $errors = array_merge($errors, $coexistBefore['errors']);
+        }
+
         self::ensurePppoeExpiredPlanDb($routerName, $admin);
         $planSync = self::syncPppoePlans($client, $routerName, $admin);
         if (!empty($planSync['upserted'])) {
@@ -12618,7 +14377,7 @@ class Mikrotik
 
         $coexistence = self::ensureHotspotCoexistenceAfterPppoe($client, $setupConfig);
         if (!empty($coexistence['actions'])) {
-            $actions[] = 'coexistence Hotspot : ' . implode(', ', $coexistence['actions']);
+            $actions[] = 'Hotspot réparé (après PPPoE) : ' . implode(', ', $coexistence['actions']);
         }
         if (!empty($coexistence['errors'])) {
             $errors = array_merge($errors, $coexistence['errors']);

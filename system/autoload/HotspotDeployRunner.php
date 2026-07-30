@@ -26,10 +26,24 @@ class HotspotDeployRunner
         $cmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobPath)
             . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
 
+        $spawned = false;
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            pclose(popen('start /B ' . $cmd, 'r'));
+            $spawned = pclose(popen('start /B ' . $cmd, 'r')) !== false;
         } else {
-            exec($cmd . ' &');
+            exec($cmd . ' & echo $!', $spawnOut, $spawnCode);
+            $spawned = $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
+        }
+        if (!$spawned) {
+            @file_put_contents(
+                $logFile,
+                date('c') . " spawn failed: {$cmd}\n",
+                FILE_APPEND
+            );
+            self::markJobFailed(
+                $jobPath,
+                'Impossible de lancer le worker hotspot (exec désactivé ?). '
+                . 'Relancez ./dev-server.sh depuis Terminal.app avec WireGuard actif.'
+            );
         }
     }
 
