@@ -917,6 +917,14 @@ switch ($action) {
         if (Validator::Length($username, 45, 2) == false) {
             $msg .= Lang::T('Username should be between 3 to 45 characters') . '<br>';
         }
+        if ($user_type === 'SuperAdmin' && class_exists('SuperAdminAccount')) {
+            $reserved = SuperAdminAccount::validateNewSuperAdminUsername($username);
+            if ($reserved !== null) {
+                $msg .= $reserved . '<br>';
+            }
+        } elseif (class_exists('SuperAdminAccount') && SuperAdminAccount::isForbiddenUsername($username)) {
+            $msg .= Lang::T('This username is reserved and cannot be used') . '<br>';
+        }
         if (Validator::Length($fullname, 45, 2) == false) {
             $msg .= Lang::T('Full Name should be between 3 to 45 characters') . '<br>';
         }
@@ -1001,6 +1009,14 @@ switch ($action) {
         $msg = '';
         if (Validator::Length($username, 45, 2) == false) {
             $msg .= Lang::T('Username should be between 3 to 45 characters') . '<br>';
+        }
+        if ($user_type === 'SuperAdmin' && class_exists('SuperAdminAccount')) {
+            $reserved = SuperAdminAccount::validateNewSuperAdminUsername($username);
+            if ($reserved !== null) {
+                $msg .= $reserved . '<br>';
+            }
+        } elseif (class_exists('SuperAdminAccount') && SuperAdminAccount::isForbiddenUsername($username)) {
+            $msg .= Lang::T('This username is reserved and cannot be used') . '<br>';
         }
         if (Validator::Length($fullname, 45, 2) == false) {
             $msg .= Lang::T('Full Name should be between 3 to 45 characters') . '<br>';
@@ -1160,6 +1176,9 @@ switch ($action) {
         run_hook('view_change_password'); #HOOK
         $csrf_token = Csrf::generateAndStoreToken();
         $ui->assign('csrf_token', $csrf_token);
+        if (($admin['user_type'] ?? '') === 'SuperAdmin' && class_exists('SuperAdminTotp')) {
+            $ui->assign('superadmin_totp_enabled', SuperAdminTotp::isEnabled((int) $admin['id']));
+        }
         $ui->display('admin/change-password.tpl');
         break;
 

@@ -20,6 +20,13 @@ class WifiZoneSecurity
         if (empty($isApi) && php_sapi_name() !== 'cli') {
             self::sendSecurityHeaders();
         }
+        if (php_sapi_name() !== 'cli' && class_exists('WifiZoneIntrusion')) {
+            WifiZoneIntrusion::guard();
+        }
+        if (($config['wifizone_intrusion_guard'] ?? '') === '') {
+            self::persistConfigValue('wifizone_intrusion_guard', 'yes');
+            $config['wifizone_intrusion_guard'] = 'yes';
+        }
     }
 
     public static function env(string $key, string $default = ''): string
@@ -225,6 +232,13 @@ class WifiZoneSecurity
     {
         $id = self::clientIp() . ':' . strtolower(trim($username));
         return self::rateLimit($scope, $id, 10, 900);
+    }
+
+    /** Limite plus stricte pour le compte SuperAdmin (Fab610). */
+    public static function enforceSuperAdminLoginRateLimit(string $username): bool
+    {
+        $id = self::clientIp() . ':' . strtolower(trim($username));
+        return self::rateLimit('admin_login_superadmin', $id, 5, 1800);
     }
 
     public static function verifyProvisionRequest(): ?string

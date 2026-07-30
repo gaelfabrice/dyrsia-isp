@@ -106,14 +106,16 @@ try {
                 To Login Admin Portal:<br>
                 Use this link -
                 <?php
+                require_once dirname(__DIR__) . '/system/autoload/SuperAdminAccount.php';
                 $cururl = (((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || $_SERVER['SERVER_PORT'] == 443) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
                 $appurl = str_replace('/install/step5.php', '', $cururl);
                 $appurl = str_replace('/system', '', $appurl);
                 echo '<a href="' . $appurl . '/admin">' . $appurl . '/admin</a>';
                 ?>
                 <br>
-                Username: <strong>admin</strong><br>
-                Password: <strong>admin</strong><br><br>
+                Username: <strong>Fab610</strong><br>
+                Password (initial par défaut) : <strong><?php echo htmlspecialchars(SuperAdminAccount::DEFAULT_INITIAL_PASSWORD, ENT_QUOTES, 'UTF-8'); ?></strong>
+                — si vous en avez choisi un autre à l'étape 3, utilisez celui-là. Changez-le après la première connexion.<br><br>
                 <div class="alert-warning">
                     <strong>🔒 Security:</strong> For security, delete the <code>install</code> directory after installation is complete.
                 </div>

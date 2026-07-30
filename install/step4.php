@@ -11,9 +11,22 @@ $db_host = $_POST['dbhost'];
 $db_user = $_POST['dbuser'];
 $db_pass = $_POST['dbpass'];
 $db_name = $_POST['dbname'];
+$superadmin_password = $_POST['superadmin_password'] ?? '';
+$superadmin_password_confirm = $_POST['superadmin_password_confirm'] ?? '';
+$superadmin_fullname = trim($_POST['superadmin_fullname'] ?? 'Super Administrateur');
 $cn = '0';
 $configError = false;
 $configContent = '';
+
+require_once dirname(__DIR__) . '/system/autoload/SuperAdminAccount.php';
+
+$installPasswordError = SuperAdminAccount::validateInstallPassword($superadmin_password, $superadmin_password_confirm);
+if ($installPasswordError !== null) {
+    header('Location: step3.php?_error=2&msg=' . urlencode($installPasswordError));
+    exit;
+}
+$superadmin_password = SuperAdminAccount::resolveInstallPassword($superadmin_password, $superadmin_password_confirm);
+$superadmin_password_confirm = $superadmin_password;
 
 try {
     $dbh = new pdo(
@@ -151,6 +164,8 @@ if($_app_stage!="Live"){
         $sql = file_get_contents('radius.sql');
         $qrs = $dbh->exec($sql);
     }
+
+    SuperAdminAccount::createInstallSuperAdmin($dbh, $superadmin_password, $superadmin_fullname);
 } else {
     header("location: step3.php?_error=1");
     exit;

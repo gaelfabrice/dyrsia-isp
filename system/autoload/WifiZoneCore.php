@@ -11,6 +11,13 @@ class WifiZoneCore
         self::installSchema();
         self::ensureUsersLoginTokenColumn();
         self::ensureConfig();
+        if (class_exists('SuperAdminAccount')) {
+            SuperAdminAccount::maybeMigrateLegacyAdmin();
+            SuperAdminAccount::maybeApplyInitialDefaultPassword();
+        }
+        if (class_exists('SuperAdminTotp')) {
+            SuperAdminTotp::ensureSchema();
+        }
         self::applyProductionAppconfig();
         self::applyLocaleDefaults();
         self::applyBrandDefaults();
@@ -264,6 +271,22 @@ class WifiZoneCore
                 hits INT DEFAULT 1,
                 window_start INT NOT NULL,
                 UNIQUE KEY uk_scope (scope, identifier)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+            "CREATE TABLE IF NOT EXISTS wifizone_ip_block (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                ip VARCHAR(64) NOT NULL,
+                reason VARCHAR(128) NOT NULL DEFAULT '',
+                blocked_until INT NOT NULL,
+                strikes INT NOT NULL DEFAULT 1,
+                updated_at INT NOT NULL,
+                UNIQUE KEY uk_ip (ip),
+                INDEX idx_blocked_until (blocked_until)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+            "CREATE TABLE IF NOT EXISTS wifizone_admin_totp (
+                admin_id INT UNSIGNED NOT NULL PRIMARY KEY,
+                secret_enc TEXT NOT NULL,
+                enabled_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
             "CREATE TABLE IF NOT EXISTS wifizone_fcm_tokens (
                 id INT AUTO_INCREMENT PRIMARY KEY,

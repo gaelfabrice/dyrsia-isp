@@ -421,30 +421,9 @@ COMMIT;
 
 INSERT INTO
     `tbl_appconfig` (`id`, `setting`, `value`)
-VALUES (1, 'CompanyName', 'PHPNuxBill'), (2, 'currency_code', 'Rp.'), (3, 'language', 'english'), (4, 'show-logo', '1'), (5, 'nstyle', 'blue'), (6, 'timezone', 'Asia/Jakarta'), (7, 'dec_point', ','), (8, 'thousands_sep', '.'), (9, 'rtl', '0'), (10, 'address', ''), (11, 'phone', ''), (12, 'date_format', 'd M Y'), (13, 'note', 'Thank you...');
+VALUES (1, 'CompanyName', 'PHPNuxBill'), (2, 'currency_code', 'Rp.'), (3, 'language', 'english'), (4, 'show-logo', '1'), (5, 'nstyle', 'blue'), (6, 'timezone', 'Asia/Jakarta'), (7, 'dec_point', ','), (8, 'thousands_sep', '.'), (9, 'rtl', '0'), (10, 'address', ''), (11, 'phone', ''), (12, 'date_format', 'd M Y'), (13, 'note', 'Thank you...'), (14, 'superadmin_fab610_migrated', 'yes');
 
-
-INSERT INTO
-    `tbl_users` (
-        `id`,
-        `username`,
-        `fullname`,
-        `password`,
-        `user_type`,
-        `status`,
-        `last_login`,
-        `creationdate`
-    )
-VALUES (
-        1,
-        'admin',
-        'Administrator',
-        'd033e22ae348aeb5660fc2140aec35850c4da997',
-        'SuperAdmin',
-        'Active',
-        '2022-09-06 16:09:50',
-        '2014-06-23 01:43:07'
-    );
+-- SuperAdmin créé à l'installation (step4) : identifiant Fab610 + mot de passe choisi (plus de admin/admin).
 
 INSERT INTO `tbl_widgets` (`id`, `orders`, `position`, `user`, `enabled`, `title`, `widget`, `content`) VALUES
 (1, 1, 1, 'Admin', 1, 'Top Widget', 'top_widget', ''),

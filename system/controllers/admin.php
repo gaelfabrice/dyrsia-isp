@@ -229,6 +229,10 @@ switch ($do) {
         exit;
 
     case 'post':
+        if (class_exists('WifiZoneIntrusion') && !WifiZoneIntrusion::verifyLoginPost()) {
+            _log(WifiZoneSecurity::clientIp() . ' ' . Lang::T('Failed Login') . ' [intrusion honeypot]', 'Admin');
+            _alert(Lang::T('Invalid Username or Password') . '.', 'danger', 'admin');
+        }
         $username = _post('username');
         $password = _post('password');
         //csrf token
@@ -238,6 +242,16 @@ switch ($do) {
         }
         run_hook('admin_login'); #HOOK
         if ($username != '' and $password != '') {
+            if (class_exists('SuperAdminAccount') && SuperAdminAccount::isBlockedLoginUsername($username)) {
+                _log($username . ' ' . Lang::T('Failed Login') . ' [reserved username]', 'Admin');
+                _alert(Lang::T('Invalid Username or Password') . '.', 'danger', 'admin');
+            }
+            $isSuperAdminLogin = class_exists('SuperAdminAccount')
+                && strcasecmp(trim($username), SuperAdminAccount::DEFAULT_USERNAME) === 0;
+            if ($isSuperAdminLogin && !WifiZoneSecurity::enforceSuperAdminLoginRateLimit($username)) {
+                _log($username . ' ' . Lang::T('Failed Login') . ' [superadmin rate limit]', 'Admin');
+                _alert(Lang::T('Too_many_attempts__Please_try_again_later_'), 'danger', 'admin');
+            }
             if (!WifiZoneSecurity::enforceLoginRateLimit('admin_login', $username)) {
                 _log($username . ' ' . Lang::T('Failed Login') . ' [rate limit]', 'Admin');
                 _alert(Lang::T('Too_many_attempts__Please_try_again_later_'), 'danger', "admin");
@@ -251,6 +265,10 @@ switch ($do) {
             }
             if ($d) {
                 $d_pass = $d['password'];
+                if (($d['user_type'] ?? '') === 'SuperAdmin' && !WifiZoneSecurity::enforceSuperAdminLoginRateLimit($username)) {
+                    _log($username . ' ' . Lang::T('Failed Login') . ' [superadmin rate limit]', 'Admin');
+                    _alert(Lang::T('Too_many_attempts__Please_try_again_later_'), 'danger', 'admin');
+                }
                 if ($d['status'] != 'Active' && !DemoShowcase::isShowcaseUser($d->as_array())) {
                     _alert(Lang::T('This account status') . ' : ' . Lang::T($d['status']), 'danger', "admin");
                 }
@@ -262,44 +280,152 @@ switch ($do) {
                     $newHash = Password::upgradeStoredHash($password, $d_pass);
                     if ($newHash !== null) {
                         $d->password = $newHash;
-                    }
-                    $_SESSION['aid'] = $adminId;
-                    $_SESSION['user_type'] = $d['user_type'];
-                    DemoShowcase::onLogin($adminId);
-                    try {
-                        $token = Admin::setCookie($adminId);
-                        $d->last_login = date('Y-m-d H:i:s');
                         $d->save();
-                        _log($username . ' ' . Lang::T('Login Successful'), $d['user_type'], $adminId);
-                    } catch (Throwable $e) {
-                        error_log('wifizone admin login post-save: ' . $e->getMessage());
-                        $token = '';
                     }
-                    if ($isApi) {
-                        if ($token) {
-                            showResult(true, Lang::T('Login Successful'), ['token' => "a." . $token]);
-                        } else {
-                            showResult(false, Lang::T('Invalid Username or Password'));
+                    if (class_exists('SuperAdminTotp') && SuperAdminTotp::requiresTotp($d->as_array())) {
+                        if ($isApi) {
+                            if (!SuperAdminTotp::isEnabled($adminId)) {
+                                showResult(false, Lang::T('SuperAdmin_2FA_setup_required_web'));
+                            }
+                            $totpCode = trim((string) _post('totp_code'));
+                            if ($totpCode === '' || !SuperAdminTotp::enforceVerifyRateLimit($adminId)) {
+                                showResult(false, Lang::T('SuperAdmin_2FA_invalid_code'));
+                            }
+                            if (!SuperAdminTotp::verifyCodeForAdmin($adminId, $totpCode)) {
+                                if (class_exists('WifiZoneIntrusion')) {
+                                    WifiZoneIntrusion::recordAuthFailure('admin_totp');
+                                }
+                                showResult(false, Lang::T('SuperAdmin_2FA_invalid_code'));
+                            }
+                            SuperAdminTotp::clearPending();
+                            SuperAdminTotp::finalizeLogin($d, $username);
                         }
+                        SuperAdminTotp::beginPending(
+                            $adminId,
+                            SuperAdminTotp::isEnabled($adminId) ? 'verify' : 'setup'
+                        );
+                        r2(getUrl('admin/2fa'));
                     }
-                    if (!empty($_SESSION['tenant_slug'])) {
-                        _alert(Lang::T('Login Successful'), 'success', 'dashboard_tenant=' . $_SESSION['tenant_slug']);
-                    } else {
-                        _alert(Lang::T('Login Successful'), 'success', "dashboard");
-                    }
+                    SuperAdminTotp::finalizeLogin($d, $username);
                 } else {
+                    if (class_exists('WifiZoneIntrusion')) {
+                        WifiZoneIntrusion::recordAuthFailure('admin');
+                    }
                     _log($username . ' ' . Lang::T('Failed Login'), $d['user_type']);
                     _alert(Lang::T('Invalid Username or Password') . ".", 'danger', "admin");
                 }
             } else {
+                if (class_exists('WifiZoneIntrusion')) {
+                    WifiZoneIntrusion::recordAuthFailure('admin');
+                }
                 _alert(Lang::T('Invalid Username or Password') . "..", 'danger', "admin");
             }
         } else {
+            if (class_exists('WifiZoneIntrusion')) {
+                WifiZoneIntrusion::recordAuthFailure('admin');
+            }
             _alert(Lang::T('Invalid Username or Password') . "...", 'danger', "admin");
         }
 
         break;
+
+    case '2fa-qr':
+        if (!class_exists('SuperAdminTotp')) {
+            http_response_code(404);
+            exit;
+        }
+        $pending = SuperAdminTotp::pending();
+        if (!$pending || $pending['mode'] !== 'setup') {
+            http_response_code(403);
+            exit;
+        }
+        $user = ORM::for_table('tbl_users')->find_one($pending['user_id']);
+        if (!$user || ($user['user_type'] ?? '') !== 'SuperAdmin') {
+            http_response_code(403);
+            exit;
+        }
+        $secret = SuperAdminTotp::ensureSetupSecret();
+        SuperAdminTotp::sendQrPng(SuperAdminTotp::provisioningUri($secret, (string) $user['username']));
+        break;
+
+    case '2fa':
+        $pending = class_exists('SuperAdminTotp') ? SuperAdminTotp::pending() : null;
+        if (!$pending) {
+            r2(getUrl('admin'));
+        }
+        SuperAdminTotp::touchPending();
+        $user = ORM::for_table('tbl_users')->find_one($pending['user_id']);
+        if (!$user || ($user['user_type'] ?? '') !== 'SuperAdmin') {
+            SuperAdminTotp::clearPending();
+            r2(getUrl('admin'));
+        }
+        $csrf_token = Csrf::generateAndStoreToken();
+        $ui->assign('csrf_token', $csrf_token);
+        $ui->assign('totp_mode', $pending['mode']);
+        $ui->assign('totp_username', $user['username']);
+        if ($pending['mode'] === 'setup') {
+            $secret = SuperAdminTotp::ensureSetupSecret();
+            $uri = SuperAdminTotp::provisioningUri($secret, (string) $user['username']);
+            $ui->assign('totp_secret', $secret);
+            $ui->assign('totp_uri', $uri);
+            $ui->assign('totp_qr_url', SuperAdminTotp::qrImageUrl($uri));
+        }
+        $ui->display('admin/admin/totp.tpl');
+        break;
+
+    case '2fa-post':
+        if (!class_exists('SuperAdminTotp')) {
+            r2(getUrl('admin'));
+        }
+        $csrf_token = _post('csrf_token');
+        if (!Csrf::check($csrf_token)) {
+            r2(getUrl('admin/2fa'), 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+        }
+        $pending = SuperAdminTotp::pending();
+        if (!$pending) {
+            r2(getUrl('admin'));
+        }
+        SuperAdminTotp::touchPending();
+        $user = ORM::for_table('tbl_users')->find_one($pending['user_id']);
+        if (!$user || ($user['user_type'] ?? '') !== 'SuperAdmin') {
+            SuperAdminTotp::clearPending();
+            r2(getUrl('admin'));
+        }
+        $code = preg_replace('/\D/', '', trim((string) _post('totp_code')));
+        if (strlen($code) !== 6) {
+            r2(getUrl('admin/2fa'), 'e', Lang::T('SuperAdmin_2FA_invalid_code'));
+        }
+        if (!SuperAdminTotp::enforceVerifyRateLimit((int) $user['id'])) {
+            r2(getUrl('admin/2fa'), 'e', Lang::T('Too_many_attempts__Please_try_again_later_'));
+        }
+        if ($pending['mode'] === 'setup') {
+            if (!SuperAdminTotp::verifySetupCode($code)) {
+                if (class_exists('WifiZoneIntrusion')) {
+                    WifiZoneIntrusion::recordAuthFailure('admin_totp_setup');
+                }
+                r2(getUrl('admin/2fa'), 'e', Lang::T('SuperAdmin_2FA_invalid_code'));
+            }
+            $secret = SuperAdminTotp::ensureSetupSecret();
+            SuperAdminTotp::enableForAdmin((int) $user['id'], $secret);
+            SuperAdminTotp::clearPending();
+            _log($user['username'] . ' SuperAdmin 2FA activé', 'System', (int) $user['id']);
+            SuperAdminTotp::finalizeLogin($user, (string) $user['username']);
+            break;
+        }
+        if (!SuperAdminTotp::verifyCodeForAdmin((int) $user['id'], $code)) {
+            if (class_exists('WifiZoneIntrusion')) {
+                WifiZoneIntrusion::recordAuthFailure('admin_totp');
+            }
+            r2(getUrl('admin/2fa'), 'e', Lang::T('SuperAdmin_2FA_invalid_code'));
+        }
+        SuperAdminTotp::clearPending();
+        SuperAdminTotp::finalizeLogin($user, (string) $user['username']);
+        break;
+
     default:
+        if (class_exists('SuperAdminTotp') && SuperAdminTotp::pending()) {
+            r2(getUrl('admin/2fa'));
+        }
         run_hook('view_login'); #HOOK
         $csrf_token = Csrf::generateAndStoreToken();
         $ui->assign('csrf_token', $csrf_token);

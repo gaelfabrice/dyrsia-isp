@@ -123,6 +123,7 @@
             color: #021014; font-size: 13px; font-weight: 900; cursor: pointer;
         }
         .signin:hover { filter: brightness(1.06); }
+        .wz-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
         .back-link {
             display: block; text-align: center; margin-top: 16px;
             color: var(--brand2); text-decoration: none; font-size: 12px; font-weight: 900;
@@ -177,6 +178,10 @@
                 {/if}
                 <form action="{Text::url('admin/post')}" method="post">
                     <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                    <div class="wz-hp" aria-hidden="true">
+                        <label for="wz_company_url">Company website</label>
+                        <input type="text" name="wz_company_url" id="wz_company_url" value="" tabindex="-1" autocomplete="off">
+                    </div>
                     <div class="form-field">
                         <label>{Lang::T('Username')}</label>
                         <div class="input-wrap">

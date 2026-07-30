@@ -26,6 +26,21 @@
 								</div>
 							</div>
 
+							{if isset($superadmin_totp_enabled)}
+							<div class="form-group">
+								<div class="col-md-offset-2 col-md-8">
+									<div class="alert alert-info">
+										<strong>{Lang::T('SuperAdmin_2FA_title')}</strong>:
+										{if $superadmin_totp_enabled}
+											{Lang::T('SuperAdmin_2FA_status_enabled')}
+										{else}
+											{Lang::T('SuperAdmin_2FA_status_disabled')}
+										{/if}
+									</div>
+								</div>
+							</div>
+							{/if}
+
 							<div class="form-group">
 								<div class="col-lg-offset-2 col-lg-10">
 									<button class="btn btn-success" type="submit">{Lang::T('Save Changes')}</button>

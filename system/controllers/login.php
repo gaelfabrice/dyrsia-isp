@@ -22,6 +22,10 @@ if (isset($routes['1'])) {
 
 switch ($do) {
     case 'post':
+        if (class_exists('WifiZoneIntrusion') && !WifiZoneIntrusion::verifyLoginPost()) {
+            _msglog('e', Lang::T('Invalid Username or Password'));
+            r2(getUrl('login'));
+        }
         $username = _post('username');
         $password = _post('password');
         $csrf_token = _post('csrf_token');
@@ -68,15 +72,24 @@ switch ($do) {
                     }
                     _alert(Lang::T('Login Successful'), 'success', "home");
                 } else {
+                    if (class_exists('WifiZoneIntrusion')) {
+                        WifiZoneIntrusion::recordAuthFailure('customer');
+                    }
                     _msglog('e', Lang::T('Invalid Username or Password'));
                     _log($username . ' ' . Lang::T('Failed Login'), 'User');
                     r2(getUrl('portal'));
                 }
             } else {
+                if (class_exists('WifiZoneIntrusion')) {
+                    WifiZoneIntrusion::recordAuthFailure('customer');
+                }
                 _msglog('e', Lang::T('Invalid Username or Password'));
                 r2(getUrl('portal'));
             }
         } else {
+            if (class_exists('WifiZoneIntrusion')) {
+                WifiZoneIntrusion::recordAuthFailure('customer');
+            }
             _msglog('e', Lang::T('Invalid Username or Password'));
             r2(getUrl('portal'));
         }
