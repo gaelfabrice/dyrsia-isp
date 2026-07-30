@@ -1,86 +1,170 @@
 {include file="sections/header.tpl"}
 <style>
-    /* Styles for overall layout and responsiveness */
-    body {
-        background-color: #f8f9fa;
-        font-family: 'Arial', sans-serif;
-        padding: 0;
-        margin: 0;
+    body.wz-command .content.wz-admin-content:has(.hv-page) {
+        padding-top: 18px !important;
     }
-
-    .container {
-        margin-top: 20px;
-        background-color: #d8dfe5;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        padding: 20px;
-        max-width: 98%;
-        overflow-x: auto;
+    .hv-page {
+        max-width: 100%;
+        padding-bottom: 24px;
+    }
+    .hv-hero {
+        display: flex;
         flex-wrap: wrap;
+        align-items: flex-start;
         justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 20px;
+    }
+    .hv-hero h1 {
+        margin: 0 0 6px;
+        font-size: 26px;
+        font-weight: 800;
+        color: var(--wz-p-heading, #fff);
+        letter-spacing: -0.02em;
+    }
+    .hv-hero p {
+        margin: 0;
+        color: var(--wz-p-muted, #94a3b8);
+        font-size: 14px;
+        max-width: 520px;
+    }
+    .hv-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
         align-items: center;
     }
-
-    /* Styles for table and pagination */
-    .table {
+    .hv-card {
+        background: var(--wz-p-card, rgba(15, 23, 42, 0.92));
+        border: 1px solid var(--wz-p-line, rgba(148, 163, 184, 0.18));
+        border-radius: var(--wz-p-radius, 16px);
+        box-shadow: var(--wz-p-shadow, 0 12px 40px rgba(0, 0, 0, 0.22));
+        padding: 18px;
+        margin-bottom: 18px;
+        color: var(--wz-p-text, #f8fafc);
+    }
+    .hv-card-title {
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--wz-p-muted, #94a3b8);
+        margin: 0 0 12px;
+    }
+    .hv-mac-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+    }
+    .hv-mac-row .form-group { margin-bottom: 0; flex: 1; min-width: 200px; }
+    .hv-router-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 16px;
+        list-style: none;
+        padding: 0;
+    }
+    .hv-router-tabs a {
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 14px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 13px;
+        border: 1px solid var(--wz-p-line, rgba(148, 163, 184, 0.25));
+        color: var(--wz-p-text, #e2e8f0);
+        background: rgba(255, 255, 255, 0.04);
+        text-decoration: none;
+        transition: border-color 0.2s, background 0.2s;
+    }
+    .hv-router-tabs li.active a,
+    .hv-router-tabs a:hover {
+        border-color: var(--wz-p-brand, #2563eb);
+        background: rgba(37, 99, 235, 0.15);
+        color: var(--wz-p-heading, #fff);
+        text-decoration: none;
+    }
+    .hv-page .table {
         width: 100%;
-        margin-bottom: 1rem;
-        background-color: #fff;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 0;
+        background: transparent !important;
+        color: var(--wz-p-text, #f8fafc);
     }
-
-    .table th {
+    .hv-page .table > thead > tr > th {
+        background: rgba(15, 23, 42, 0.85) !important;
+        color: var(--wz-p-heading, #fff) !important;
+        border-color: var(--wz-p-line, rgba(148, 163, 184, 0.2)) !important;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
         vertical-align: middle;
-        border-color: #dee2e6;
-        background-color: #343a40;
-        color: #fff;
     }
-
-    .table td {
+    .hv-page .table > tbody > tr > td {
+        border-color: var(--wz-p-line, rgba(148, 163, 184, 0.15)) !important;
         vertical-align: middle;
-        border-color: #dee2e6;
+        color: var(--wz-p-text, #e2e8f0);
     }
-
-    .table-striped tbody tr:nth-of-type(odd) {
-        background-color: rgba(0, 0, 0, 0.05);
+    .hv-page .table-striped > tbody > tr:nth-of-type(odd) {
+        background: rgba(255, 255, 255, 0.03);
     }
-
-    .table-hover tbody tr:hover {
-        background-color: rgba(0, 0, 0, 0.075);
-        color: #333;
-        font-weight: bold;
-        transition: background-color 0.3s, color 0.3s;
+    .hv-page .table-hover > tbody > tr:hover {
+        background: rgba(37, 99, 235, 0.08) !important;
     }
-
-    .pagination .page-item .page-link {
-        color: #007bff;
-        background-color: #fff;
-        border: 1px solid #dee2e6;
-        margin: 0 2px;
-        padding: 6px 12px;
-        transition: background-color 0.3s, color 0.3s;
-    }
-
-    .pagination .page-item .page-link:hover {
-        background-color: #e9ecef;
-        color: #0056b3;
-    }
-
-    .pagination .page-item.active .page-link {
-        z-index: 1;
-        color: #fff;
-        background-color: #007bff;
-        border-color: #007bff;
-    }
-
-    .dataTables_wrapper .dataTables_paginate .paginate_button {
+    .hv-code {
         display: inline-block;
-        padding: 5px 10px;
-        margin-right: 5px;
-        border: 1px solid #ccc;
-        background-color: #fff;
-        color: #333;
-        cursor: pointer;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: rgba(16, 185, 129, 0.12);
+        border: 1px solid rgba(16, 185, 129, 0.35);
+        color: #6ee7b7;
+    }
+    body.wz-command.theme-light .hv-code {
+        color: #047857;
+        background: #ecfdf5;
+        border-color: #a7f3d0;
+    }
+    .hv-table-wrap {
+        overflow-x: auto;
+        border-radius: 12px;
+        border: 1px solid var(--wz-p-line, rgba(148, 163, 184, 0.15));
+    }
+    .hv-footer-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: flex-end;
+        margin-top: 16px;
+    }
+    .hv-empty-routers {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--wz-p-muted, #94a3b8);
+    }
+    .hv-page .dataTables_wrapper .dataTables_length,
+    .hv-page .dataTables_wrapper .dataTables_filter,
+    .hv-page .dataTables_wrapper .dataTables_info {
+        color: var(--wz-p-muted, #94a3b8) !important;
+    }
+    .hv-page .dataTables_wrapper .dataTables_filter input,
+    .hv-page .dataTables_wrapper .dataTables_length select {
+        background: rgba(15, 23, 42, 0.6) !important;
+        border: 1px solid var(--wz-p-line, rgba(148, 163, 184, 0.25)) !important;
+        color: var(--wz-p-text, #f8fafc) !important;
+        border-radius: 8px;
+        padding: 6px 10px;
+    }
+    body.wz-command.theme-light .hv-page .dataTables_wrapper .dataTables_filter input,
+    body.wz-command.theme-light .hv-page .dataTables_wrapper .dataTables_length select {
+        background: #fff !important;
+        color: #1e293b !important;
     }
 </style>
 {if isset($message)}
@@ -92,70 +176,48 @@
 </div>
 {/if}
 
-<div class="box box-solid box-default" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 20px;">
-    <div class="row">
-<form action="{$_url}plugin/hotspot_voucher_bulk_lock" method="post">
-            <div class="col-md-4">
-                <label><strong>Global MAC Lock Control:</strong></label>
-<select name="lock_status" class="form-control">
-    <option value="1" {if $global_mac_lock == 1}selected{/if}>
-        Enable Lock for All Vouchers
-    </option>
-    <option value="0" {if $global_mac_lock == 0}selected{/if}>
-        Disable Lock for All Vouchers
-    </option>
-</select>
-            </div>
-            <div class="col-md-4" style="margin-top: 25px;">
-                <button type="submit" class="btn btn-primary" onclick="return confirm('এটি আপনার সকল পুরনো এবং নতুন ভাউচারের লক স্ট্যাটাস পরিবর্তন করবে। আপনি কি নিশ্চিত?')">
-                    Save
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- voucher -->
-<div class="row" style="padding: 5px">
-    <div class="col-lg-3 col-lg-offset-9">
-        <div class="btn-group btn-group-justified" role="group">
-            <div class="btn-group" role="group">
-                <a href="#" class="btn btn-primary" data-toggle="modal" data-target="#create"><i
-                        class="ion ion-android-add"></i>
-                    {Lang::T('Generate')}</a>
-            </div>
-            <div class="btn-group" role="group">
-                <a href="{$_url}plugin/hotspot_voucherPrint" target="print_voucher" class="btn btn-info"><i
-                        class="ion ion-android-print"></i> Print All</a>
-            </div>
+<div class="wz-page hv-page">
+    <div class="hv-hero">
+        <div>
+            <h1><i class="ion ion-card"></i> {Lang::T('Hotspot Voucher Code Generator')}</h1>
+            <p>{Lang::T('Generate, print and manage hotspot vouchers for your routers.')}</p>
+        </div>
+        <div class="hv-actions">
+            <a href="#" class="btn btn-primary" data-toggle="modal" data-target="#create">
+                <i class="ion ion-android-add"></i> {Lang::T('Generate')}
+            </a>
+            <a href="{$_url}plugin/hotspot_voucherPrint" target="print_voucher" class="btn btn-default">
+                <i class="ion ion-android-print"></i> {Lang::T('Print All')}
+            </a>
         </div>
     </div>
-</div>
-<div class="panel panel-hovered mb20 panel-primary">
-    <div class="panel-heading">
-        <!-- {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
-        <div class="btn-group pull-right">
-            <a class="btn btn-danger btn-xs" title="Remove used Voucher" href="{$_url}plugin/hotspot_voucher"
-                onclick="return confirm('Delete all used voucher code?')"><span class="glyphicon glyphicon-trash"
-                    aria-hidden="true"></span> Delete All</a>
-        </div>
-        {/if} -->
-        &nbsp;
+
+    <div class="hv-card">
+        <p class="hv-card-title"><i class="fa fa-lock"></i> {Lang::T('Global MAC Lock Control')}</p>
+        <form action="{$_url}plugin/hotspot_voucher_bulk_lock" method="post" class="hv-mac-row">
+            <div class="form-group">
+                <select name="lock_status" class="form-control">
+                    <option value="1" {if $global_mac_lock == 1}selected{/if}>{Lang::T('Enable Lock for All Vouchers')}</option>
+                    <option value="0" {if $global_mac_lock == 0}selected{/if}>{Lang::T('Disable Lock for All Vouchers')}</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary" onclick="return confirm('{Lang::T('This will change MAC lock status for all vouchers on this router. Continue?')|escape:'javascript'}')">
+                {Lang::T('Save')}
+            </button>
+        </form>
     </div>
 
-
-    <div class="container">
-        &nbsp;<form class="form-horizontal" method="post" role="form" action="{$_url}plugin/hotspot_voucher">
-            <ul class="nav nav-tabs">
-                {foreach $routers as $r}
-                <li role="presentation" {if $r['name']==$router}class="active" {/if}>
-                    <a href="{$_url}plugin/hotspot_voucher/{$r['name']}">{$r['name']}</a>
-                </li>
-                {/foreach}
-            </ul>
-        </form>
-        &nbsp;&nbsp;
-        <table id="datatable" class="table table-bordered table-striped table-condensed">
+    <div class="hv-card">
+        {if $routers|@count > 0}
+        <ul class="hv-router-tabs">
+            {foreach $routers as $r}
+            <li role="presentation" {if $r['name']==$router}class="active"{/if}>
+                <a href="{$_url}plugin/hotspot_voucher/{$r['name']|escape:'url'}"><i class="fa fa-server"></i> {$r['name']|escape}</a>
+            </li>
+            {/foreach}
+        </ul>
+        <div class="hv-table-wrap">
+        <table id="datatable" class="table table-bordered table-striped table-hover">
             <thead>
                 <tr>
                     <th><input type="checkbox" id="select-all"></th>
@@ -177,12 +239,8 @@
                     <td><input type="checkbox" name="voucher_ids[]" value="{$ds['id']}"></td>
                     <td>{$ds['id']}</td>
                     <td>{$ds['server']}</td>
-                    <td>{$ds['name_plan']}</td>
-                    <td style="background-color: black; color: black;"
-                        onmouseleave="this.style.backgroundColor = 'black';"
-                        onmouseenter="this.style.backgroundColor = 'white';">
-                        {$ds['code']}
-                    </td>
+                    <td>{$ds['name_plan']|escape}</td>
+                    <td><span class="hv-code">{$ds['code']|escape}</span></td>
                     <td>{$ds['price']}</td>
                     <td>
                         {if $ds.is_used}
@@ -244,28 +302,21 @@
                 {/foreach}
             </tbody>
         </table>
-        <br>
-        <div class="row" style="padding: 5px">
-            <div class="col-lg-3 col-lg-offset-9">
-                <div class="btn-group btn-group-justified" role="group">
-                    <div class="btn-group" role="group">
-                        {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
-                        <button id="deleteSelectedVouchers" class="btn btn-danger">{Lang::T('Delete
-                            Selected')}</button>
-                        {/if}
-                    </div>
-                    <div class="btn-group" role="group">
-                        <button id="printSelectedVouchers" class="btn btn-success">{Lang::T('Print
-                            Selected')}</button>
-                    </div>
-                </div>
-            </div>
         </div>
-        <!-- <button id="printSelectedVouchers" class="btn btn-block btn-primary">Print Selected</button>
-            <button id="deleteSelectedVouchers" class="btn btn-block btn-danger">Delete Selected Vouchers</button> -->
-
+        <div class="hv-footer-actions">
+            {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
+            <button id="deleteSelectedVouchers" class="btn btn-danger"><i class="fa fa-trash"></i> {Lang::T('Delete Selected')}</button>
+            {/if}
+            <button id="printSelectedVouchers" class="btn btn-success"><i class="fa fa-print"></i> {Lang::T('Print Selected')}</button>
+        </div>
+        {else}
+        <div class="hv-empty-routers">
+            <p><i class="fa fa-server fa-2x"></i></p>
+            <p>{Lang::T('No routers found. Add a router in Network first.')}</p>
+            <a href="{Text::url('routers/add')}" class="btn btn-primary btn-sm">{Lang::T('Add Router')}</a>
+        </div>
+        {/if}
     </div>
-    &nbsp;
 </div>
 <form id="printVouchersForm" method="POST" action="{$_url}plugin/hotspot_voucher_print">
     <input type="hidden" name="voucherIds" id="voucherIdsInput">
@@ -552,15 +603,22 @@
     const $j = jQuery.noConflict();
 
     $j(document).ready(function () {
-        $j('#datatable').DataTable({
-            "pagingType": "full_numbers",
-            "order": [
-                [1, 'desc']
-            ]
-        });
+        if ($j('#datatable').length) {
+            $j('#datatable').DataTable({
+                pagingType: 'full_numbers',
+                order: [[1, 'desc']],
+                language: {
+                    emptyTable: '{Lang::T('No Data')|escape:'javascript'}',
+                    search: '{Lang::T('Search')|escape:'javascript'}:',
+                    lengthMenu: '{Lang::T('Show')} _MENU_'
+                }
+            });
+        }
     });
 
-    document.getElementById('printSelectedVouchers').addEventListener('click', function () {
+    var printSelectedBtn = document.getElementById('printSelectedVouchers');
+    if (printSelectedBtn) {
+    printSelectedBtn.addEventListener('click', function () {
         var selectedVouchers = [];
         document.querySelectorAll('input[name="voucher_ids[]"]:checked').forEach(function (checkbox) {
             selectedVouchers.push(checkbox.value);
@@ -573,6 +631,7 @@
             alert('Please select at least one voucher to print.');
         }
     });
+    }
 
     var $ = jQuery.noConflict();
     $(document).ready(function () {

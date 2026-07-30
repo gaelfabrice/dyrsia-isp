@@ -11,7 +11,7 @@ $ui->assign('_system_menu', 'settings');
 $action = $routes['1'];
 $ui->assign('_admin', $admin);
 
-if (in_array($action, ['app', 'app-post', 'miscellaneous', 'miscellaneous-post', 'maintenance', 'maintenance-post', 'devices', 'dbstatus']) && $admin['user_type'] != 'SuperAdmin') {
+if (in_array($action, ['app', 'app-post', 'miscellaneous', 'miscellaneous-post', 'maintenance', 'maintenance-post', 'devices', 'dbstatus', 'notifications', 'notifications-post', 'smtp', 'smtp-post']) && $admin['user_type'] != 'SuperAdmin') {
     _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
 }
 
@@ -109,7 +109,7 @@ function settings_users_apply_search($query, $search)
 
 switch ($action) {
     case 'smtp':
-        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        if ($admin['user_type'] !== 'SuperAdmin') {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
         $smtpDefaults = [
@@ -135,7 +135,7 @@ switch ($action) {
         if ($_app_stage == 'Demo') {
             r2(getUrl('settings/smtp'), 'e', 'You cannot perform this action in Demo mode');
         }
-        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        if ($admin['user_type'] !== 'SuperAdmin') {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
         $csrf_token = _post('csrf_token');
@@ -1207,7 +1207,7 @@ switch ($action) {
         break;
 
     case 'notifications':
-        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        if ($admin['user_type'] !== 'SuperAdmin') {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
         run_hook('view_notifications'); #HOOK
@@ -1226,7 +1226,7 @@ switch ($action) {
         if ($_app_stage == 'Demo') {
             r2(getUrl('settings/notifications'), 'e', 'You cannot perform this action in Demo mode');
         }
-        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        if ($admin['user_type'] !== 'SuperAdmin') {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
         $csrf_token = _post('csrf_token');

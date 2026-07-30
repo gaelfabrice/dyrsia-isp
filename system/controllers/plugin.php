@@ -40,6 +40,11 @@ if (in_array($pluginFn, $publicPlugins, true)) {
     _admin();
 }
 
+$superAdminOnlyPlugins = ['hotspot_mac_update'];
+if (in_array($pluginFn, $superAdminOnlyPlugins, true) && ($admin['user_type'] ?? '') !== 'SuperAdmin') {
+    _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+}
+
 if ($pluginFn === 'hotspot_log' && !function_exists('hotspot_log')) {
     function hotspot_log()
     {

@@ -236,6 +236,7 @@
             {/if}
         </div>
 
+        {if $_admin['user_type'] eq 'SuperAdmin'}
         <div class="wz-cc-card">
             <div class="wz-cc-card-title"><i class="fa fa-bell"></i> {Lang::T('Notification')}</div>
             <div class="wz-service-row">{Lang::T('Email Notification')}: <span class="wz-badge-{if $notification_status.email|default:false}active{else}warning{/if}">{if $notification_status.email|default:false}{Lang::T('Enabled')}{else}{Lang::T('Not configured')}{/if}</span></div>
@@ -243,6 +244,7 @@
             <div class="wz-service-row">{Lang::T('Telegram notification')}: <span class="wz-badge-{if $notification_status.telegram|default:false}active{else}expired{/if}">{if $notification_status.telegram|default:false}{Lang::T('Enabled')}{else}{Lang::T('Disabled')}{/if}</span></div>
             <a href="{Text::url('settings/notifications')}" class="wz-cc-btn wz-cc-btn-muted" style="width:100%;margin-top:12px;text-align:center;display:block;text-decoration:none"><i class="fa fa-cog"></i> {Lang::T('Configure Alerts')}</a>
         </div>
+        {/if}
 
         <div class="wz-cc-card">
             <div class="wz-cc-card-title"><i class="fa fa-sitemap"></i> {Lang::T('ISP Reseller Plan')}</div>

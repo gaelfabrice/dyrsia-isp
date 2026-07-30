@@ -40,6 +40,7 @@ system/paymentgateway/**
 !system/plugin/pppoe_pg-campay.php
 !system/plugin/backup.php
 !system/plugin/olt_management.php
+!system/plugin/hotspot_mac_update.php
 !system/plugin/ui/
 system/plugin/ui/*
 !system/plugin/ui/index.html

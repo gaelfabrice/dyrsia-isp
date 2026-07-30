@@ -502,6 +502,33 @@
         return array_values(array_unique($names));
     }
 
+    function hotspot_scoped_router_query($admin)
+    {
+        return AdminScope::applyRoutersQuery(ORM::for_table('tbl_routers'), $admin);
+    }
+
+    function hotspot_scoped_plan_query($admin)
+    {
+        return AdminScope::applyPlansQuery(ORM::for_table('tbl_plans'), $admin);
+    }
+
+    function hotspot_admin_owns_router_name($admin, $routerName)
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName === '') {
+            return false;
+        }
+        if (!AdminScope::isScoped($admin)) {
+            return true;
+        }
+        $row = hotspot_scoped_router_query($admin)->where('name', $routerName)->find_one();
+        if ($row) {
+            return true;
+        }
+
+        return (bool) hotspot_scoped_router_query($admin)->where('description', $routerName)->find_one();
+    }
+
     function hotspot_payments_query_for_admin($admin)
     {
         $q = ORM::for_table('tbl_hotspot_payments');
@@ -3542,8 +3569,12 @@
             $ui->assign('message', '<em>' . Lang::T("Payment Gateway is missing, you can purchase payment gateway plugin from ") . ' <a href="https://shop.stcncrm.xyz">shop.stcncrm.xyz</a>' . ' ' . ' ' . Lang::T("or Contact ") . ' ' . '<a href="https://t.me/smbilling">Mahmud</a>' . ' ' . Lang::T("for more informations") . '</em>');
         }
         
-        $routers = ORM::for_table('tbl_routers')->where('enabled', '1')->find_many();
+        $routers = hotspot_scoped_router_query($admin)->where('enabled', '1')->find_many();
         $router = $routes['2'] ?? '';
+
+        if ($router !== '' && !hotspot_admin_owns_router_name($admin, $router)) {
+            $router = '';
+        }
 
         if (empty($router) && !empty($routers)) {
             $router = $routers[0]['name'];
@@ -3552,8 +3583,9 @@
         $ui->assign('routers', $routers);
         $ui->assign('router', $router);
         
-        // ===== GLOBAL MAC LOCK STATUS LOAD =====
+        // ===== GLOBAL MAC LOCK STATUS LOAD (routeur courant) =====
     $globalLock = ORM::for_table('tbl_hotspot_vouchers')
+        ->where('server', $router)
         ->select_expr('MAX(mac_lock)', 'lock_status')
         ->find_one();
 
@@ -3570,8 +3602,13 @@
 
     function hotspot_getVouchers($router)
     {
+        global $admin;
         // Initialize an empty array for Mikrotik vouchers
         $mikrotikVouchers = [];
+
+        if (!$router || !hotspot_admin_owns_router_name($admin, $router)) {
+            return [];
+        }
 
         if ($router) {
             $mikrotik = ORM::for_table('tbl_routers')->where('name', $router)->find_one();
@@ -3619,7 +3656,7 @@
             return false;
         }
         // Fetch data from the database
-        $dbVouchers = ORM::for_table('tbl_plans')
+        $dbVouchers = hotspot_scoped_plan_query($admin)
             ->where('routers', $router)
             ->inner_join('tbl_hotspot_vouchers', ['tbl_plans.id', '=', 'tbl_hotspot_vouchers.plan_id'])
             ->select('tbl_plans.*')
@@ -3654,8 +3691,8 @@
                 ->where_in('id', $adminIds)
                 ->find_many();
 
-            foreach ($adminUsers as $admin) {
-                $adminUsernames[$admin['id']] = $admin['fullname'];
+            foreach ($adminUsers as $adminUser) {
+                $adminUsernames[$adminUser['id']] = $adminUser['fullname'];
             }
         }
 
@@ -3674,15 +3711,16 @@
 
         foreach ($dbVouchers as &$voucher) {
             $voucherName = $voucher['code'];
+            $generatedById = $voucher['generated_by'];
 
             $voucher['is_used'] = isset($mikrotikVouchers[$voucherName]) ? $mikrotikVouchers[$voucherName]['is_used'] : false;
 
             if ($voucher['is_admin']) {
-                $voucher['generated_by'] = $adminUsernames[$voucher['generated_by']] ?? 'Unknown Admin';
-                $voucher['admin_id'] = $admin['id'];
+                $voucher['generated_by'] = $adminUsernames[$generatedById] ?? 'Unknown Admin';
+                $voucher['admin_id'] = $generatedById;
             } else {
-                $voucher['generated_by'] = $resellerUsernames[$voucher['generated_by']] ?? 'Unknown Reseller';
-                $voucher['admin_id'] = $reseller['id'];
+                $voucher['generated_by'] = $resellerUsernames[$generatedById] ?? 'Unknown Reseller';
+                $voucher['admin_id'] = $generatedById;
             }
         }
         return $dbVouchers;
@@ -3711,6 +3749,7 @@
     function hotspot_voucherPrint($voucherIds = null)
     {
         global $config;
+        $admin = Admin::_info();
 
         // Build the query to fetch vouchers
         $query = ORM::for_table('tbl_hotspot_vouchers')
@@ -3730,6 +3769,20 @@
                 'data_unit' => 'tbl_plans.data_unit',
                 'id' => 'tbl_hotspot_vouchers.id',
             ]);
+
+        if (AdminScope::isScoped($admin)) {
+            $adminId = AdminScope::adminId($admin);
+            $routerNames = AdminScope::routerNames($adminId);
+            if ($routerNames === []) {
+                $query->where('tbl_plans.admin_id', $adminId);
+            } else {
+                $placeholders = implode(',', array_fill(0, count($routerNames), '?'));
+                $query->where_raw(
+                    '(tbl_plans.admin_id = ? OR tbl_hotspot_vouchers.server IN (' . $placeholders . '))',
+                    array_merge([$adminId], $routerNames)
+                );
+            }
+        }
 
         if ($voucherIds === null) {
             $vouchers = $query->find_many();
@@ -3953,6 +4006,21 @@
                     ->where_in('id', $voucherIds)
                     ->find_many();
 
+                $vouchers = array_values(array_filter($vouchers, function ($voucher) use ($admin) {
+                    if (!hotspot_admin_owns_router_name($admin, (string) ($voucher['server'] ?? ''))) {
+                        return false;
+                    }
+                    $plan = ORM::for_table('tbl_plans')->find_one((int) ($voucher['plan_id'] ?? 0));
+                    if (!$plan) {
+                        return false;
+                    }
+                    if (AdminScope::isScoped($admin) && (int) $plan->admin_id !== AdminScope::adminId($admin)) {
+                        return false;
+                    }
+
+                    return true;
+                }));
+
                 if ($vouchers) {
                     foreach ($vouchers as $voucher) {
                         $server = $voucher['server'];
@@ -3969,8 +4037,11 @@
                     }
 
                     // Delete vouchers from the database
+                    $allowedIds = array_map(function ($voucher) {
+                        return (int) $voucher['id'];
+                    }, $vouchers);
                     ORM::for_table('tbl_hotspot_vouchers')
-                        ->where_in('id', $voucherIds)
+                        ->where_in('id', $allowedIds)
                         ->delete_many();
 
                     echo json_encode([
@@ -4163,10 +4234,22 @@
 
     function hotspot_voucher_getData()
     {
+        $admin = Admin::_info();
+
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Sales'])) {
+            echo json_encode(['success' => false, 'message' => 'Forbidden']);
+            return;
+        }
+
         if (isset($_POST['server'])) {
             $server = htmlspecialchars($_POST['server'], ENT_QUOTES, 'UTF-8');
 
-            $vouchers = ORM::for_table('tbl_plans')
+            if (!hotspot_admin_owns_router_name($admin, $server)) {
+                echo json_encode(['success' => false, 'message' => 'Invalid request']);
+                return;
+            }
+
+            $vouchers = hotspot_scoped_plan_query($admin)
                 ->where('routers', $server)
                 ->inner_join('tbl_hotspot_vouchers', ['tbl_plans.id', '=', 'tbl_hotspot_vouchers.plan_id'])
                 ->left_outer_join('tbl_users', ['tbl_hotspot_vouchers.generated_by', '=', 'tbl_users.id'])
@@ -4282,6 +4365,12 @@
     function hotspot_GenerateVoucher()
     {
         global $config;
+        $admin = Admin::_info();
+
+        if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin', 'Sales'])) {
+            r2(U . 'dashboard', 'e', Lang::T('You do not have permission to access this page'));
+            return;
+        }
 
         if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $server = _post('server') ?? '';
@@ -4313,8 +4402,23 @@
                 return;
             }
 
+            if (!hotspot_admin_owns_router_name($admin, $server)) {
+                r2($_SERVER['HTTP_REFERER'], 'e', Lang::T('You do not have permission to access this page'));
+                return;
+            }
+
             $planDetails = ORM::for_table('tbl_plans')->find_one($plan);
             if (!$planDetails) {
+                r2($_SERVER['HTTP_REFERER'], 'e', Lang::T("Invalid plan selected."));
+                return;
+            }
+
+            if (AdminScope::isScoped($admin) && (int) $planDetails->admin_id !== AdminScope::adminId($admin)) {
+                r2($_SERVER['HTTP_REFERER'], 'e', Lang::T("Invalid plan selected."));
+                return;
+            }
+
+            if (trim((string) $planDetails->routers) !== trim((string) $server)) {
                 r2($_SERVER['HTTP_REFERER'], 'e', Lang::T("Invalid plan selected."));
                 return;
             }

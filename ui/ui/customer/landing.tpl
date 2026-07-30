@@ -864,7 +864,7 @@
                     <a class="btn btn-ghost" href="#pricing">Tarifs</a>
                     <a class="btn btn-ghost" href="{Text::url('faq')}"><i class="fa fa-question-circle"></i> FAQ</a>
                     <a class="btn" href="{Text::url('provision')}"><i class="fa fa-rocket"></i> Essai gratuit</a>
-                    <a class="btn btn-primary" href="{Text::url('admin/')}"><i class="fa fa-lock"></i> Admin</a>
+                    <a class="btn btn-primary" href="{Text::url('admin/')}"><i class="fa fa-sign-in"></i> Se connecter</a>
                 </div>
             </nav>
         </div>

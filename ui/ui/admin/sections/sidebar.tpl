@@ -147,7 +147,7 @@
             </li>
             {$_MENU_AFTER_NETWORKS}
 
-            {if $_c['radius_enable']}
+            {if $_c['radius_enable'] && $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
             <li class="header wz-nav-section">{Lang::T('Radius')}</li>
             <li class="{if $_system_menu eq 'radius'}active menu-open{/if} treeview">
                 <a href="#"><i class="fa fa-database"></i> <span class="wz-nav-label">{Lang::T('Radius')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
@@ -159,13 +159,12 @@
             {/if}
             {$_MENU_AFTER_RADIUS}
 
+            {if $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
             <li class="header wz-nav-section">{Lang::T('Notification')}</li>
             <li class="{if $_system_menu eq 'pages' || ($_system_menu eq 'settings' && in_array($_routes[1], ['notifications','app','smtp'])) || $_system_menu eq 'superadmin_notifications' || ($_routes[0] eq 'superadmin' && $_routes[1] eq 'notifications')}active menu-open{/if} treeview">
                 <a href="#"><i class="ion ion-android-notifications"></i> <span class="wz-nav-label">{Lang::T('Notification')}</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>
                 <ul class="treeview-menu">
-                    {if $_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false}
                     <li {if $_routes[0] eq 'superadmin' && $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('superadmin/notifications')}">Telegram Config</a></li>
-                    {/if}
                     <li {if $_routes[1] eq 'notifications'}class="active"{/if}><a href="{Text::url('settings/notifications')}">{Lang::T('User_notification')}</a></li>
                     <li {if $_routes[1] eq 'app'}class="active"{/if}><a href="{Text::url('settings/app')}">{Lang::T('Reminder_Notification')}</a></li>
                     <li {if $_routes[0] eq 'plugin' && $_routes[1] eq 'whatsappGateway'}class="active"{/if}><a href="{Text::url('plugin/whatsappGateway')}">WhatsApp Gateway</a></li>
@@ -173,6 +172,7 @@
                     {$_MENU_NOTIFICATION}
                 </ul>
             </li>
+            {/if}
             {/if}
 
             {if $_admin['user_type'] eq 'Admin' || ($_admin['user_type'] eq 'SuperAdmin' && !$impersonation_active|default:false)}

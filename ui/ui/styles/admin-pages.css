@@ -105,7 +105,7 @@ body.wz-command .content-wrapper:has(.wz-orbit-page) > .content-header,
 body.wz-command .content-wrapper:has(.rx-page) > .content-header,
 body.wz-command .content-wrapper:has(.rv-page) > .content-header,
 body.wz-command .content-wrapper:has(.sub-page) > .content-header,
-body.wz-command .content-wrapper:has(.isp-page) > .content-header {
+body.wz-command .content-wrapper:has(.hv-page) > .content-header {
     display: none !important;
 }
 

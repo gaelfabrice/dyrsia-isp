@@ -1786,5 +1786,13 @@
     "Login_as_this_customer_": "Login as this customer?",
     "Current_Password": "Current Password",
     "New_Password": "New Password",
-    "Confirm_New_Password": "Confirm New Password"
+    "Confirm_New_Password": "Confirm New Password",
+    "New_NAS": "New NAS",
+    "For_Radius_REST__you_don_t_need_to_add_NAS__NAS_need_to_add_to_client_conf_manually": "For Radius REST, you don't need to add NAS, NAS need to add to client.conf manually",
+    "Hotspot_Voucher_Code_Generator": "Hotspot Voucher Code Generator",
+    "Generate__print_and_manage_hotspot_vouchers_for_your_routers_": "Generate, print and manage hotspot vouchers for your routers.",
+    "Global_MAC_Lock_Control": "Global MAC Lock Control",
+    "Enable_Lock_for_All_Vouchers": "Enable Lock for All Vouchers",
+    "Disable_Lock_for_All_Vouchers": "Disable Lock for All Vouchers",
+    "This_will_change_MAC_lock_status_for_all_vouchers_on_this_router__Continue_": "This will change MAC lock status for all vouchers on this router. Continue?"
 }
