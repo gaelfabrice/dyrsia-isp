@@ -250,6 +250,15 @@
     function collectPayment() {
         var phone = normalizePhone(phoneInput ? phoneInput.value : '');
         if (phone.length !== 9) {
+            var fallback = defaultLocalPhone();
+            if (fallback.length === 9) {
+                phone = fallback;
+                if (phoneInput) {
+                    phoneInput.value = fallback;
+                }
+            }
+        }
+        if (phone.length !== 9) {
             if (typeof Swal !== 'undefined') {
                 Swal.fire('Numéro invalide', 'Entrez un numéro Mobile Money valide (9 chiffres).', 'warning');
             } else {
@@ -307,6 +316,15 @@
                     alert('Connexion impossible');
                 }
             });
+    }
+
+    if (phoneInput) {
+        phoneInput.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                collectPayment();
+            }
+        });
     }
 
     if (form) {

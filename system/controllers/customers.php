@@ -81,6 +81,42 @@ function customersFindScoped($id, $admin)
         ->find_one();
 }
 
+/** Périmètre propriétaire pour unicité login / PPPoE (multi-admin). */
+function customersTenantOwnerId($admin, $customerRow = null)
+{
+    if ($customerRow !== null) {
+        return (int) ($customerRow['created_by'] ?? $customerRow->created_by ?? 0);
+    }
+
+    return (int) ($admin['id'] ?? 0);
+}
+
+/**
+ * Client existant (même admin) utilisant ce login comme username ou pppoe_username.
+ *
+ * @param array|object|null $customerRow client en cours d’édition (pour owner id)
+ */
+function customersFindLoginConflict($login, $admin, $excludeCustomerId = 0, $customerRow = null)
+{
+    $login = trim((string) $login);
+    if ($login === '') {
+        return null;
+    }
+    $ownerId = customersTenantOwnerId($admin, $customerRow);
+    if ($ownerId <= 0) {
+        return null;
+    }
+
+    $query = ORM::for_table('tbl_customers')
+        ->where('created_by', $ownerId)
+        ->where_raw('(username = ? OR pppoe_username = ?)', [$login, $login]);
+    if ($excludeCustomerId > 0) {
+        $query->where_not_equal('id', (int) $excludeCustomerId);
+    }
+
+    return $query->find_one();
+}
+
 /** @return true|string true on success, error message otherwise */
 function customersDeleteOne($id, $admin)
 {
@@ -875,9 +911,12 @@ switch ($action) {
             }
         }
 
-        $d = ORM::for_table('tbl_customers')->where('username', $username)->find_one();
-        if ($d) {
+        if (customersFindLoginConflict($username, $admin)) {
             $msg .= Lang::T('Account already axist') . '<br>';
+        }
+        if ($pppoe_username !== '' && strcasecmp($pppoe_username, $username) !== 0
+            && customersFindLoginConflict($pppoe_username, $admin)) {
+            $msg .= Lang::T('PPPoE Username already used by another customer') . '<br>';
         }
         if ($msg == '') {
             $d = ORM::for_table('tbl_customers')->create();
@@ -1082,23 +1121,15 @@ switch ($action) {
         $passDiff = false;
         $pppoeIpDiff = false;
         if ($oldusername != $username) {
-            if (ORM::for_table('tbl_customers')->where('username', $username)->find_one()) {
+            if (customersFindLoginConflict($username, $admin, (int) $id, $c)) {
                 $msg .= Lang::T('Username already used by another customer') . '<br>';
-            }
-            if (ORM::for_table('tbl_customers')->where('pppoe_username', $username)->find_one()) {
-                $msg .= Lang::T('Username already used by another pppoe username customer') . '<br>';
             }
             $userDiff = true;
         }
         if ($oldPppoeUsername != $pppoe_username) {
-            // if(!empty($pppoe_username)){
-            //     if(ORM::for_table('tbl_customers')->where('pppoe_username', $pppoe_username)->find_one()){
-            //         $msg.= Lang::T('PPPoE Username already used by another customer') . '<br>';
-            //     }
-            //     if(ORM::for_table('tbl_customers')->where('username', $pppoe_username)->find_one()){
-            //         $msg.= Lang::T('PPPoE Username already used by another customer') . '<br>';
-            //     }
-            // }
+            if ($pppoe_username !== '' && customersFindLoginConflict($pppoe_username, $admin, (int) $id, $c)) {
+                $msg .= Lang::T('PPPoE Username already used by another customer') . '<br>';
+            }
             $pppoeDiff = true;
         }
 

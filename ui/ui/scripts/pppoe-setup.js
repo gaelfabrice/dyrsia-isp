@@ -164,8 +164,139 @@
     var SYNC_FETCH_TIMEOUT_MS = 40000;
     var DEPLOY_TIMEOUT_MS = 600000;
     var DEPLOY_VERIFY_TIMEOUT_MS = 90000;
+    var DEPLOY_START_TIMEOUT_MS = 90000;
     var DEPLOY_POLL_INTERVAL_MS = 2000;
-    var DEPLOY_POLL_MAX_MS = 600000;
+    var DEPLOY_POLL_MAX_MS = 1200000;
+    var PPPOE_DEPLOY_JOB_STORAGE_KEY = 'dyrsia_pppoe_deploy_job';
+
+    var psDeployUi = {
+        overlay: null,
+        statusEl: null,
+        barEl: null,
+        elapsedEl: null,
+        titleEl: null,
+        timer: null,
+        startedAt: 0,
+        lastPct: 0
+    };
+
+    function psDeployFormatElapsed(startedAt) {
+        var secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+        var mins = Math.floor(secs / 60);
+        var rem = secs % 60;
+        return mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
+    }
+
+    function psDeployProgressFromMessage(message) {
+        var m = String(message || '').toLowerCase();
+        if (m.indexOf('hotspot') >= 0 || m.indexOf('dhcp') >= 0) {
+            return 28;
+        }
+        if (m.indexOf('forfait') >= 0 || m.indexOf('profil') >= 0) {
+            return 72;
+        }
+        if (m.indexOf('portail') >= 0 || m.indexOf('expir') >= 0) {
+            return 84;
+        }
+        if (m.indexOf('vpn') >= 0 || m.indexOf('démarr') >= 0 || m.indexOf('demarr') >= 0 || m.indexOf('connexion') >= 0) {
+            return 8;
+        }
+        if (m.indexOf('en cours') >= 0) {
+            return null;
+        }
+        return null;
+    }
+
+    function psDeployEnsureUi() {
+        if (!psDeployUi.overlay) {
+            psDeployUi.overlay = document.getElementById('ps-deploy-overlay');
+            psDeployUi.statusEl = document.getElementById('ps-deploy-status');
+            psDeployUi.barEl = document.getElementById('ps-deploy-progress-bar');
+            psDeployUi.elapsedEl = document.getElementById('ps-deploy-elapsed');
+            psDeployUi.titleEl = document.getElementById('ps-deploy-title');
+        }
+    }
+
+    function psUpdateDeployProgressBar(pct, indeterminate) {
+        psDeployEnsureUi();
+        if (!psDeployUi.barEl) {
+            return;
+        }
+        if (indeterminate) {
+            psDeployUi.barEl.classList.add('ps-deploy-indeterminate');
+            psDeployUi.barEl.style.width = '';
+            return;
+        }
+        psDeployUi.barEl.classList.remove('ps-deploy-indeterminate');
+        var next = Math.max(psDeployUi.lastPct, Math.min(99, pct));
+        psDeployUi.lastPct = next;
+        psDeployUi.barEl.style.width = next + '%';
+    }
+
+    function psUpdateDeployProgress(message, pct) {
+        psDeployEnsureUi();
+        if (psDeployUi.statusEl && message) {
+            psDeployUi.statusEl.textContent = message;
+        }
+        if (typeof pct === 'number') {
+            psUpdateDeployProgressBar(pct, false);
+        }
+        if (psDeployUi.elapsedEl && psDeployUi.startedAt) {
+            psDeployUi.elapsedEl.textContent = 'Durée : ' + psDeployFormatElapsed(psDeployUi.startedAt);
+        }
+    }
+
+    function psDeployProgressTick() {
+        if (!psDeployUi.startedAt) {
+            return;
+        }
+        var elapsedMs = Date.now() - psDeployUi.startedAt;
+        var maxMs = DEPLOY_POLL_MAX_MS;
+        var timePct = 4 + (elapsedMs / maxMs) * 78;
+        if (timePct > psDeployUi.lastPct) {
+            psUpdateDeployProgressBar(timePct, false);
+        }
+        if (psDeployUi.elapsedEl) {
+            psDeployUi.elapsedEl.textContent = 'Durée : ' + psDeployFormatElapsed(psDeployUi.startedAt);
+        }
+    }
+
+    function psShowDeployProgress(message) {
+        psDeployEnsureUi();
+        psDeployUi.startedAt = Date.now();
+        psDeployUi.lastPct = 0;
+        if (psDeployUi.titleEl) {
+            psDeployUi.titleEl.textContent = 'Déploiement PPPoE en cours';
+        }
+        if (psDeployUi.overlay) {
+            psDeployUi.overlay.hidden = false;
+            psDeployUi.overlay.setAttribute('aria-busy', 'true');
+        }
+        psUpdateDeployProgress(message || 'Connexion au routeur via VPN…', null);
+        psUpdateDeployProgressBar(0, true);
+        if (psDeployUi.timer) {
+            clearInterval(psDeployUi.timer);
+        }
+        psDeployUi.timer = setInterval(psDeployProgressTick, 1000);
+    }
+
+    function psHideDeployProgress() {
+        psDeployEnsureUi();
+        if (psDeployUi.timer) {
+            clearInterval(psDeployUi.timer);
+            psDeployUi.timer = null;
+        }
+        if (psDeployUi.overlay) {
+            psDeployUi.overlay.hidden = true;
+            psDeployUi.overlay.setAttribute('aria-busy', 'false');
+        }
+        psDeployUi.startedAt = 0;
+        psDeployUi.lastPct = 0;
+        if (psDeployUi.barEl) {
+            psDeployUi.barEl.classList.remove('ps-deploy-indeterminate');
+            psDeployUi.barEl.style.width = '0';
+        }
+    }
 
     function httpErrorMessage(status) {
         if (status === 403) {
@@ -218,7 +349,8 @@
         return new Promise(function (resolve, reject) {
             function tick() {
                 if (Date.now() > deadline) {
-                    reject(new Error('Délai dépassé (~10 min) en attendant la fin du déploiement.'));
+                    reject(new Error('Délai dépassé (~20 min) en attendant la fin du déploiement PPPoE. '
+                        + 'Vérifiez WireGuard puis relancez l\'envoi.'));
                     return;
                 }
                 postPppoeForm(setupForm, { ajax_deploy: 'status', job_id: jobId }, 30000)
@@ -228,11 +360,11 @@
                             return;
                         }
                         if (data.running) {
-                            var secs = Math.round((Date.now() - startedAt) / 1000);
-                            var mins = Math.floor(secs / 60);
-                            var rem = secs % 60;
-                            var elapsed = mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
-                            setSyncStatus('loading', (data.message || 'Déploiement PPPoE en cours…') + ' ' + elapsed);
+                            var elapsedLabel = psDeployFormatElapsed(startedAt);
+                            var statusLine = (data.message || 'Déploiement PPPoE en cours…') + ' (' + elapsedLabel + ')';
+                            var msgPct = psDeployProgressFromMessage(data.message);
+                            psUpdateDeployProgress(statusLine, msgPct);
+                            setSyncStatus('loading', statusLine);
                             setTimeout(tick, DEPLOY_POLL_INTERVAL_MS);
                             return;
                         }
@@ -838,15 +970,14 @@
         }
 
         var started = Date.now();
-        var timer = setInterval(function () {
-            var secs = Math.round((Date.now() - started) / 1000);
-            var mins = Math.floor(secs / 60);
-            var rem = secs % 60;
-            var elapsed = mins > 0 ? (mins + ' min ' + rem + ' s') : (secs + ' s');
-            setSyncStatus('loading', 'Consolidation PPPoE en cours… ' + elapsed + ' (VPN lent : jusqu\'à 10 min)');
-        }, 1000);
+        psShowDeployProgress('Enregistrement de la configuration et connexion au routeur…');
+        setSyncStatus('loading', 'Déploiement PPPoE démarré…');
 
         function finishSuccess(data) {
+            try {
+                sessionStorage.removeItem(PPPOE_DEPLOY_JOB_STORAGE_KEY);
+            } catch (storageErr) {}
+            psUpdateDeployProgress('Déploiement terminé avec succès.', 100);
             setSyncStatus('ok', (data && data.message) || 'Serveur PPPoE déployé.');
             lastSnapshot = null;
             lastSnapshotAt = 0;
@@ -857,34 +988,62 @@
             });
         }
 
-        postPppoeForm(setupForm, { ajax_deploy: '1' }, 120000)
+        postPppoeForm(setupForm, { ajax_deploy: '1' }, DEPLOY_START_TIMEOUT_MS)
             .then(function (data) {
                 if (!data || !data.ok) {
                     throw new Error((data && data.message) || 'Déploiement PPPoE échoué.');
                 }
                 if (data.async && data.job_id) {
+                    try {
+                        sessionStorage.setItem(PPPOE_DEPLOY_JOB_STORAGE_KEY, data.job_id);
+                    } catch (storageErr) {}
+                    psUpdateDeployProgress(
+                        (data.message || 'Tâche PPPoE démarrée.') + ' Suivi en cours…',
+                        10
+                    );
                     setSyncStatus('loading', data.message || 'Déploiement PPPoE démarré…');
                     return pollPppoeDeployJob(setupForm, data.job_id, started).then(finishSuccess);
                 }
                 finishSuccess(data);
             })
             .catch(function (err) {
+                var recoveredJobId = null;
+                try {
+                    recoveredJobId = sessionStorage.getItem(PPPOE_DEPLOY_JOB_STORAGE_KEY);
+                } catch (storageErr) {}
+                if (err && err.name === 'AbortError' && recoveredJobId) {
+                    psUpdateDeployProgress(
+                        'Réponse serveur lente — suivi de la tâche PPPoE en arrière-plan…',
+                        12
+                    );
+                    setSyncStatus('loading', 'Déploiement PPPoE en cours (worker)…');
+                    return pollPppoeDeployJob(setupForm, recoveredJobId, started).then(finishSuccess);
+                }
                 if (err && err.name === 'AbortError') {
+                    psUpdateDeployProgress('Délai dépassé — vérification sur le routeur…', null);
                     setSyncStatus('loading', 'Délai dépassé — vérification du serveur PPPoE sur le routeur…');
                     return verifyPppoeServerOnRouter().then(function (check) {
                         if (check.ok) {
+                            psUpdateDeployProgress('Serveur PPPoE confirmé sur le routeur.', 100);
                             setSyncStatus('ok', 'Serveur PPPoE confirmé sur le routeur (réponse lente via VPN). Resynchronisation…');
                             lastSnapshot = null;
                             lastSnapshotAt = 0;
                             return fetchSnapshot(true);
                         }
-                        setSyncStatus('error', 'Déploiement interrompu (délai ~2 min). Vérifiez le VPN, resynchronisez le routeur, ou réessayez.');
+                        setSyncStatus(
+                            'error',
+                            'Déploiement interrompu (délai de démarrage). Rechargez la page (Ctrl+F5) et réessayez. '
+                            + 'Si le problème persiste : VPN WireGuard et system/cache/pppoe_deploy_worker.log.'
+                        );
                     });
                 }
+                try {
+                    sessionStorage.removeItem(PPPOE_DEPLOY_JOB_STORAGE_KEY);
+                } catch (storageErr2) {}
                 setSyncStatus('error', err.message || 'Erreur réseau pendant le déploiement.');
             })
             .finally(function () {
-                clearInterval(timer);
+                psHideDeployProgress();
                 deployInFlight = false;
                 resetSendButton(sendBtn);
             });

@@ -1429,7 +1429,6 @@ class Mikrotik
         $expiredList = (string) ($params['expiredList'] ?? 'pppoe-expired');
         $blockIface = (string) ($params['blockIface'] ?? '');
         $poolCidr = (string) ($params['poolCidr'] ?? '');
-        $hotspotInterface = trim((string) ($params['hotspotInterface'] ?? 'bridge-hotspot'));
 
         try {
             $client->sendSync(
@@ -1474,23 +1473,6 @@ class Mikrotik
                     . ($poolCidr !== '' ? ' (hors ' . $poolCidr . ')' : '');
             } elseif (!empty($bridgeBlock['updated'])) {
                 $actions[] = 'firewall bridge corrigé (clients PPPoE autorisés)';
-            }
-        }
-
-        if ($hotspotInterface !== ''
-            && self::routerHasHotspotCoexistence($client, ['hotspot_interface' => $hotspotInterface])) {
-            $hsConfig = is_array($params['hotspotConfig'] ?? null) ? $params['hotspotConfig'] : [];
-            if ($hotspotInterface !== '') {
-                $hsConfig['hotspot_interface'] = $hotspotInterface;
-            }
-            $coexist = self::ensureHotspotDhcpCoexistenceEssential($client, $hsConfig);
-            if (!empty($coexist['actions'])) {
-                $actions = array_merge($actions, $coexist['actions']);
-            }
-            if (!empty($coexist['errors'])) {
-                foreach ($coexist['errors'] as $coexistError) {
-                    _log('[PPPoE hotspot DHCP] ' . $coexistError);
-                }
             }
         }
 
@@ -3558,15 +3540,60 @@ class Mikrotik
             }
             if (in_array($port, $hotspot, true)) {
                 return 'Conflit de ports : « ' . $port . ' » est configuré à la fois pour Hotspot et PPPoE. '
-                    . 'Séparez les ports (ex. Hotspot: ether3,wifi1 — PPPoE: ether7,ether8).';
+                    . 'Séparez les ports (ex. Hotspot : wlan1,ether3 — PPPoE : ether6,ether7).';
             }
             if (in_array($port, $mgmt, true)) {
-                return 'Conflit de ports : « ' . $port . ' » est sur le bridge Management (ether2) '
+                return 'Conflit de ports : « ' . $port . ' » est sur le bridge Management (ex. ether2) '
                     . 'et ne doit pas être utilisé pour PPPoE.';
             }
         }
 
+        foreach ($hotspot as $port) {
+            if ($port === '') {
+                continue;
+            }
+            if (in_array($port, $mgmt, true)) {
+                return 'Conflit de ports : « ' . $port . ' » est sur le bridge Management (ex. ether2) '
+                    . 'et ne doit pas être utilisé pour Hotspot.';
+            }
+            if (in_array($port, $pppoe, true)) {
+                return 'Conflit de ports : « ' . $port . ' » est configuré à la fois pour Hotspot et PPPoE. '
+                    . 'Séparez les ports (ex. Hotspot : wlan1,ether3 — PPPoE : ether6,ether7).';
+            }
+        }
+
         return '';
+    }
+
+    /**
+     * Ports du bridge Management (défaut ether2 — jamais mélanger avec Hotspot / PPPoE).
+     *
+     * @return array<int, string>
+     */
+    public static function resolveManagementBridgePorts(array $config)
+    {
+        $defaults = self::serviceBridgeDefaults();
+        $raw = trim((string) ($config['lan_management_interface'] ?? $defaults['lan_management_interface'] ?? 'ether2'));
+        $ports = self::parseInterfacePortsList($raw);
+
+        return $ports !== [] ? $ports : ['ether2'];
+    }
+
+    /**
+     * Fusionne les clés bridges (Management / Hotspot / PPPoE) manquantes dans la config deploy.
+     */
+    public static function mergeServiceBridgeDefaults(array $config)
+    {
+        foreach (self::serviceBridgeDefaults() as $key => $value) {
+            if (!isset($config[$key]) || trim((string) $config[$key]) === '') {
+                $config[$key] = $value;
+            }
+        }
+        if (trim((string) ($config['hotspot_interface'] ?? '')) === '') {
+            $config['hotspot_interface'] = 'bridge-hotspot';
+        }
+
+        return $config;
     }
 
     /**
@@ -7318,7 +7345,7 @@ class Mikrotik
                 'hotspot_local_address' => '10.10.0.1/24',
                 'hotspot_masquerade' => '1',
                 'hotspot_address_pool' => '10.10.0.10-10.10.0.254',
-                'hotspot_pool_name' => 'hs-pool',
+                'hotspot_pool_name' => 'hotspot-pool',
                 'hotspot_pool_range' => '10.10.0.10-10.10.0.254',
                 'hotspot_smtp_server' => '0.0.0.0',
                 'hotspot_dns_server' => '8.8.8.8',
@@ -7683,6 +7710,9 @@ class Mikrotik
             return ['ok' => false, 'errors' => ['Interface hotspot manquante (étape 2 de l\'assistant).']];
         }
 
+        $config = self::mergeServiceBridgeDefaults($config);
+        $interface = trim((string) ($config['hotspot_interface'] ?? $interface));
+
         $deviceMode = self::ensureHotspotDeviceMode($client);
         if (empty($deviceMode['ok'])) {
             return [
@@ -7732,6 +7762,13 @@ class Mikrotik
                 $localAddress = $derivedGw . '/24';
                 $actions[] = 'passerelle hotspot déduite du pool (' . $localAddress . ')';
             }
+        }
+
+        $mgmtPrep = self::ensureDedicatedManagementBridge($client, $config);
+        $errors = array_merge($errors, $mgmtPrep['errors'] ?? []);
+        $actions = array_merge($actions, $mgmtPrep['actions'] ?? []);
+        if (empty($mgmtPrep['ok'])) {
+            return ['ok' => false, 'errors' => $errors, 'actions' => $actions];
         }
 
         $bridgePrep = self::ensureDedicatedHotspotBridge($client, $config);
@@ -8067,6 +8104,9 @@ class Mikrotik
                 }
             }
         }
+        if ($ports === []) {
+            $ports = self::resolveHotspotBridgePorts($config);
+        }
 
         $errors = [];
         $actions = [];
@@ -8141,6 +8181,83 @@ class Mikrotik
             $errors[] = 'bridge hotspot : ' . $e->getMessage();
         } catch (Exception $e) {
             $errors[] = 'bridge hotspot : ' . $e->getMessage();
+        }
+
+        return [
+            'ok' => empty($errors),
+            'interface' => $bridgeName,
+            'errors' => $errors,
+            'actions' => $actions,
+        ];
+    }
+
+    /**
+     * Bridge Management dédié (ex. ether2 → bridge-management), indépendant Hotspot / PPPoE.
+     *
+     * @return array{ok: bool, interface: string, errors: array<int, string>, actions: array<int, string>}
+     */
+    public static function ensureDedicatedManagementBridge($client, array $config)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return ['ok' => true, 'interface' => '', 'errors' => [], 'actions' => []];
+        }
+
+        $defaults = self::serviceBridgeDefaults();
+        $bridgeName = trim((string) ($config['lan_management_bridge_name'] ?? $defaults['lan_management_bridge_name'] ?? 'bridge-management'));
+        if ($bridgeName === '') {
+            $bridgeName = 'bridge-management';
+        }
+        $ports = self::resolveManagementBridgePorts($config);
+        $mgmtAddress = trim((string) ($config['lan_management_address'] ?? $defaults['lan_management_address'] ?? ''));
+
+        $errors = [];
+        $actions = [];
+
+        try {
+            $bridgeId = self::routerEntityId($client, '/interface/bridge', 'name', $bridgeName);
+            if ($bridgeId === null) {
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/add'))
+                        ->setArgument('name', $bridgeName)
+                        ->setArgument('comment', 'DYRSIA management bridge')
+                );
+                $actions[] = 'bridge « ' . $bridgeName . ' » créé (management)';
+                $bridgeId = self::routerEntityId($client, '/interface/bridge', 'name', $bridgeName);
+            } else {
+                $actions[] = 'bridge « ' . $bridgeName . ' » OK (management)';
+            }
+
+            if ($bridgeId !== null) {
+                try {
+                    $client->sendSync(
+                        (new RouterOS\Request('/interface/bridge/set'))
+                            ->setArgument('numbers', $bridgeId)
+                            ->setArgument('vlan-filtering', 'no')
+                            ->setArgument('disabled', 'no')
+                    );
+                } catch (Throwable $e) {
+                } catch (Exception $e) {
+                }
+            }
+
+            foreach ($ports as $port) {
+                $membership = self::ensureBridgePortMembership($client, $bridgeName, $port);
+                if (!empty($membership['ok']) && !empty($membership['moved'])) {
+                    $actions[] = 'port management « ' . $port . ' » → « ' . $bridgeName . ' »';
+                } elseif (!empty($membership['error'])) {
+                    $errors[] = 'port management « ' . $port . ' » : ' . $membership['error'];
+                }
+            }
+
+            if ($mgmtAddress !== '') {
+                self::ensureInterfaceAddress($client, $bridgeName, $mgmtAddress, 'DYRSIA management');
+                $actions[] = 'adresse management ' . $mgmtAddress . ' sur ' . $bridgeName;
+            }
+        } catch (Throwable $e) {
+            $errors[] = 'bridge management : ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'bridge management : ' . $e->getMessage();
         }
 
         return [
@@ -11723,9 +11840,12 @@ class Mikrotik
         $errors = array_merge($errors, $wgDhcp['errors'] ?? []);
 
         self::ensureHotspotDhcpRawPass($client, $hsIface, $actions, $errors);
-        self::repositionHotspotDhcpFirewallRulesBatch($client, $actions);
 
         $verify = self::verifyHotspotDhcpCoexistence($client, $hsIface);
+        if (empty($verify['ok'])) {
+            self::repositionHotspotDhcpFirewallRulesBatch($client, $actions);
+            $verify = self::verifyHotspotDhcpCoexistence($client, $hsIface);
+        }
         if (empty($verify['ok'])) {
             $errors = array_merge($errors, $verify['errors'] ?? []);
         }
@@ -12448,6 +12568,17 @@ class Mikrotik
             'pool_range' => trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? '')),
             'local_address' => trim((string) ($config['hotspot_local_address'] ?? '')),
         ];
+
+        if (!$client) {
+            $hasConfig = $result['hotspot_name'] !== ''
+                || $result['local_address'] !== ''
+                || trim((string) ($config['hotspot_bridge_ports'] ?? '')) !== '';
+            if ($hasConfig) {
+                $result['active'] = true;
+            }
+
+            return $result;
+        }
 
         try {
             foreach ($client->sendSync(
@@ -13276,7 +13407,7 @@ class Mikrotik
         return [
             'pppoe_setup_router' => '',
             'pppoe_setup_bridge_name' => 'bridge-pppoe',
-            'pppoe_setup_bridge_ports' => 'ether7,ether8',
+            'pppoe_setup_bridge_ports' => 'ether6,ether7',
             'pppoe_setup_gateway' => '10.10.10.1/24',
             'pppoe_setup_pool_name' => 'pppoe-pool',
             'pppoe_setup_pool_range' => '10.10.10.2-10.10.10.254',
@@ -13936,9 +14067,9 @@ class Mikrotik
             'lan_management_bridge_name' => 'bridge-management',
             'lan_management_interface' => 'ether2',
             'lan_management_address' => '10.99.99.1/24',
-            'lan_hotspot_access_ports' => 'ether3,wlan1',
-            'hotspot_bridge_ports' => 'ether3,wlan1',
-            'lan_pppoe_access_ports' => 'ether7,ether8',
+            'lan_hotspot_access_ports' => 'wlan1,ether3',
+            'hotspot_bridge_ports' => 'wlan1,ether3',
+            'lan_pppoe_access_ports' => 'ether6,ether7',
             'lan_unused_ports' => '',
         ];
     }
@@ -14113,7 +14244,7 @@ class Mikrotik
      * @param array<string, mixed>|object|null $routerRow
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
      */
-    public static function consolidatePppoeRouterSetup($client, array $config, $routerRow, $admin = null)
+    public static function consolidatePppoeRouterSetup(&$client, array $config, $routerRow, $admin = null)
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
@@ -14121,6 +14252,7 @@ class Mikrotik
         }
 
         $config = self::normalizePppoeSetupConfig($config);
+        $config = self::mergeServiceBridgeDefaults($config);
         $routerArray = is_array($routerRow)
             ? $routerRow
             : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
@@ -14157,14 +14289,8 @@ class Mikrotik
             return ['ok' => false, 'errors' => ['Ports bridge PPPoE manquants.'], 'actions' => []];
         }
 
-        $hotspotPorts = self::parseInterfacePortsList($config['hotspot_bridge_ports'] ?? '');
-        if ($hotspotPorts === [] && trim((string) ($config['lan_hotspot_access_ports'] ?? '')) !== '') {
-            $hotspotPorts = self::parseInterfacePortsList($config['lan_hotspot_access_ports']);
-        }
-        $mgmtPorts = self::parseInterfacePortsList($config['lan_management_interface'] ?? 'ether2');
-        if ($mgmtPorts === []) {
-            $mgmtPorts = ['ether2'];
-        }
+        $hotspotPorts = self::resolveHotspotBridgePorts($config);
+        $mgmtPorts = self::resolveManagementBridgePorts($config);
         $portConflict = self::validateServicePortIsolation($bridgePorts, $hotspotPorts, $mgmtPorts);
         if ($portConflict !== '') {
             return ['ok' => false, 'errors' => [$portConflict], 'actions' => []];
@@ -14172,6 +14298,19 @@ class Mikrotik
 
         if ($poolName === '' || $poolRange === '') {
             return ['ok' => false, 'errors' => ['Pool PPPoE manquant (nom et plage IP).'], 'actions' => []];
+        }
+
+        if (!$client && !empty($routerArray)) {
+            $client = self::openDeployClient($routerArray, 45);
+            if (!$client) {
+                $detail = self::consumeLastDeployClientError();
+
+                return [
+                    'ok' => false,
+                    'errors' => [$detail ?: 'Connexion MikroTik impossible (déploiement PPPoE).'],
+                    'actions' => [],
+                ];
+            }
         }
 
         $localGateway = self::resolvePoolGatewayAddress([
@@ -14216,34 +14355,29 @@ class Mikrotik
             'expiredList' => $expiredList,
             'blockIface' => $blockIface,
             'poolCidr' => $poolCidr,
-            'hotspotInterface' => trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot')),
-            'hotspotConfig' => $config,
         ];
 
         $actions = [];
         $errors = [];
 
-        if (self::routerHasHotspotCoexistence($client, $config)) {
-            try {
-                $protect = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($config) {
-                    return self::ensureHotspotDhcpCoexistenceEssential($apiClient, $config);
-                }, 45);
-                if (!empty($protect['actions'])) {
-                    $actions[] = 'Hotspot protégé (avant PPPoE) : '
-                        . implode(', ', array_slice($protect['actions'], 0, 4))
-                        . (count($protect['actions']) > 4 ? '…' : '');
-                }
-                if (!empty($protect['errors'])) {
-                    $errors = array_merge($errors, $protect['errors']);
-                }
-            } catch (Throwable $e) {
-                $errors[] = 'Protection hotspot avant PPPoE : ' . $e->getMessage();
-            } catch (Exception $e) {
-                $errors[] = 'Protection hotspot avant PPPoE : ' . $e->getMessage();
-            }
-        }
-
         try {
+            $mgmtResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($config) {
+                return self::ensureDedicatedManagementBridge($apiClient, $config);
+            }, 30);
+            if (is_array($mgmtResult)) {
+                $actions = array_merge($actions, $mgmtResult['actions'] ?? []);
+                if (!empty($mgmtResult['errors'])) {
+                    $errors = array_merge($errors, $mgmtResult['errors']);
+                }
+                if (array_key_exists('ok', $mgmtResult) && empty($mgmtResult['ok'])) {
+                    return [
+                        'ok' => false,
+                        'errors' => $errors ?: ['Échec bridge management.'],
+                        'actions' => $actions,
+                    ];
+                }
+            }
+
             $coreResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($coreParams) {
                 return self::deployPppoeCoreInfrastructure($apiClient, $coreParams);
             }, 45);
@@ -14255,16 +14389,6 @@ class Mikrotik
             }, 30);
             if (is_array($extraActions)) {
                 $actions = array_merge($actions, $extraActions);
-            }
-
-            $coexistResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($config) {
-                return self::ensureHotspotCoexistenceAfterPppoe($apiClient, $config);
-            }, 45);
-            if (!empty($coexistResult['actions'])) {
-                $actions[] = 'Hotspot protégé après infra PPPoE : ' . implode(', ', $coexistResult['actions']);
-            }
-            if (!empty($coexistResult['errors'])) {
-                $errors = array_merge($errors, $coexistResult['errors']);
             }
         } catch (Throwable $e) {
             $errors[] = $e->getMessage();
@@ -14280,7 +14404,7 @@ class Mikrotik
     }
 
     /**
-     * Répare Hotspot après déploiement PPPoE (firewall DHCP, walled-garden, serveur DHCP).
+     * Réparation manuelle Hotspot (scripts / maintenance) — le déploiement PPPoE n’appelle plus cette méthode.
      *
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
      */
@@ -14312,11 +14436,36 @@ class Mikrotik
             : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
         $routerName = trim((string) ($setupConfig['pppoe_setup_router'] ?? ($routerArray['name'] ?? '')));
 
+        // Ports Hotspot / Management pour validateServicePortIsolation + coexistence après PPPoE.
         WifiZoneHotspot::loadHotspotConfigForDeploy($setupConfig, $routerName);
+        $setupConfig = self::mergeServiceBridgeDefaults($setupConfig);
+
+        if (!$client && !empty($routerArray)) {
+            $client = self::openDeployClient($routerArray, 45);
+        }
+        if (!$client) {
+            $detail = self::consumeLastDeployClientError();
+
+            return [
+                'ok' => false,
+                'errors' => [$detail ?: 'Connexion MikroTik impossible pour le déploiement PPPoE.'],
+                'actions' => [],
+            ];
+        }
 
         $infra = self::consolidatePppoeRouterSetup($client, $setupConfig, $routerArray, $admin);
         $actions = $infra['actions'] ?? [];
         $errors = $infra['errors'] ?? [];
+
+        if (!empty($infra['ok'])) {
+            $coexist = self::ensureHotspotDhcpCoexistenceEssential($client, $setupConfig);
+            if (!empty($coexist['actions'])) {
+                $actions[] = 'hotspot préservé : ' . implode('; ', $coexist['actions']);
+            }
+            if (!empty($coexist['errors'])) {
+                $errors = array_merge($errors, $coexist['errors']);
+            }
+        }
 
         if (empty($infra['ok']) || $routerName === '') {
             return [
@@ -14326,29 +14475,7 @@ class Mikrotik
             ];
         }
 
-        if (!$client && !empty($routerArray)) {
-            $client = self::openDeployClient($routerArray, 45);
-        }
-
-        if (!$client) {
-            $detail = self::consumeLastDeployClientError();
-
-            return [
-                'ok' => false,
-                'errors' => array_merge($errors, [$detail ?: 'Connexion MikroTik impossible pour la sync forfaits.']),
-                'actions' => $actions,
-            ];
-        }
-
         self::setClientSocketTimeout($client, 45);
-
-        $coexistBefore = self::ensureHotspotCoexistenceAfterPppoe($client, $setupConfig);
-        if (!empty($coexistBefore['actions'])) {
-            $actions[] = 'Hotspot préservé (avant PPPoE) : ' . implode(', ', $coexistBefore['actions']);
-        }
-        if (!empty($coexistBefore['errors'])) {
-            $errors = array_merge($errors, $coexistBefore['errors']);
-        }
 
         self::ensurePppoeExpiredPlanDb($routerName, $admin);
         $planSync = self::syncPppoePlans($client, $routerName, $admin);
@@ -14374,14 +14501,6 @@ class Mikrotik
             $planSync['errors'] ?? [],
             $captive['errors'] ?? []
         );
-
-        $coexistence = self::ensureHotspotCoexistenceAfterPppoe($client, $setupConfig);
-        if (!empty($coexistence['actions'])) {
-            $actions[] = 'Hotspot réparé (après PPPoE) : ' . implode(', ', $coexistence['actions']);
-        }
-        if (!empty($coexistence['errors'])) {
-            $errors = array_merge($errors, $coexistence['errors']);
-        }
 
         return [
             'ok' => empty($errors),

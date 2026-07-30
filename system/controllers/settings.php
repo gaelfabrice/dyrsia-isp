@@ -2924,11 +2924,32 @@ HTML;
                 }
                 $status = (string) ($job['status'] ?? '');
                 if ($status === 'running') {
+                    $startedAt = (int) ($job['started_at'] ?? 0);
+                    $elapsed = $startedAt > 0 ? max(0, time() - $startedAt) : 0;
+                    if ($startedAt > 0 && $elapsed > PppoeDeployRunner::staleJobThresholdSeconds()) {
+                        $staleMsg = 'Déploiement PPPoE expiré ('
+                            . (int) floor($elapsed / 60)
+                            . ' min sans réponse). Relancez l\'envoi — vérifiez WireGuard et system/cache/pppoe_deploy_worker.log.';
+                        $pppoeDeployWriteJob($jobPath, [
+                            'status' => 'done',
+                            'ok' => false,
+                            'message' => $staleMsg,
+                            'errors' => [$staleMsg],
+                            'elapsed' => $elapsed,
+                        ]);
+                        echo json_encode([
+                            'ok' => false,
+                            'running' => false,
+                            'message' => $staleMsg,
+                            'elapsed' => $elapsed,
+                        ]);
+                        exit;
+                    }
                     echo json_encode([
                         'ok' => true,
                         'running' => true,
-                        'message' => 'Déploiement PPPoE en cours sur le routeur…',
-                        'elapsed' => max(0, time() - (int) ($job['started_at'] ?? time())),
+                        'message' => (string) ($job['message'] ?? 'Déploiement PPPoE en cours sur le routeur…'),
+                        'elapsed' => $elapsed,
                     ]);
                     exit;
                 }
@@ -2971,52 +2992,38 @@ HTML;
                 $pppoeDeployWriteJob($jobPath, [
                     'status' => 'running',
                     'started_at' => time(),
+                    'admin_id' => (int) ($admin['id'] ?? 0),
                     'router' => $routerName,
                     'ok' => null,
-                    'message' => '',
+                    'message' => 'Déploiement PPPoE en cours sur « ' . $routerName . ' »…',
                     'actions' => [],
                     'errors' => [],
                 ]);
 
-                $finishDeployJob = static function ($result) use ($jobPath, $pppoeDeployWriteJob) {
-                    $payload = is_array($result) ? $result : ['ok' => false, 'message' => 'Résultat de déploiement invalide.'];
-                    $pppoeDeployWriteJob($jobPath, [
-                        'status' => 'done',
-                        'ok' => !empty($payload['ok']),
-                        'message' => (string) ($payload['message'] ?? ''),
-                        'actions' => $payload['actions'] ?? [],
-                        'errors' => $payload['errors'] ?? [],
-                        'elapsed' => $payload['elapsed'] ?? null,
-                    ]);
-                };
+                $asyncPayload = json_encode([
+                    'ok' => true,
+                    'async' => true,
+                    'job_id' => $jobId,
+                    'message' => 'Déploiement PPPoE démarré — connexion au routeur via VPN…',
+                ], JSON_UNESCAPED_UNICODE);
 
-                if (function_exists('fastcgi_finish_request')) {
-                    echo json_encode([
-                        'ok' => true,
-                        'async' => true,
-                        'job_id' => $jobId,
-                        'message' => 'Déploiement PPPoE démarré — connexion au routeur via VPN…',
-                    ]);
-                    if (session_status() === PHP_SESSION_ACTIVE) {
-                        session_write_close();
-                    }
-                    fastcgi_finish_request();
-                    try {
-                        $finishDeployJob($runPppoeDeploy());
-                    } catch (Throwable $e) {
-                        $finishDeployJob([
-                            'ok' => false,
-                            'message' => 'Échec envoi PPPoE : ' . $e->getMessage(),
-                            'errors' => [$e->getMessage()],
-                            'actions' => [],
-                        ]);
-                    }
-                    exit;
+                while (ob_get_level()) {
+                    ob_end_clean();
                 }
+                if (!headers_sent()) {
+                    header('Content-Type: application/json; charset=utf-8');
+                    header('Content-Length: ' . strlen($asyncPayload));
+                    header('Connection: close');
+                    header('X-Accel-Buffering: no');
+                    header('Cache-Control: no-store');
+                }
+                echo $asyncPayload;
+                if (session_status() === PHP_SESSION_ACTIVE) {
+                    session_write_close();
+                }
+                @flush();
 
-                $result = $runPppoeDeploy();
-                $finishDeployJob($result);
-                echo json_encode($result);
+                PppoeDeployRunner::spawnBackground($jobPath);
                 exit;
             }
         }

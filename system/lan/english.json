@@ -1780,5 +1780,11 @@
     "Create_a_project__enable_Google_Drive_API__then_create_OAuth_2_0_credentials__Desktop_or_Web_app__": "Create a project, enable Google Drive API, then create OAuth 2.0 credentials (Desktop or Web app).",
     "with_scope": "with scope",
     "to_obtain_a_refresh_token_": "to obtain a refresh token.",
-    "Paste_Client_ID__Client_Secret_and_Refresh_Token_above__then_enable_Google_Drive_Upload_": "Paste Client ID, Client Secret and Refresh Token above, then enable Google Drive Upload."
+    "Paste_Client_ID__Client_Secret_and_Refresh_Token_above__then_enable_Google_Drive_Upload_": "Paste Client ID, Client Secret and Refresh Token above, then enable Google Drive Upload.",
+    "Optional_filter_____clear_the_field_to_show_the_full_list_again_": "Optional filter \u2014 clear the field to show the full list again.",
+    "Account": "Account",
+    "Login_as_this_customer_": "Login as this customer?",
+    "Current_Password": "Current Password",
+    "New_Password": "New Password",
+    "Confirm_New_Password": "Confirm New Password"
 }

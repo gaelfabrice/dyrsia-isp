@@ -96,6 +96,46 @@
 .ps-sync-status.loading { display: flex; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
 .ps-sync-status.ok { display: flex; background: #ecfdf5; color: #047857; border: 1px solid #86efac; }
 .ps-sync-status.error { display: flex; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.ps-deploy-overlay {
+    position: fixed; inset: 0; z-index: 10050; display: flex; align-items: center; justify-content: center;
+    background: rgba(15, 23, 42, .55); backdrop-filter: blur(4px); padding: 20px;
+}
+.ps-deploy-overlay[hidden] { display: none !important; }
+.ps-deploy-panel {
+    width: min(440px, 100%); background: #fff; border-radius: 16px; padding: 22px 24px 20px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, .25); border: 1px solid #e2e8f0;
+}
+.ps-deploy-panel h4 {
+    margin: 0 0 10px; font-size: 17px; font-weight: 800; color: #0f172a;
+}
+.ps-deploy-panel h4 .fa { color: #0891b2; margin-right: 6px; }
+#ps-deploy-status { margin: 0 0 14px; font-size: 14px; line-height: 1.45; color: #475569; }
+.ps-deploy-progress-track {
+    height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; margin-bottom: 10px;
+}
+#ps-deploy-progress-bar {
+    height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, #0f766e, #0891b2, #0284c7);
+    transition: width .35s ease;
+}
+#ps-deploy-progress-bar.ps-deploy-indeterminate {
+    width: 38% !important;
+    animation: ps-deploy-slide 1.35s ease-in-out infinite;
+}
+@keyframes ps-deploy-slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(280%); }
+}
+#ps-deploy-elapsed { margin: 0; font-size: 12px; font-weight: 700; color: #64748b; }
+.ps-deploy-hint { margin: 10px 0 0; font-size: 12px; color: #94a3b8; line-height: 1.4; }
+body.theme-dark .ps-deploy-panel,
+body.dark-mode .ps-deploy-panel { background: #1e293b; border-color: #334155; }
+body.theme-dark .ps-deploy-panel h4,
+body.dark-mode .ps-deploy-panel h4 { color: #f1f5f9; }
+body.theme-dark #ps-deploy-status,
+body.dark-mode #ps-deploy-status { color: #cbd5e1; }
+body.theme-dark .ps-deploy-progress-track,
+body.dark-mode .ps-deploy-progress-track { background: #334155; }
 .ps-pppoe-server-status {
     display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px;
     padding: 12px 14px; border-radius: 12px; font-size: 13px; line-height: 1.45;
@@ -562,9 +602,21 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
             </div>
         </form>
     </div>
+
+    <div id="ps-deploy-overlay" class="ps-deploy-overlay" hidden aria-live="polite" aria-busy="true">
+        <div class="ps-deploy-panel" role="status">
+            <h4><i class="fa fa-spinner fa-spin"></i> <span id="ps-deploy-title">Déploiement PPPoE</span></h4>
+            <p id="ps-deploy-status">Initialisation…</p>
+            <div class="ps-deploy-progress-track" aria-hidden="true">
+                <div id="ps-deploy-progress-bar" class="ps-deploy-indeterminate"></div>
+            </div>
+            <p id="ps-deploy-elapsed">Durée : 0 s</p>
+            <p class="ps-deploy-hint">Ne fermez pas cette page — le déploiement PPPoE peut prendre plusieurs minutes via VPN. Le Hotspot n’est pas modifié (services séparés).</p>
+        </div>
+    </div>
 </div>
 
-<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.29"></script>
+<script src="{$app_url}/ui/ui/scripts/pppoe-setup.js?2026.07.30c"></script>
 <script>
 window.PPPOE_FETCH_URL = '{$pppoe_fetch_url|escape:'javascript'}';
 window.PPPOE_INITIAL_ROUTER = '{$ps_router|escape:'javascript'}';

@@ -246,12 +246,12 @@ ok(fn_body_has('Mikrotik', 'ensureHotspotDhcpServer', 'ensureHotspotDhcpFirewall
 ok(fn_body_has('Mikrotik', 'consolidatePppoeRouterSetup', 'validateServicePortIsolation'), 'PPPoE: validation ports avant deploy');
 ok(fn_body_has('Mikrotik', 'consolidatePppoeRouterSetup', 'deployPppoeCoreInfrastructure'), 'PPPoE: infra core');
 ok(fn_body_has('Mikrotik', 'consolidatePppoeRouterSetup', 'deployPppoeOptionalExtras'), 'PPPoE: extras');
-ok(fn_body_has('Mikrotik', 'deployPppoeOptionalExtras', 'ensureHotspotDhcpFirewallPass'), 'PPPoE extras: repair DHCP FW Hotspot');
-ok(fn_body_has('Mikrotik', 'deployPppoeComplete', 'ensureHotspotCoexistenceAfterPppoe'), 'deployPppoeComplete: coexistence repair');
-ok(fn_body_has('Mikrotik', 'ensureHotspotCoexistenceAfterPppoe', 'ensureDedicatedHotspotBridge'), 'Coexistence: bridge Hotspot');
-ok(fn_body_has('Mikrotik', 'ensureHotspotCoexistenceAfterPppoe', 'ensureHotspotBridgeFirewall'), 'Coexistence: bridge firewall');
-ok(fn_body_has('Mikrotik', 'ensureHotspotCoexistenceAfterPppoe', 'ensureHotspotDhcpServer'), 'Coexistence: DHCP Hotspot');
-ok(fn_body_has('Mikrotik', 'ensureHotspotCoexistenceAfterPppoe', 'ensureHotspotWalledGardenDhcp'), 'Coexistence: walled-garden DHCP');
+ok(!fn_body_has('Mikrotik', 'deployPppoeOptionalExtras', 'ensureHotspotDhcpCoexistenceEssential'),
+    'PPPoE extras: ne touche pas au Hotspot');
+ok(!fn_body_has('Mikrotik', 'deployPppoeComplete', 'ensureHotspotCoexistenceAfterPppoe'),
+    'deployPppoeComplete: services PPPoE et Hotspot séparés');
+ok(fn_body_has('Mikrotik', 'ensureHotspotCoexistenceAfterPppoe', 'ensureHotspotDhcpCoexistenceEssential'),
+    'Coexistence (maintenance manuelle): méthode conservée');
 
 // Port protection
 ok(fn_body_has('Mikrotik', 'ensureBridgePortMembership', 'isDyrsiaServiceBridge'), 'ensureBridgePortMembership protège bridges DYRSIA');

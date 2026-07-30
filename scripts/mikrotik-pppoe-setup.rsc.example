@@ -1,6 +1,7 @@
 # MikroTik RouterOS — PPPoE RB2011 (WifiZone / DYRSIA)
-# Ports PPPoE : ether2, ether3, ether4, ether5  →  bridge-pppoe
-# Hotspot (deja en place) : ether8  →  bridge-hotspot  (10.0.0.0/24)
+# Ports PPPoE : ether6, ether7  →  bridge-pppoe
+# Hotspot : wlan1, ether3  →  bridge-hotspot  (10.10.0.0/24)
+# Management : ether2  →  bridge-management
 # WAN : ether1
 #
 # Import : uploadez ce fichier puis  /import file-name=mikrotik-pppoe-setup.rsc

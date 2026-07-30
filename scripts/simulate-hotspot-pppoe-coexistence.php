@@ -167,8 +167,18 @@ sim_assert(strpos($hsLocal, '10.10.0.') === 0, 'Passerelle Hotspot = 10.10.0.x')
 sim_assert($pppoeGw !== $hsLocal, 'Subnets Hotspot et PPPoE distincts');
 
 sim_assert(
-    $defaults['pppoe_setup_bridge_ports'] === 'ether7,ether8',
-    'Défauts PPPoE = ether7,ether8 (plus ether2-5)'
+    $defaults['pppoe_setup_bridge_ports'] === 'ether6,ether7',
+    'Défauts PPPoE = ether6,ether7 (ether2 réservé management)'
+);
+
+$bridgeDefaults = Mikrotik::serviceBridgeDefaults();
+sim_assert(
+    $bridgeDefaults['hotspot_bridge_ports'] === 'wlan1,ether3',
+    'Défauts Hotspot bridge = wlan1,ether3'
+);
+sim_assert(
+    $bridgeDefaults['lan_management_interface'] === 'ether2',
+    'Management = ether2 sur bridge-management'
 );
 
 sim_assert(
@@ -186,7 +196,10 @@ echo "\n4) Garde-fous code (méthodes critiques)\n";
 
 $methods = [
     'ensureHotspotDhcpFirewallPass',
-    'ensureHotspotCoexistenceAfterPppoe',
+    'ensureDedicatedManagementBridge',
+    'ensureDedicatedHotspotBridge',
+    'resolveManagementBridgePorts',
+    'mergeServiceBridgeDefaults',
     'validateServicePortIsolation',
     'isDyrsiaServiceBridge',
     'dyrsiaServiceBridgeNames',
@@ -212,8 +225,8 @@ $deploySteps = [
     'ensureHotspotBridgeFirewall (+ DHCP fw)' => method_exists('Mikrotik', 'ensureHotspotDhcpFirewallPass'),
     'ensureHotspotDhcpServer' => method_exists('Mikrotik', 'ensureHotspotDhcpServer'),
     'consolidatePppoeRouterSetup (+ validate ports)' => method_exists('Mikrotik', 'consolidatePppoeRouterSetup'),
-    'deployPppoeOptionalExtras (+ repair DHCP fw)' => true,
-    'deployPppoeComplete (+ ensureHotspotCoexistenceAfterPppoe)' => method_exists('Mikrotik', 'ensureHotspotCoexistenceAfterPppoe'),
+    'deployPppoeOptionalExtras (PPPoE DNS/firewall, sans Hotspot)' => true,
+    'deployPppoeComplete (PPPoE + préservation hotspot légère)' => method_exists('Mikrotik', 'deployPppoeComplete'),
 ];
 
 foreach ($deploySteps as $step => $ok) {
@@ -260,7 +273,7 @@ if ($warn > 0) {
     echo "\nRecommandation déploiement:\n";
     echo "  1. Config base (management ether2)\n";
     echo "  2. Assistant Hotspot (ether3, wlan1 → bridge-hotspot)\n";
-    echo "  3. Assistant PPPoE Setup (ether7, ether8 → bridge-pppoe)\n";
+    echo "  3. Assistant PPPoE Setup (ether6, ether7 → bridge-pppoe)\n";
     echo "  — Ne pas utiliser « Send complet » Hotspot pour PPPoE si trunk désactivé.\n";
     exit(0);
 }

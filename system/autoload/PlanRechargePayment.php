@@ -242,6 +242,19 @@ class PlanRechargePayment
         return $row;
     }
 
+    public static function normalizeMobilePhoneDigits($phone)
+    {
+        $phone = preg_replace('/[^0-9]/', '', (string) $phone);
+        if (preg_match('/^237(\d{9})$/', $phone, $m)) {
+            return $m[1];
+        }
+        if (strlen($phone) >= 9) {
+            return substr($phone, -9);
+        }
+
+        return $phone;
+    }
+
     public static function findReusablePendingPayment($admin, $customerId, $planId, $server)
     {
         self::ensureSchema();
@@ -266,34 +279,56 @@ class PlanRechargePayment
             throw new InvalidArgumentException(Lang::T('Invalid subscription amount'));
         }
 
+        $phone = trim((string) $phone);
+        if ($phone === '') {
+            $phone = trim((string) ($ctx['cust']['phonenumber'] ?? ''));
+        }
+        $requestedDigits = self::normalizeMobilePhoneDigits($phone);
+
         $existing = self::findReusablePendingPayment($admin, $customerId, $planId, $server);
-        if ($existing && trim((string) $existing->gateway_reference) !== '') {
-            if ($existing->status === 'failed') {
-                $existing->status = 'pending';
-                $existing->save();
-            }
+        if ($existing) {
+            $storedDigits = self::normalizeMobilePhoneDigits($existing->phone ?? '');
+            $hasRef = trim((string) $existing->gateway_reference) !== '';
 
-            $check = self::checkMobileStatus((int) $existing->id, $admin);
-            $check['payment_id'] = (int) $existing->id;
-            if (($check['status'] ?? '') === 'paid') {
-                return $check;
-            }
+            if ($hasRef) {
+                $phoneMismatch = $requestedDigits !== ''
+                    && $storedDigits !== ''
+                    && $requestedDigits !== $storedDigits;
 
-            $payload = json_decode((string) ($existing->payload ?? ''), true);
-            if (!is_array($payload)) {
-                $payload = [];
-            }
+                if (!$phoneMismatch) {
+                    if ($existing->status === 'failed') {
+                        $existing->status = 'pending';
+                        $existing->save();
+                    }
 
-            return [
-                'ok' => true,
-                'payment_id' => (int) $existing->id,
-                'operator' => (string) ($payload['operator'] ?? ''),
-                'ussd' => (string) ($payload['ussd'] ?? ''),
-                'amount' => (float) $existing->amount,
-                'plan_label' => (string) ($ctx['plan']['name_plan'] ?? ''),
-                'gateway_label' => self::gatewayLabel(),
-                'message' => 'Vérification du paiement déjà lancé — en attente de confirmation CamPay.',
-            ];
+                    $check = self::checkMobileStatus((int) $existing->id, $admin);
+                    $check['payment_id'] = (int) $existing->id;
+                    if (($check['status'] ?? '') === 'paid') {
+                        return $check;
+                    }
+
+                    $payload = json_decode((string) ($existing->payload ?? ''), true);
+                    if (!is_array($payload)) {
+                        $payload = [];
+                    }
+
+                    return [
+                        'ok' => true,
+                        'payment_id' => (int) $existing->id,
+                        'operator' => (string) ($payload['operator'] ?? ''),
+                        'ussd' => (string) ($payload['ussd'] ?? ''),
+                        'amount' => (float) $existing->amount,
+                        'plan_label' => (string) ($ctx['plan']['name_plan'] ?? ''),
+                        'gateway_label' => self::gatewayLabel(),
+                        'message' => 'Vérification du paiement déjà lancé — en attente de confirmation CamPay.',
+                    ];
+                }
+
+                self::markFailed($existing);
+                $existing = null;
+            } else {
+                return self::initiateMobileCollect((int) $existing->id, $phone, $admin);
+            }
         }
 
         $payment = self::createPendingPayment($admin, $customerId, $planId, $server, self::METHOD_MOBILE_MONEY, $ctx['total']);

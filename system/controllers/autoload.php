@@ -96,11 +96,14 @@ switch ($action) {
         break;
     case 'pppoe_ip_used':
         if (!empty(_get('ip'))) {
-            $cs = ORM::for_table('tbl_customers')
+            $ipQuery = ORM::for_table('tbl_customers')
                 ->select("username")
                 ->where_not_equal('id', _get('id'))
-                ->where("pppoe_ip", _get('ip'))
-                ->findArray();
+                ->where("pppoe_ip", _get('ip'));
+            if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
+                $ipQuery->where('created_by', (int) ($admin['id'] ?? 0));
+            }
+            $cs = $ipQuery->findArray();
             if (count($cs) > 0) {
                 $c = array_column($cs, 'username');
                 die(Lang::T("IP has been used by") . ' : ' . implode(", ", $c));
@@ -109,11 +112,15 @@ switch ($action) {
         die();
     case 'pppoe_username_used':
         if (!empty(_get('u'))) {
-            $cs = ORM::for_table('tbl_customers')
-                ->select("username")
-                ->where_not_equal('id', _get('id'))
-                ->where("pppoe_username", _get('u'))
-                ->findArray();
+            $login = trim((string) _get('u'));
+            $uQuery = ORM::for_table('tbl_customers')
+                ->select('username')
+                ->where_not_equal('id', (int) _get('id'))
+                ->where_raw('(username = ? OR pppoe_username = ?)', [$login, $login]);
+            if (($admin['user_type'] ?? '') !== 'SuperAdmin') {
+                $uQuery->where('created_by', (int) ($admin['id'] ?? 0));
+            }
+            $cs = $uQuery->findArray();
             if (count($cs) > 0) {
                 $c = array_column($cs, 'username');
                 die(Lang::T("Username has been used by") . ' : ' . implode(", ", $c));

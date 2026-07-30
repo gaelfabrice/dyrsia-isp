@@ -579,6 +579,7 @@
     </style>
 
     <form method="post" action="{Text::url('settings/hotspot')}" id="hs-wizard-form" class="form-horizontal">
+        {csrf_field()}
         <input type="hidden" name="send_mikrotik" id="hs-send-mikrotik-field" value="">
         <input type="hidden" name="send_full" id="hs-send-full-field" value="">
         <input type="hidden" name="send_pppoe_only" id="hs-send-pppoe-field" value="">
@@ -1160,14 +1161,24 @@
                 method: 'POST',
                 body: fd,
                 credentials: 'same-origin',
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
+                headers: (function () {
+                    var headers = {
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    };
+                    var csrfInput = wizardForm.querySelector('input[name="csrf_token"]');
+                    if (csrfInput && csrfInput.value) {
+                        headers['X-CSRF-Token'] = csrfInput.value;
+                    }
+                    return headers;
+                })(),
                 signal: abortController ? abortController.signal : undefined
             }).then(function (r) {
                 return r.text().then(function (body) {
                     if (!r.ok) {
+                        if (r.status === 403) {
+                            throw new Error('Session expirée ou jeton CSRF invalide — rechargez la page (F5) puis réessayez l\'envoi MikroTik.');
+                        }
                         throw new Error('Erreur serveur (' + r.status + ').');
                     }
                     try {

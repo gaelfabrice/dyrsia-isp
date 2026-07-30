@@ -64,19 +64,7 @@ switch ($action) {
         Impersonate::requireSuperAdmin($admin);
         header('Content-Type: application/json; charset=utf-8');
         $q = trim(_get('q') ?? '');
-        $result = ['admins' => [], 'customers' => []];
-        if (strlen($q) >= 2) {
-            $like = '%' . $q . '%';
-            $result['admins'] = ORM::for_table('tbl_users')
-                ->where_raw('(username LIKE ? OR fullname LIKE ? OR email LIKE ?)', [$like, $like, $like])
-                ->limit(15)
-                ->find_array();
-            $result['customers'] = ORM::for_table('tbl_customers')
-                ->where_raw('(username LIKE ? OR fullname LIKE ? OR email LIKE ? OR phonenumber LIKE ?)', [$like, $like, $like, $like])
-                ->limit(15)
-                ->find_array();
-        }
-        echo json_encode($result);
+        echo json_encode(Impersonate::searchTargets($q));
         die();
 
     default:
@@ -88,6 +76,9 @@ switch ($action) {
         $ui->assign('_system_menu', 'customers');
         $csrf_token = Csrf::generateAndStoreToken();
         $ui->assign('csrf_token', $csrf_token);
+        $lists = Impersonate::searchTargets('');
+        $ui->assign('impersonate_admins', $lists['admins']);
+        $ui->assign('impersonate_customers', $lists['customers']);
         $ui->display('admin/impersonate.tpl');
         break;
 }

@@ -249,6 +249,6 @@ window.PLAN_RECHARGE_CONFIRM = {
     planName: {$plan['name_plan']|@json_encode nofilter}
 };
 </script>
-<script src="{$app_url}/ui/ui/scripts/plan-recharge-confirm.js?v=2"></script>
+<script src="{$app_url}/ui/ui/scripts/plan-recharge-confirm.js?v=3"></script>
 
 {include file="sections/footer.tpl"}

@@ -187,6 +187,44 @@ class Impersonate
         return true;
     }
 
+    /**
+     * Comptes impersonnables : liste par défaut (q vide) ou recherche (q ≥ 2 caractères).
+     *
+     * @return array{admins: array<int, array>, customers: array<int, array>}
+     */
+    public static function searchTargets($q, $adminLimit = 80, $customerLimit = 150, $searchLimit = 20)
+    {
+        $q = trim((string) $q);
+        if (strlen($q) >= 2) {
+            $like = '%' . $q . '%';
+            $admins = ORM::for_table('tbl_users')
+                ->where('status', 'Active')
+                ->where_not_equal('user_type', 'SuperAdmin')
+                ->where_raw('(username LIKE ? OR fullname LIKE ? OR email LIKE ?)', [$like, $like, $like])
+                ->order_by_asc('username')
+                ->limit((int) $searchLimit)
+                ->find_array();
+            $customers = ORM::for_table('tbl_customers')
+                ->where_raw('(username LIKE ? OR fullname LIKE ? OR email LIKE ? OR phonenumber LIKE ?)', [$like, $like, $like, $like])
+                ->order_by_asc('username')
+                ->limit((int) $searchLimit)
+                ->find_array();
+        } else {
+            $admins = ORM::for_table('tbl_users')
+                ->where('status', 'Active')
+                ->where_not_equal('user_type', 'SuperAdmin')
+                ->order_by_asc('username')
+                ->limit((int) $adminLimit)
+                ->find_array();
+            $customers = ORM::for_table('tbl_customers')
+                ->order_by_asc('username')
+                ->limit((int) $customerLimit)
+                ->find_array();
+        }
+
+        return ['admins' => $admins, 'customers' => $customers];
+    }
+
     public static function assignUi($ui)
     {
         if (!self::isActive() || empty($ui)) {
