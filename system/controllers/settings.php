@@ -2335,7 +2335,7 @@ HTML;
                         if ($startedAt > 0 && $elapsed > HotspotDeployRunner::staleJobThresholdSeconds()) {
                             $staleMsg = 'Déploiement hotspot expiré ('
                                 . (int) floor($elapsed / 60)
-                                . ' min sans réponse). Relancez « Send complet » — vérifiez WireGuard et system/cache/hotspot_deploy_worker.log.';
+                                . ' min sans progression). Relancez « Send complet » — consultez system/cache/hotspot_deploy_worker.log et le tunnel WireGuard vers le routeur.';
                             $hotspotDeployWriteJob($jobPath, [
                                 'status' => 'done',
                                 'ok' => false,
@@ -2523,12 +2523,14 @@ HTML;
                         ? 'Envoi complet Hotspot en cours sur « ' . $routerName . ' »…'
                         : 'Envoi login.html en cours sur « ' . $routerName . ' »…',
                 ]);
+                $hotspotDeployResponseSent = false;
                 if (function_exists('fastcgi_finish_request')) {
                     while (ob_get_level()) {
                         ob_end_clean();
                     }
                     if (!headers_sent()) {
                         header('Content-Type: application/json; charset=utf-8');
+                        header('X-Accel-Buffering: no');
                     }
                     echo json_encode([
                         'ok' => true,
@@ -2542,6 +2544,7 @@ HTML;
                         session_write_close();
                     }
                     fastcgi_finish_request();
+                    $hotspotDeployResponseSent = true;
                 } else {
                     $asyncPayload = json_encode([
                         'ok' => true,
@@ -2558,14 +2561,16 @@ HTML;
                         header('Content-Type: application/json; charset=utf-8');
                         header('Content-Length: ' . strlen($asyncPayload));
                         header('Connection: close');
+                        header('X-Accel-Buffering: no');
                     }
                     echo $asyncPayload;
                     if (session_status() === PHP_SESSION_ACTIVE) {
                         session_write_close();
                     }
                     @flush();
+                    $hotspotDeployResponseSent = true;
                 }
-                HotspotDeployRunner::spawnBackground($hotspotDeployJobPath);
+                HotspotDeployRunner::dispatchJob($hotspotDeployJobPath, $hotspotDeployResponseSent);
                 exit;
             } elseif (session_status() === PHP_SESSION_ACTIVE) {
                 session_write_close();

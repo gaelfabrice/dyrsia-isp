@@ -5,11 +5,11 @@
  */
 class HotspotDeployRunner
 {
-    public static function spawnBackground(string $jobPath): void
+    public static function spawnBackground(string $jobPath): bool
     {
         $jobPath = trim($jobPath);
         if ($jobPath === '' || !is_file($jobPath)) {
-            return;
+            return false;
         }
 
         $root = realpath(dirname(__DIR__, 2)) ?: dirname(__DIR__, 2);
@@ -18,7 +18,7 @@ class HotspotDeployRunner
         if (!is_file($script)) {
             self::markJobFailed($jobPath, 'Worker hotspot introuvable (scripts/hotspot-deploy-worker.php).');
 
-            return;
+            return false;
         }
 
         $logFile = $root . DIRECTORY_SEPARATOR . 'system' . DIRECTORY_SEPARATOR . 'cache'
@@ -30,8 +30,12 @@ class HotspotDeployRunner
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
             $spawned = pclose(popen('start /B ' . $cmd, 'r')) !== false;
         } else {
-            exec($cmd . ' & echo $!', $spawnOut, $spawnCode);
-            $spawned = $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
+            @exec($cmd . ' > /dev/null 2>&1 &', $spawnOut, $spawnCode);
+            $spawned = $spawnCode === 0;
+            if (!$spawned) {
+                @exec($cmd . ' & echo $!', $spawnOut2, $spawnCode2);
+                $spawned = $spawnCode2 === 0 && !empty($spawnOut2[0]) && ctype_digit(trim((string) $spawnOut2[0]));
+            }
         }
         if (!$spawned) {
             @file_put_contents(
@@ -39,18 +43,48 @@ class HotspotDeployRunner
                 date('c') . " spawn failed: {$cmd}\n",
                 FILE_APPEND
             );
-            self::markJobFailed(
-                $jobPath,
-                'Impossible de lancer le worker hotspot (exec désactivé ?). '
-                . 'Relancez ./dev-server.sh depuis Terminal.app avec WireGuard actif.'
-            );
         }
+
+        return $spawned;
+    }
+
+    /**
+     * Après réponse JSON au navigateur : exécuter le job (FPM) ou worker CLI (dev-server).
+     */
+    public static function dispatchJob(string $jobPath, bool $responseAlreadySent = false): void
+    {
+        if ($responseAlreadySent || self::shouldRunInlineWorker()) {
+            self::runJob($jobPath);
+
+            return;
+        }
+        if (!self::spawnBackground($jobPath)) {
+            self::updateJobProgress(
+                $jobPath,
+                'Worker CLI indisponible — déploiement en cours dans ce processus…'
+            );
+            self::runJob($jobPath);
+        }
+    }
+
+    public static function shouldRunInlineWorker(): bool
+    {
+        if (getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
+            return true;
+        }
+        $disabled = strtolower((string) ini_get('disable_functions'));
+        if ($disabled !== '' && str_contains($disabled, 'exec')) {
+            return true;
+        }
+
+        return function_exists('fastcgi_finish_request');
     }
 
     public static function runJob(string $jobPath): void
     {
         global $config, $UPLOAD_PATH, $_app_stage;
 
+        @ignore_user_abort(true);
         @set_time_limit(600);
         @ini_set('max_execution_time', '600');
         @ini_set('default_socket_timeout', '120');
@@ -282,7 +316,7 @@ class HotspotDeployRunner
 
     public static function staleJobThresholdSeconds(): int
     {
-        return 900;
+        return 720;
     }
 
     private static function routerOwnedByAdmin(array $admin, $routerRow): bool

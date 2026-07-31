@@ -972,7 +972,7 @@
         var syncPlansBtn = document.getElementById('hs-sync-plans-btn');
         var syncPlansField = document.getElementById('hs-sync-plans-field');
         var HS_DEPLOY_POLL_INTERVAL_MS = 2500;
-        var HS_DEPLOY_POLL_MAX_MS = 900000;
+        var HS_DEPLOY_POLL_MAX_MS = 780000;
         var hsDeployDefaultLabels = {};
         var hsDeployUi = {
             timer: null,
@@ -1199,7 +1199,7 @@
             return new Promise(function (resolve, reject) {
                 function tick() {
                     if (Date.now() > deadline) {
-                        reject(new Error('Délai dépassé (~15 min) en attendant la fin de l\'envoi MikroTik. '
+                        reject(new Error('Délai dépassé (~13 min) en attendant la fin de l\'envoi MikroTik. '
                             + 'Le déploiement peut encore tourner en arrière-plan — vérifiez WireGuard puis relancez l\'assistant.'));
                         return;
                     }
