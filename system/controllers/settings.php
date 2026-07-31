@@ -1259,6 +1259,9 @@ switch ($action) {
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
 
         $syncHotspotPlansForRouter = function ($targetRouter) use ($admin) {
             $targetRouter = trim((string) $targetRouter);
@@ -2318,6 +2321,9 @@ HTML;
             if ($hotspotDeployAsync) {
                 $ajaxHotspotMode = (string) $_POST['ajax_hotspot_deploy'];
                 if ($ajaxHotspotMode === 'status') {
+                    if (session_status() === PHP_SESSION_ACTIVE) {
+                        session_write_close();
+                    }
                     $jobId = trim((string) ($_POST['job_id'] ?? ''));
                     $jobPath = $hotspotDeployJobPathFor($admin['id'] ?? 0, $jobId);
                     if ($jobPath === null || !is_file($jobPath)) {
@@ -2672,7 +2678,21 @@ HTML;
         $ui->assign('hs_preview_url', getUrl('settings/hotspot&preview_login=1'));
         $ui->assign('routers', $routers);
         $ui->assign('hs_router', $selectedHotspotRouter);
-        $ui->assign('hs_allowed_routers_json', json_encode($hsAllowedRouters, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $hsAllowedRoutersJson = json_encode($hsAllowedRouters, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($hsAllowedRoutersJson === false) {
+            $hsAllowedRoutersJson = '[]';
+        }
+        $ui->assign('hs_allowed_routers_json', $hsAllowedRoutersJson);
+        $hsWizardStep = max(1, min(4, (int) ($_GET['step'] ?? 1)));
+        $ui->assign('hs_wizard_step', (string) $hsWizardStep);
+        $hsLanBridge = trim((string) ($config['pppoe_setup_bridge_name'] ?? ''));
+        if ($hsLanBridge === '' || strcasecmp($hsLanBridge, 'bridge-lan') === 0) {
+            $hsLanBridge = trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot'));
+        }
+        if ($hsLanBridge === '' || strcasecmp($hsLanBridge, 'bridge-lan') === 0) {
+            $hsLanBridge = 'bridge-pppoe';
+        }
+        $ui->assign('hs_lan_bridge', $hsLanBridge);
         $ui->assign('hs_api_suggested', Mikrotik::resolveHotspotBackendApiUrl($config));
         $ui->assign(
             'hs_walled_garden_script',
@@ -2692,6 +2712,9 @@ HTML;
 
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        }
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
         }
 
         $pppoeSetupKeys = array_keys(Mikrotik::pppoeSetupDefaults());
@@ -2934,6 +2957,9 @@ HTML;
             $ajaxDeployMode = (string) $_POST['ajax_deploy'];
 
             if ($ajaxDeployMode === 'status') {
+                if (session_status() === PHP_SESSION_ACTIVE) {
+                    session_write_close();
+                }
                 $jobId = trim((string) ($_POST['job_id'] ?? ''));
                 $jobPath = $pppoeDeployJobPath($admin['id'] ?? 0, $jobId);
                 if ($jobPath === null || !is_file($jobPath)) {
