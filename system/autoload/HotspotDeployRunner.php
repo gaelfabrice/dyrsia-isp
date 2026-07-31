@@ -30,11 +30,14 @@ class HotspotDeployRunner
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
             $spawned = pclose(popen('start /B ' . $cmd, 'r')) !== false;
         } else {
-            @exec($cmd . ' > /dev/null 2>&1 &', $spawnOut, $spawnCode);
-            $spawned = $spawnCode === 0;
+            $spawned = self::spawnDetachedUnix($php, $script, $jobPath, $logFile);
             if (!$spawned) {
-                @exec($cmd . ' & echo $!', $spawnOut2, $spawnCode2);
-                $spawned = $spawnCode2 === 0 && !empty($spawnOut2[0]) && ctype_digit(trim((string) $spawnOut2[0]));
+                @exec($cmd . ' > /dev/null 2>&1 &', $spawnOut, $spawnCode);
+                $spawned = $spawnCode === 0;
+                if (!$spawned) {
+                    @exec($cmd . ' & echo $!', $spawnOut2, $spawnCode2);
+                    $spawned = $spawnCode2 === 0 && !empty($spawnOut2[0]) && ctype_digit(trim((string) $spawnOut2[0]));
+                }
             }
         }
         if (!$spawned) {
@@ -53,18 +56,29 @@ class HotspotDeployRunner
      */
     public static function dispatchJob(string $jobPath, bool $responseAlreadySent = false): void
     {
-        if ($responseAlreadySent || self::shouldRunInlineWorker()) {
+        if (getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
             self::runJob($jobPath);
 
             return;
         }
-        if (!self::spawnBackground($jobPath)) {
-            self::updateJobProgress(
-                $jobPath,
-                'Worker CLI indisponible — déploiement en cours dans ce processus…'
-            );
+        if ($responseAlreadySent && DeployAsyncHttp::canRunHeavyWorkInSameProcess()) {
             self::runJob($jobPath);
+
+            return;
         }
+        if (!$responseAlreadySent && self::shouldRunInlineWorker()) {
+            self::runJob($jobPath);
+
+            return;
+        }
+        if (self::spawnBackground($jobPath)) {
+            return;
+        }
+        self::updateJobProgress(
+            $jobPath,
+            'Worker CLI indisponible — déploiement en cours dans ce processus…'
+        );
+        self::runJob($jobPath);
     }
 
     public static function shouldRunInlineWorker(): bool
@@ -72,16 +86,12 @@ class HotspotDeployRunner
         if (getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
             return true;
         }
-        // Apache mod_php (Render Docker) : exec & détache un worker tué à la fin de la requête.
-        if (PHP_SAPI !== 'cli-server') {
-            return true;
-        }
         $disabled = strtolower((string) ini_get('disable_functions'));
         if ($disabled !== '' && str_contains($disabled, 'exec')) {
             return true;
         }
 
-        return function_exists('fastcgi_finish_request');
+        return DeployAsyncHttp::canRunHeavyWorkInSameProcess();
     }
 
     public static function runJob(string $jobPath): void
@@ -339,5 +349,17 @@ class HotspotDeployRunner
             : ($routerRow->admin_id ?? 0);
 
         return (int) $routerAdminId === (int) $admin['id'];
+    }
+
+    private static function spawnDetachedUnix(string $php, string $script, string $jobPath, string $logFile): bool
+    {
+        if (!function_exists('exec') || stripos((string) ini_get('disable_functions'), 'exec') !== false) {
+            return false;
+        }
+        $shellCmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobPath)
+            . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
+        @exec('setsid sh -c ' . escapeshellarg($shellCmd) . ' < /dev/null & echo $!', $spawnOut, $spawnCode);
+
+        return $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
     }
 }

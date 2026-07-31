@@ -12,18 +12,29 @@ class PppoeDeployRunner
 
     public static function dispatchJob(string $jobPath, bool $responseAlreadySent = false): void
     {
-        if ($responseAlreadySent || self::shouldRunInlineWorker()) {
+        if (getenv('WIFIZONE_PPPOE_DEPLOY_INLINE') === '1' || getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
             self::runJob($jobPath);
 
             return;
         }
-        if (!self::trySpawnBackground($jobPath)) {
-            self::updateJobProgress(
-                $jobPath,
-                'Worker CLI indisponible — déploiement PPPoE en cours dans ce processus…'
-            );
+        if ($responseAlreadySent && DeployAsyncHttp::canRunHeavyWorkInSameProcess()) {
             self::runJob($jobPath);
+
+            return;
         }
+        if (!$responseAlreadySent && self::shouldRunInlineWorker()) {
+            self::runJob($jobPath);
+
+            return;
+        }
+        if (self::trySpawnBackground($jobPath)) {
+            return;
+        }
+        self::updateJobProgress(
+            $jobPath,
+            'Worker CLI indisponible — déploiement PPPoE en cours dans ce processus…'
+        );
+        self::runJob($jobPath);
     }
 
     public static function continueAfterHttpResponse(string $jobPath): void
@@ -36,15 +47,12 @@ class PppoeDeployRunner
         if (getenv('WIFIZONE_PPPOE_DEPLOY_INLINE') === '1' || getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
             return true;
         }
-        if (PHP_SAPI !== 'cli-server') {
-            return true;
-        }
         $disabled = strtolower((string) ini_get('disable_functions'));
         if ($disabled !== '' && str_contains($disabled, 'exec')) {
             return true;
         }
 
-        return function_exists('fastcgi_finish_request');
+        return DeployAsyncHttp::canRunHeavyWorkInSameProcess();
     }
 
     private static function trySpawnBackground(string $jobPath): bool
@@ -76,8 +84,11 @@ class PppoeDeployRunner
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
             $spawned = pclose(popen('start /B ' . $cmd, 'r')) !== false;
         } else {
-            exec('nohup ' . $cmd . ' > /dev/null 2>&1 & echo $!', $spawnOut, $spawnCode);
-            $spawned = $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
+            $spawned = self::spawnDetachedUnix($php, $script, $jobPath, $logFile);
+            if (!$spawned) {
+                exec('nohup ' . $cmd . ' > /dev/null 2>&1 & echo $!', $spawnOut, $spawnCode);
+                $spawned = $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
+            }
         }
         if (!$spawned) {
             @file_put_contents(
@@ -294,5 +305,17 @@ class PppoeDeployRunner
         }
 
         return (int) ($routerRow->admin_id ?? 0) === (int) $admin['id'];
+    }
+
+    private static function spawnDetachedUnix(string $php, string $script, string $jobPath, string $logFile): bool
+    {
+        if (!function_exists('exec') || stripos((string) ini_get('disable_functions'), 'exec') !== false) {
+            return false;
+        }
+        $shellCmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobPath)
+            . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
+        @exec('setsid sh -c ' . escapeshellarg($shellCmd) . ' < /dev/null & echo $!', $spawnOut, $spawnCode);
+
+        return $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
     }
 }

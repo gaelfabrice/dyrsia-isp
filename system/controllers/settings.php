@@ -2917,7 +2917,7 @@ HTML;
         $pppoeDeployJobPath = static function ($adminId, $jobId) use ($pppoeDeployJobDir) {
             $adminId = (int) $adminId;
             $jobId = preg_replace('/[^a-f0-9]/', '', strtolower((string) $jobId));
-            if ($adminId <= 0 || strlen($jobId) !== 32) {
+            if ($adminId <= 0 || strlen($jobId) < 16) {
                 return null;
             }
 
@@ -3061,21 +3061,7 @@ HTML;
                     'message' => 'Déploiement PPPoE démarré — connexion au routeur via VPN…',
                 ], JSON_UNESCAPED_UNICODE);
 
-                while (ob_get_level()) {
-                    ob_end_clean();
-                }
-                if (!headers_sent()) {
-                    header('Content-Type: application/json; charset=utf-8');
-                    header('Content-Length: ' . strlen($asyncPayload));
-                    header('Connection: close');
-                    header('X-Accel-Buffering: no');
-                    header('Cache-Control: no-store');
-                }
-                echo $asyncPayload;
-                if (session_status() === PHP_SESSION_ACTIVE) {
-                    session_write_close();
-                }
-                @flush();
+                DeployAsyncHttp::sendJsonAndCloseConnection($asyncPayload);
 
                 PppoeDeployRunner::dispatchJob($jobPath, true);
                 exit;
