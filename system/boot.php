@@ -6,7 +6,20 @@
  **/
 
 try {
-    require_once 'init.php';
+    $wifizoneInitPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'init.php';
+    $wifizoneInitHelpers = __DIR__ . DIRECTORY_SEPARATOR . 'init_helpers.php';
+    if (!is_readable($wifizoneInitPath)) {
+        throw new RuntimeException('init.php introuvable : ' . $wifizoneInitPath);
+    }
+    require_once $wifizoneInitPath;
+    if (!function_exists('_admin') && is_readable($wifizoneInitHelpers)) {
+        require_once $wifizoneInitHelpers;
+    }
+    if (!function_exists('_admin')) {
+        throw new RuntimeException(
+            '_admin() absente — init.php incomplet sur le serveur. Redéployez le tarball dist complet (init.php + system/init_helpers.php).'
+        );
+    }
 } catch (Throwable $e) {
     die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
 } catch (Exception $e) {

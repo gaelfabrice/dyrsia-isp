@@ -251,14 +251,9 @@ function cron_data_usage_sync()
     $db->exec("DELETE FROM `api_data_usage` WHERE `log_date` < NOW() - INTERVAL 365 DAY");
     try {
         $db->exec("UPDATE api_data_usage u
-            INNER JOIN tbl_routers r ON r.name = u.router_name
-            SET u.admin_id = r.admin_id
-            WHERE r.admin_id > 0");
-        $db->exec("UPDATE api_data_usage u
             INNER JOIN tbl_customers c ON (
                 u.username = c.pppoe_username OR u.username = c.username
             )
-            INNER JOIN tbl_routers r ON r.name = u.router_name AND r.admin_id = c.created_by
             SET u.admin_id = c.created_by
             WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND c.created_by > 0");
     } catch (Exception $e) {
@@ -314,6 +309,9 @@ function cron_data_usage_sync()
                     continue;
                 }
                 $usageAdminId = cron_data_usage_resolve_admin_id($username, $routerAdminId);
+                if ($usageAdminId === null || $usageAdminId <= 0) {
+                    continue;
+                }
                 $stmt = $db->prepare("INSERT INTO api_data_usage (admin_id, username, router_name, download_bytes, upload_bytes, total_bytes, status, log_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
                 $stmt->execute([$usageAdminId, $username, $routerName, $diffDl, $diffUl, $diffDl + $diffUl, $metrics['status'], $currentTime]);
                 $totalInserted++;

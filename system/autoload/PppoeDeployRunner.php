@@ -17,12 +17,15 @@ class PppoeDeployRunner
 
             return;
         }
-        if ($responseAlreadySent && DeployAsyncHttp::canRunHeavyWorkInSameProcess()) {
+        if ($responseAlreadySent) {
+            if (PHP_SAPI === 'cli-server' && self::trySpawnBackground($jobPath)) {
+                return;
+            }
             self::runJob($jobPath);
 
             return;
         }
-        if (!$responseAlreadySent && self::shouldRunInlineWorker()) {
+        if (self::shouldRunInlineWorker()) {
             self::runJob($jobPath);
 
             return;
@@ -86,8 +89,12 @@ class PppoeDeployRunner
         } else {
             $spawned = self::spawnDetachedUnix($php, $script, $jobPath, $logFile);
             if (!$spawned) {
-                exec('nohup ' . $cmd . ' > /dev/null 2>&1 & echo $!', $spawnOut, $spawnCode);
-                $spawned = $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
+                @exec($cmd . ' > /dev/null 2>&1 &', $spawnOut, $spawnCode);
+                $spawned = $spawnCode === 0;
+                if (!$spawned) {
+                    @exec($cmd . ' & echo $!', $spawnOut2, $spawnCode2);
+                    $spawned = $spawnCode2 === 0 && !empty($spawnOut2[0]) && ctype_digit(trim((string) $spawnOut2[0]));
+                }
             }
         }
         if (!$spawned) {
@@ -169,15 +176,11 @@ class PppoeDeployRunner
         }
         $mikrotik = $mikrotik->as_array();
 
-        $setupConfig = is_array($config) ? $config : [];
-        foreach (Mikrotik::pppoeSetupDefaults() as $key => $defaultValue) {
-            if (!isset($setupConfig[$key]) || $setupConfig[$key] === '') {
-                $setupConfig[$key] = $defaultValue;
-            }
-        }
+        $setupConfig = self::loadPppoeSetupConfigForDeploy();
 
         $started = microtime(true);
-        self::updateJobProgress($jobPath, 'Worker CLI : vérification VPN / API MikroTik…');
+        self::logWorkerLine('runJob start router=' . $routerName . ' sapi=' . PHP_SAPI . ' pid=' . getmypid());
+        self::updateJobProgress($jobPath, 'Worker : vérification VPN / API MikroTik…');
 
         try {
             Mikrotik::resetPppoeSyncRuntimeState();
@@ -305,6 +308,33 @@ class PppoeDeployRunner
         }
 
         return (int) ($routerRow->admin_id ?? 0) === (int) $admin['id'];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function loadPppoeSetupConfigForDeploy(): array
+    {
+        global $config;
+        $setupConfig = is_array($config) ? $config : [];
+        foreach (Mikrotik::pppoeSetupDefaults() as $key => $defaultValue) {
+            $row = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+            if ($row && trim((string) $row->value) !== '') {
+                $setupConfig[$key] = $row->value;
+            } elseif (!isset($setupConfig[$key]) || $setupConfig[$key] === '') {
+                $setupConfig[$key] = $defaultValue;
+            }
+        }
+
+        return Mikrotik::normalizePppoeSetupConfig($setupConfig);
+    }
+
+    private static function logWorkerLine(string $line): void
+    {
+        $root = realpath(dirname(__DIR__, 2)) ?: dirname(__DIR__, 2);
+        $logFile = $root . DIRECTORY_SEPARATOR . 'system' . DIRECTORY_SEPARATOR . 'cache'
+            . DIRECTORY_SEPARATOR . 'pppoe_deploy_worker.log';
+        @file_put_contents($logFile, date('c') . ' ' . $line . "\n", FILE_APPEND);
     }
 
     private static function spawnDetachedUnix(string $php, string $script, string $jobPath, string $logFile): bool

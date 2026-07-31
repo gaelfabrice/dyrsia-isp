@@ -79,3 +79,52 @@ foreach (ORM::for_table('tbl_hotspot_payments')->find_many() as $payment) {
 }
 
 echo ($dryRun ? '[dry-run] ' : '') . "Updated transactions: {$updatedTransactions}, recharges: {$updatedRecharges}\n";
+
+if (in_array('--sync-router-owners', $argv ?? [], true)) {
+    $syncedTrx = 0;
+    $syncedRech = 0;
+    foreach (ORM::for_table('tbl_routers')->find_many() as $router) {
+        $ownerId = (int) ($router->admin_id ?? 0);
+        if ($ownerId <= 0) {
+            continue;
+        }
+        if ($dryRun) {
+            $aliases = AdminScope::routerAliasesFromRow($router);
+            if ($aliases === []) {
+                continue;
+            }
+            $ph = implode(',', array_fill(0, count($aliases), '?'));
+            $syncedTrx += (int) ORM::for_table('tbl_transactions')
+                ->where_raw('routers IN (' . $ph . ') AND admin_id <> ?', array_merge($aliases, [$ownerId]))
+                ->count();
+            $syncedRech += (int) ORM::for_table('tbl_user_recharges')
+                ->where_raw('routers IN (' . $ph . ') AND admin_id <> ?', array_merge($aliases, [$ownerId]))
+                ->count();
+            continue;
+        }
+        $counts = AdminScope::syncFinancialRecordsAdminIdForRouter($router, $ownerId);
+        $syncedTrx += $counts['transactions'];
+        $syncedRech += $counts['recharges'];
+    }
+    echo ($dryRun ? '[dry-run] ' : '') . "Router owner sync — transactions: {$syncedTrx}, recharges: {$syncedRech}\n";
+}
+
+if (in_array('--fix-data-usage-admin', $argv ?? [], true)) {
+    $db = ORM::get_db();
+    $count = 0;
+    if ($dryRun) {
+        $count = (int) $db->query(
+            "SELECT COUNT(*) FROM api_data_usage u
+            INNER JOIN tbl_customers c ON (u.username = c.username OR u.username = c.pppoe_username)
+            WHERE c.created_by > 0 AND (u.admin_id IS NULL OR u.admin_id = 0 OR u.admin_id <> c.created_by)"
+        )->fetchColumn();
+    } else {
+        $count = $db->exec(
+            "UPDATE api_data_usage u
+            INNER JOIN tbl_customers c ON (u.username = c.username OR u.username = c.pppoe_username)
+            SET u.admin_id = c.created_by
+            WHERE c.created_by > 0 AND (u.admin_id IS NULL OR u.admin_id = 0 OR u.admin_id <> c.created_by)"
+        );
+    }
+    echo ($dryRun ? '[dry-run] ' : '') . "Data usage admin_id aligned to customer owner: {$count} row(s)\n";
+}

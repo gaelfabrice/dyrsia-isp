@@ -454,6 +454,7 @@ switch ($action) {
             $d->status = $routerStatus;
             $d->last_seen = $routerStatus == 'Online' ? date('Y-m-d H:i:s') : null;
             $d->save();
+            AdminScope::syncFinancialRecordsAdminIdForRouter($d->as_array(), (int) $admin['id']);
             if ($admin['user_type'] !== 'SuperAdmin') {
                 AdminSubscription::syncRouterCount((int) $admin['id']);
             }
@@ -551,6 +552,7 @@ switch ($action) {
                 $d->last_seen = date('Y-m-d H:i:s');
             }
             $d->save();
+            AdminScope::syncFinancialRecordsAdminIdForRouter($d->as_array(), (int) ($d->admin_id ?? $admin['id']));
             if ($name != $oldname) {
                 Mikrotik::renameHotspotNasRouter($oldname, $name);
                 $ownerId = (int) ($d->admin_id ?? 0);
@@ -579,6 +581,7 @@ switch ($action) {
                 $p = ORM::for_table('tbl_voucher')->where('routers', $oldname)->find_result_set();
                 $p->set('routers', $name);
                 $p->save();
+                AdminScope::syncFinancialRecordsAdminIdForRouter($d->as_array(), (int) ($d->admin_id ?? 0));
                 WifiZoneHotspot::clearHotspotPlanCache();
             }
             $newIp = Mikrotik::parseEndpoint((string) $ip_address)['host'];

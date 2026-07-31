@@ -12,7 +12,7 @@ declare(strict_types=1);
 @ini_set('default_socket_timeout', '120');
 
 chdir(dirname(__DIR__));
-require_once 'init.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'init.php';
 
 $jobPath = $argv[1] ?? '';
 if ($jobPath === '') {

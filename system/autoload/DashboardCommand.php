@@ -446,9 +446,16 @@ class DashboardCommand
                 if ($isScoped) {
                     $sql .= ' AND (
                         u.admin_id = ?
-                        OR EXISTS (
-                            SELECT 1 FROM tbl_routers r
-                            WHERE r.name = u.router_name AND r.enabled = 1 AND r.admin_id = ?
+                        OR (
+                            (u.admin_id IS NULL OR u.admin_id = 0)
+                            AND EXISTS (
+                                SELECT 1 FROM tbl_customers c
+                                WHERE c.created_by = ?
+                                  AND (
+                                    u.username = c.username
+                                    OR u.username = c.pppoe_username
+                                  )
+                            )
                         )
                     )';
                     $params[] = $adminId;

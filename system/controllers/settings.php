@@ -1259,9 +1259,6 @@ switch ($action) {
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
-            session_write_close();
-        }
 
         $syncHotspotPlansForRouter = function ($targetRouter) use ($admin) {
             $targetRouter = trim((string) $targetRouter);
@@ -2713,9 +2710,6 @@ HTML;
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
         }
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
-            session_write_close();
-        }
 
         $pppoeSetupKeys = array_keys(Mikrotik::pppoeSetupDefaults());
         $pppoeDefaults = Mikrotik::pppoeSetupDefaults();
@@ -2724,6 +2718,7 @@ HTML;
                 $config[$key] = $defaultValue;
             }
         }
+        $config = Mikrotik::normalizePppoeSetupConfig($config);
 
         $resolvePppoeRouterRecord = static function ($routerName) {
             $routerName = trim((string) $routerName);
@@ -2797,7 +2792,9 @@ HTML;
             $_POST['pppoe_setup_one_session'] = !empty($_POST['pppoe_setup_one_session']) ? '1' : '0';
             $_POST['pppoe_setup_nat_masquerade'] = !empty($_POST['pppoe_setup_nat_masquerade']) ? '1' : '0';
             $bridgeName = trim((string) ($_POST['pppoe_setup_bridge_name'] ?? ''));
-            if ($bridgeName === '' || strcasecmp($bridgeName, 'bridge-lan') === 0) {
+            if ($bridgeName === ''
+                || strcasecmp($bridgeName, 'bridge-lan') === 0
+                || strcasecmp($bridgeName, 'bridge-hotspot') === 0) {
                 $bridgeName = 'bridge-pppoe';
                 $_POST['pppoe_setup_bridge_name'] = $bridgeName;
             }
@@ -2976,6 +2973,29 @@ HTML;
                 if ($status === 'running') {
                     $startedAt = (int) ($job['started_at'] ?? 0);
                     $elapsed = $startedAt > 0 ? max(0, time() - $startedAt) : 0;
+                    $updatedAt = (int) ($job['updated_at'] ?? $startedAt);
+                    $staleWorkerStart = $elapsed >= 90
+                        && $updatedAt > 0
+                        && (time() - $updatedAt) >= 75
+                        && stripos((string) ($job['message'] ?? ''), 'démarrage après réponse') !== false;
+                    if ($staleWorkerStart) {
+                        $staleMsg = 'Le worker PPPoE ne s\'est pas exécuté (hébergement Apache/mod_php). '
+                            . 'Mettez à jour le serveur (PppoeDeployRunner) ou définissez WIFIZONE_PPPOE_DEPLOY_INLINE=1, puis relancez.';
+                        $pppoeDeployWriteJob($jobPath, [
+                            'status' => 'done',
+                            'ok' => false,
+                            'message' => $staleMsg,
+                            'errors' => [$staleMsg],
+                            'elapsed' => $elapsed,
+                        ]);
+                        echo json_encode([
+                            'ok' => false,
+                            'running' => false,
+                            'message' => $staleMsg,
+                            'elapsed' => $elapsed,
+                        ]);
+                        exit;
+                    }
                     if ($startedAt > 0 && $elapsed > PppoeDeployRunner::staleJobThresholdSeconds()) {
                         $staleMsg = 'Déploiement PPPoE expiré ('
                             . (int) floor($elapsed / 60)
@@ -3019,6 +3039,9 @@ HTML;
                 @ini_set('max_execution_time', '600');
                 @ini_set('default_socket_timeout', '120');
                 @ignore_user_abort(true);
+                if (session_status() === PHP_SESSION_ACTIVE) {
+                    session_write_close();
+                }
                 $savePppoeSetupSettings();
                 $routerName = trim((string) ($config['pppoe_setup_router'] ?? ''));
                 $bridgePorts = array_values(array_filter(array_map('trim', explode(',', (string) ($config['pppoe_setup_bridge_ports'] ?? '')))));
@@ -3043,7 +3066,7 @@ HTML;
                     echo json_encode(['ok' => false, 'message' => 'Impossible de créer la tâche de déploiement.']);
                     exit;
                 }
-                $pppoeDeployWriteJob($jobPath, [
+                if (!$pppoeDeployWriteJob($jobPath, [
                     'status' => 'running',
                     'started_at' => time(),
                     'admin_id' => (int) ($admin['id'] ?? 0),
@@ -3052,7 +3075,10 @@ HTML;
                     'message' => 'Déploiement PPPoE en cours sur « ' . $routerName . ' »…',
                     'actions' => [],
                     'errors' => [],
-                ]);
+                ])) {
+                    echo json_encode(['ok' => false, 'message' => 'Impossible d\'écrire la tâche dans system/cache (permissions ?).']);
+                    exit;
+                }
 
                 $asyncPayload = json_encode([
                     'ok' => true,
@@ -3063,6 +3089,7 @@ HTML;
 
                 DeployAsyncHttp::sendJsonAndCloseConnection($asyncPayload);
 
+                PppoeDeployRunner::updateJobProgress($jobPath, 'Worker : démarrage après réponse HTTP…');
                 PppoeDeployRunner::dispatchJob($jobPath, true);
                 exit;
             }
@@ -3093,9 +3120,12 @@ HTML;
         $ui->assign('routers', $routers);
         $ui->assign('pppoe_defaults', $pppoeDefaults);
         $ui->assign('_c', $config);
-        $csrf_token = Csrf::generateAndStoreToken();
+        $csrf_token = Csrf::getToken();
         $ui->assign('csrf_token', $csrf_token);
         $ui->display('admin/settings/pppoe-setup.tpl');
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
         break;
 
     case 'dbstatus':

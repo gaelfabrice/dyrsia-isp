@@ -24,6 +24,8 @@ class DeployAsyncHttp
         @flush();
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
         }
     }
 
@@ -36,6 +38,6 @@ class DeployAsyncHttp
             return true;
         }
 
-        return function_exists('fastcgi_finish_request');
+        return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
     }
 }

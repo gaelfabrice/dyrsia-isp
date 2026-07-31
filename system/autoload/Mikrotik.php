@@ -13640,6 +13640,8 @@ class Mikrotik
             $snapshot['suggested']['pppoe_setup_bridge_name'] = $bridgeName;
             $snapshot['suggested']['pppoe_setup_bridge_ports'] = implode(',', $snapshot['bridge_ports'][$bridgeName]);
             $snapshot['suggested']['pppoe_setup_server_interface'] = $bridgeName;
+        } else {
+            $snapshot['suggested']['pppoe_setup_bridge_name'] = 'bridge-pppoe';
         }
 
         foreach ($snapshot['addresses'] as $addr) {
@@ -14178,11 +14180,10 @@ class Mikrotik
     public static function resolvePppoeBridgeName(array $config)
     {
         $name = trim((string) ($config['pppoe_setup_bridge_name'] ?? ''));
-        if ($name === '' || strcasecmp($name, 'bridge-lan') === 0) {
-            $name = trim((string) ($config['lan_bridge_name'] ?? ''));
-        }
-        if ($name === '' || strcasecmp($name, 'bridge-lan') === 0) {
-            $name = 'bridge-pppoe';
+        if ($name === ''
+            || strcasecmp($name, 'bridge-lan') === 0
+            || strcasecmp($name, 'bridge-hotspot') === 0) {
+            return 'bridge-pppoe';
         }
 
         return $name;

@@ -422,13 +422,15 @@ body.theme-light .du-page .du-table th:first-child {
             <div class="du-field">
                 <label><i class="fa fa-filter"></i> Usage</label>
                 <select id="usage-filter" class="du-select">
-                    <option value="">{if $_admin['user_type'] eq 'SuperAdmin'}Tous les usages{else}Tous mes clients{/if}</option>
                     {if $_admin['user_type'] eq 'SuperAdmin'}
+                    <option value="">— Choisir un administrateur —</option>
                     <optgroup label="Administrateurs">
                         {foreach $admins as $a}
                         <option value="admin:{$a.id}">{$a.fullname|default:$a.username}</option>
                         {/foreach}
                     </optgroup>
+                    {else}
+                    <option value="" selected>Tous mes clients</option>
                     {/if}
                     <optgroup label="Clients">
                         {foreach $customers as $c}

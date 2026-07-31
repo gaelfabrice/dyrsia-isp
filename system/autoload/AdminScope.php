@@ -1,7 +1,8 @@
 <?php
 
 /**
- * Filtres multi-tenant : ventes/recharges visibles par admin propriétaire du routeur.
+ * Filtres multi-tenant : ventes/recharges par admin_id (propriétaire courant du routeur).
+ * Les ventes portail (admin_id = 0) sont rattachées via nom de routeur / forfait.
  */
 class AdminScope
 {
@@ -40,6 +41,75 @@ class AdminScope
         return array_values(array_unique($names));
     }
 
+    /**
+     * Alias routeur (nom, description, IP) pour matcher tbl_transactions.routers.
+     *
+     * @param array<string, mixed>|object $routerRow
+     * @return array<int, string>
+     */
+    public static function routerAliasesFromRow($routerRow): array
+    {
+        $row = is_array($routerRow)
+            ? $routerRow
+            : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
+        $names = [];
+        foreach (['name', 'description'] as $column) {
+            $value = trim((string) ($row[$column] ?? ''));
+            if ($value !== '') {
+                $names[] = $value;
+            }
+        }
+        $ip = trim(explode(':', (string) ($row['ip_address'] ?? ''))[0]);
+        if ($ip !== '') {
+            $names[] = $ip;
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    /**
+     * Après création / transfert de routeur : aligner admin_id des ventes historiques sur le propriétaire actuel.
+     *
+     * @param array<string, mixed>|object $routerRow
+     * @return array{transactions: int, recharges: int}
+     */
+    public static function syncFinancialRecordsAdminIdForRouter($routerRow, int $adminId): array
+    {
+        $counts = ['transactions' => 0, 'recharges' => 0];
+        if ($adminId <= 0) {
+            return $counts;
+        }
+        $aliases = self::routerAliasesFromRow($routerRow);
+        if ($aliases === []) {
+            return $counts;
+        }
+        $placeholders = implode(',', array_fill(0, count($aliases), '?'));
+
+        foreach (ORM::for_table('tbl_transactions')
+            ->where_raw('routers IN (' . $placeholders . ')', $aliases)
+            ->find_many() as $trx) {
+            if ((int) ($trx->admin_id ?? 0) === $adminId) {
+                continue;
+            }
+            $trx->admin_id = $adminId;
+            $trx->save();
+            $counts['transactions']++;
+        }
+
+        foreach (ORM::for_table('tbl_user_recharges')
+            ->where_raw('routers IN (' . $placeholders . ')', $aliases)
+            ->find_many() as $recharge) {
+            if ((int) ($recharge->admin_id ?? 0) === $adminId) {
+                continue;
+            }
+            $recharge->admin_id = $adminId;
+            $recharge->save();
+            $counts['recharges']++;
+        }
+
+        return $counts;
+    }
+
     /** @return array<int, string> */
     public static function planNames(int $adminId): array
     {
@@ -72,12 +142,38 @@ class AdminScope
         $params = [$adminId];
 
         if ($routerNames !== []) {
-            $parts[] = $prefix . 'routers IN (' . implode(',', array_fill(0, count($routerNames), '?')) . ')';
+            $parts[] = '(' . $prefix . 'admin_id = 0 AND ' . $prefix . 'routers IN ('
+                . implode(',', array_fill(0, count($routerNames), '?')) . '))';
             $params = array_merge($params, $routerNames);
         }
 
         if ($planNames !== []) {
             $parts[] = '(' . $prefix . 'admin_id = 0 AND ' . $prefix . 'plan_name IN ('
+                . implode(',', array_fill(0, count($planNames), '?')) . '))';
+            $params = array_merge($params, $planNames);
+        }
+
+        return ['(' . implode(' OR ', $parts) . ')', $params];
+    }
+
+    /** @return array{0:string,1:array<int,mixed>} */
+    private static function rechargeScopeSql(int $adminId, string $columnPrefix = ''): array
+    {
+        $prefix = $columnPrefix !== '' ? $columnPrefix . '.' : '';
+        $routerNames = self::routerNames($adminId);
+        $planNames = self::planNames($adminId);
+
+        $parts = [$prefix . 'admin_id = ?'];
+        $params = [$adminId];
+
+        if ($routerNames !== []) {
+            $parts[] = '(' . $prefix . 'admin_id = 0 AND ' . $prefix . 'routers IN ('
+                . implode(',', array_fill(0, count($routerNames), '?')) . '))';
+            $params = array_merge($params, $routerNames);
+        }
+
+        if ($planNames !== []) {
+            $parts[] = '(' . $prefix . 'admin_id = 0 AND ' . $prefix . 'namebp IN ('
                 . implode(',', array_fill(0, count($planNames), '?')) . '))';
             $params = array_merge($params, $planNames);
         }
@@ -135,17 +231,9 @@ class AdminScope
         }
 
         $adminId = self::adminId($admin);
-        $routerNames = self::routerNames($adminId);
-        if ($routerNames === []) {
-            return $query->where('admin_id', $adminId);
-        }
+        [$sql, $params] = self::rechargeScopeSql($adminId);
 
-        $placeholders = implode(',', array_fill(0, count($routerNames), '?'));
-
-        return $query->where_raw(
-            '(admin_id = ? OR routers IN (' . $placeholders . '))',
-            array_merge([$adminId], $routerNames)
-        );
+        return $query->where_raw($sql, $params);
     }
 
     /** @return array{0:string,1:array<int,mixed>} SQL fragment + bound params */
@@ -171,13 +259,17 @@ class AdminScope
             return true;
         }
 
+        if ((int) ($row['admin_id'] ?? 0) !== 0) {
+            return false;
+        }
+
         $router = trim((string) ($row['routers'] ?? ''));
         if ($router !== '' && in_array($router, self::routerNames($adminId), true)) {
             return true;
         }
 
         $planName = trim((string) ($row['plan_name'] ?? ''));
-        if ((int) ($row['admin_id'] ?? 0) === 0 && $planName !== '' && in_array($planName, self::planNames($adminId), true)) {
+        if ($planName !== '' && in_array($planName, self::planNames($adminId), true)) {
             return true;
         }
 

@@ -61,12 +61,15 @@ class HotspotDeployRunner
 
             return;
         }
-        if ($responseAlreadySent && DeployAsyncHttp::canRunHeavyWorkInSameProcess()) {
+        if ($responseAlreadySent) {
+            if (PHP_SAPI === 'cli-server' && self::spawnBackground($jobPath)) {
+                return;
+            }
             self::runJob($jobPath);
 
             return;
         }
-        if (!$responseAlreadySent && self::shouldRunInlineWorker()) {
+        if (self::shouldRunInlineWorker()) {
             self::runJob($jobPath);
 
             return;

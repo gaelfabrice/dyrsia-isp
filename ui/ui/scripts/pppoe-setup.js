@@ -314,6 +314,18 @@
         Object.keys(extraFields || {}).forEach(function (key) {
             fd.set(key, extraFields[key]);
         });
+        var csrfEl = setupForm.querySelector('input[name="csrf_token"]');
+        var csrfVal = csrfEl ? String(csrfEl.value || '').trim() : '';
+        if (csrfVal) {
+            fd.set('csrf_token', csrfVal);
+        }
+        var fetchHeaders = {
+            Accept: 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        };
+        if (csrfVal) {
+            fetchHeaders['X-CSRF-Token'] = csrfVal;
+        }
         var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
         var abortTimer = abortController && timeoutMs ? setTimeout(function () {
             try { abortController.abort(); } catch (err) {}
@@ -323,10 +335,7 @@
             method: 'POST',
             body: fd,
             credentials: 'same-origin',
-            headers: {
-                Accept: 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
+            headers: fetchHeaders,
             signal: abortController ? abortController.signal : undefined
         }).then(function (r) {
             return r.text().then(function (body) {
@@ -756,7 +765,14 @@
             if (preserveEdits && !isPortField && String(el.value || '').trim() !== '') return;
             if (preserveEdits && isPortField && String(el.value || '').trim() !== '' && el.dataset.userTouched === '1') return;
             if (suggested[key] != null && String(suggested[key]).trim() !== '') {
-                setVal(key, suggested[key]);
+                var value = suggested[key];
+                if (key === 'pppoe_setup_bridge_name' || key === 'pppoe_setup_server_interface') {
+                    var normalized = String(value).trim().toLowerCase();
+                    if (normalized === 'bridge-hotspot' || normalized === 'bridge-lan') {
+                        value = 'bridge-pppoe';
+                    }
+                }
+                setVal(key, value);
             }
         });
 

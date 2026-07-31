@@ -116,17 +116,22 @@ function reports_data_usage_customer_join()
     )";
 }
 
-function reports_data_usage_router_scope_sql($prefix = 'u')
+function reports_data_usage_admin_scope_sql($prefix = 'u')
 {
     return "(
             {$prefix}.admin_id = ?
-            OR EXISTS (
-                SELECT 1 FROM tbl_routers r
-                WHERE r.name COLLATE utf8mb4_unicode_ci = {$prefix}.router_name COLLATE utf8mb4_unicode_ci
-                  AND r.enabled = 1
-                  AND r.admin_id = ?
+            OR (
+                ({$prefix}.admin_id IS NULL OR {$prefix}.admin_id = 0)
+                AND c.id IS NOT NULL
+                AND c.created_by = ?
             )
         )";
+}
+
+/** @deprecated Utiliser reports_data_usage_admin_scope_sql — conservé pour compatibilité interne. */
+function reports_data_usage_router_scope_sql($prefix = 'u')
+{
+    return reports_data_usage_admin_scope_sql($prefix);
 }
 
 function reports_data_usage_live_session_key($routerName, $username)
@@ -139,30 +144,45 @@ function reports_data_usage_apply_scope(&$sql, &$params, $admin, $prefix = 'u', 
     $usageFilter = $usageFilter ?? trim((string) _req('usage_filter'));
 
     if ($admin['user_type'] != 'SuperAdmin') {
-        $sql .= ' AND ' . reports_data_usage_router_scope_sql($prefix);
-        $params[] = $admin['id'];
-        $params[] = $admin['id'];
+        $scopeAdminId = (int) $admin['id'];
+        $sql .= ' AND ' . reports_data_usage_admin_scope_sql($prefix);
+        $params[] = $scopeAdminId;
+        $params[] = $scopeAdminId;
         if (strpos($usageFilter, 'customer:') === 0) {
             $customerId = (int) substr($usageFilter, 9);
             if ($customerId > 0) {
-                $sql .= " AND c.id = ?";
+                $sql .= ' AND c.id = ?';
                 $params[] = $customerId;
             }
         }
+
         return;
     }
 
-    if (strpos($usageFilter, 'admin:') === 0) {
-        $adminId = (int) substr($usageFilter, 6);
-        if ($adminId > 0) {
-            $sql .= ' AND ' . reports_data_usage_router_scope_sql($prefix);
-            $params[] = $adminId;
-            $params[] = $adminId;
-        }
-    } elseif (strpos($usageFilter, 'customer:') === 0) {
+    $scopeAdminId = 0;
+    if (strpos($usageFilter, 'customer:') === 0) {
         $customerId = (int) substr($usageFilter, 9);
         if ($customerId > 0) {
-            $sql .= " AND c.id = ?";
+            $customer = ORM::for_table('tbl_customers')->find_one($customerId);
+            if ($customer) {
+                $scopeAdminId = (int) ($customer->created_by ?? 0);
+            }
+        }
+    } elseif (strpos($usageFilter, 'admin:') === 0) {
+        $scopeAdminId = (int) substr($usageFilter, 6);
+    }
+    if ($scopeAdminId <= 0) {
+        $sql .= ' AND 1 = 0';
+
+        return;
+    }
+    $sql .= ' AND ' . reports_data_usage_admin_scope_sql($prefix);
+    $params[] = $scopeAdminId;
+    $params[] = $scopeAdminId;
+    if (strpos($usageFilter, 'customer:') === 0) {
+        $customerId = (int) substr($usageFilter, 9);
+        if ($customerId > 0) {
+            $sql .= ' AND c.id = ?';
             $params[] = $customerId;
         }
     }
@@ -218,15 +238,18 @@ function reports_data_usage_router_status($admin)
     $statusList = [];
     foreach ($routers as $router) {
         $name = $router['name'];
-        $params = [$name];
-        if ($admin['user_type'] != 'SuperAdmin') {
-            $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ? AND admin_id = ?");
-            $params[] = (int) $admin['id'];
-        } else {
-            $stmt = $db->prepare("SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected_rows FROM api_data_usage WHERE router_name = ?");
+        $usageAdminId = ($admin['user_type'] != 'SuperAdmin')
+            ? (int) $admin['id']
+            : (int) ($router['admin_id'] ?? 0);
+        $row = [];
+        if ($usageAdminId > 0) {
+            $stmt = $db->prepare(
+                'SELECT MAX(log_date) AS last_sync, SUM(CASE WHEN status = \'Connected\' THEN 1 ELSE 0 END) AS connected_rows '
+                . 'FROM api_data_usage WHERE router_name = ? AND admin_id = ?'
+            );
+            $stmt->execute([$name, $usageAdminId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         }
-        $stmt->execute($params);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $lastSync = $row['last_sync'] ?? null;
         $apiState = 'offline';
         if ($lastSync) {
@@ -276,7 +299,8 @@ function reports_daily_apply_filters($query, $admin, $sd, $ed, $ts, $te, $tps, $
     );
 
     if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('tbl_transactions.admin_id', $admin['id']);
+        [$scopeSql, $scopeParams] = AdminScope::transactionsSqlFilter((int) $admin['id'], 'tbl_transactions');
+        $query->where_raw($scopeSql, $scopeParams);
     }
 
     if (count($tps) > 0) {
@@ -323,7 +347,7 @@ function reports_daily_sum_query($admin, $sd, $ed, $ts, $te, $tps, $mts, $rts, $
         ->whereRaw("UNIX_TIMESTAMP(CONCAT(`recharged_on`,' ',`recharged_time`)) <= " . strtotime("$ed $te"));
 
     if ($admin['user_type'] != 'SuperAdmin') {
-        $dr_query->where('admin_id', $admin['id']);
+        AdminScope::applyTransactionsQueryByAdminId($dr_query, (int) $admin['id']);
     }
     if (count($tps) > 0) {
         $dr_query->where_in('type', $tps);
@@ -752,7 +776,7 @@ switch ($action) {
                     ->group_by('recharged_on')
                     ->order_by_asc('recharged_on');
                 if ($admin['user_type'] != 'SuperAdmin') {
-                    $query->where('admin_id', $admin['id']);
+                    AdminScope::applyTransactionsQueryByAdminId($query, (int) $admin['id']);
                 }
                 if (count($tps) > 0) {
                     $query->where_in('type', $tps);
@@ -1026,10 +1050,11 @@ switch ($action) {
             
         // --- এই অংশটি পরিবর্তন করুন ---
         if ($admin['user_type'] != 'SuperAdmin') {
-            $d->where('tbl_transactions.admin_id', $admin['id']);
-        } else if (!empty($admin_id)) {
-            // যদি সুপারএডমিন কোনো নির্দিষ্ট এডমিন সিলেক্ট করে
-            $d->where('tbl_transactions.admin_id', $admin_id);
+            [$scopeSql, $scopeParams] = AdminScope::transactionsSqlFilter((int) $admin['id'], 'tbl_transactions');
+            $d->where_raw($scopeSql, $scopeParams);
+        } elseif (!empty($admin_id)) {
+            [$scopeSql, $scopeParams] = AdminScope::transactionsSqlFilter((int) $admin_id, 'tbl_transactions');
+            $d->where_raw($scopeSql, $scopeParams);
         }
         // --------------------------
             
@@ -1047,9 +1072,9 @@ switch ($action) {
         
         // --- সামেশনের কোয়েরিতেও একই ফিল্টার যোগ করুন ---
         if ($admin['user_type'] != 'SuperAdmin') {
-            $dr->where('admin_id', $admin['id']);
-        } else if (!empty($admin_id)) {
-            $dr->where('admin_id', $admin_id);
+            AdminScope::applyTransactionsQueryByAdminId($dr, (int) $admin['id']);
+        } elseif (!empty($admin_id)) {
+            AdminScope::applyTransactionsQueryByAdminId($dr, (int) $admin_id);
         }
         // --------------------------
         
