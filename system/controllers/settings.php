@@ -3015,6 +3015,10 @@ HTML;
             }
 
             if ($ajaxDeployMode === '1') {
+                @set_time_limit(600);
+                @ini_set('max_execution_time', '600');
+                @ini_set('default_socket_timeout', '120');
+                @ignore_user_abort(true);
                 $savePppoeSetupSettings();
                 $routerName = trim((string) ($config['pppoe_setup_router'] ?? ''));
                 $bridgePorts = array_values(array_filter(array_map('trim', explode(',', (string) ($config['pppoe_setup_bridge_ports'] ?? '')))));
@@ -3073,7 +3077,7 @@ HTML;
                 }
                 @flush();
 
-                PppoeDeployRunner::spawnBackground($jobPath);
+                PppoeDeployRunner::dispatchJob($jobPath, true);
                 exit;
             }
         }

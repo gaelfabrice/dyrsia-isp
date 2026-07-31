@@ -72,6 +72,10 @@ class HotspotDeployRunner
         if (getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
             return true;
         }
+        // Apache mod_php (Render Docker) : exec & détache un worker tué à la fin de la requête.
+        if (PHP_SAPI !== 'cli-server') {
+            return true;
+        }
         $disabled = strtolower((string) ini_get('disable_functions'));
         if ($disabled !== '' && str_contains($disabled, 'exec')) {
             return true;

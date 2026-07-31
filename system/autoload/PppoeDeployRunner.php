@@ -5,11 +5,57 @@
  */
 class PppoeDeployRunner
 {
-    public static function spawnBackground(string $jobPath): void
+    public static function spawnBackground(string $jobPath): bool
+    {
+        return self::trySpawnBackground($jobPath);
+    }
+
+    public static function dispatchJob(string $jobPath, bool $responseAlreadySent = false): void
+    {
+        if ($responseAlreadySent || self::shouldRunInlineWorker()) {
+            self::runJob($jobPath);
+
+            return;
+        }
+        if (!self::trySpawnBackground($jobPath)) {
+            self::updateJobProgress(
+                $jobPath,
+                'Worker CLI indisponible — déploiement PPPoE en cours dans ce processus…'
+            );
+            self::runJob($jobPath);
+        }
+    }
+
+    public static function continueAfterHttpResponse(string $jobPath): void
+    {
+        self::dispatchJob($jobPath, true);
+    }
+
+    public static function shouldRunInlineWorker(): bool
+    {
+        if (getenv('WIFIZONE_PPPOE_DEPLOY_INLINE') === '1' || getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
+            return true;
+        }
+        if (PHP_SAPI !== 'cli-server') {
+            return true;
+        }
+        $disabled = strtolower((string) ini_get('disable_functions'));
+        if ($disabled !== '' && str_contains($disabled, 'exec')) {
+            return true;
+        }
+
+        return function_exists('fastcgi_finish_request');
+    }
+
+    private static function trySpawnBackground(string $jobPath): bool
     {
         $jobPath = trim($jobPath);
         if ($jobPath === '' || !is_file($jobPath)) {
-            return;
+            return false;
+        }
+
+        if (!function_exists('exec') || stripos((string) ini_get('disable_functions'), 'exec') !== false) {
+            return false;
         }
 
         $root = realpath(dirname(__DIR__, 2)) ?: dirname(__DIR__, 2);
@@ -18,7 +64,7 @@ class PppoeDeployRunner
         if (!is_file($script)) {
             self::markJobFailed($jobPath, 'Worker PPPoE introuvable (scripts/pppoe-deploy-worker.php).');
 
-            return;
+            return false;
         }
 
         $logFile = $root . DIRECTORY_SEPARATOR . 'system' . DIRECTORY_SEPARATOR . 'cache'
@@ -30,7 +76,7 @@ class PppoeDeployRunner
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
             $spawned = pclose(popen('start /B ' . $cmd, 'r')) !== false;
         } else {
-            exec($cmd . ' & echo $!', $spawnOut, $spawnCode);
+            exec('nohup ' . $cmd . ' > /dev/null 2>&1 & echo $!', $spawnOut, $spawnCode);
             $spawned = $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
         }
         if (!$spawned) {
@@ -39,18 +85,16 @@ class PppoeDeployRunner
                 date('c') . " spawn failed: {$cmd}\n",
                 FILE_APPEND
             );
-            self::markJobFailed(
-                $jobPath,
-                'Impossible de lancer le worker PPPoE (exec désactivé ?). '
-                . 'Relancez ./dev-server.sh depuis Terminal avec WireGuard actif.'
-            );
         }
+
+        return $spawned;
     }
 
     public static function runJob(string $jobPath): void
     {
         global $config, $_app_stage;
 
+        @ignore_user_abort(true);
         @set_time_limit(600);
         @ini_set('max_execution_time', '600');
         @ini_set('default_socket_timeout', '120');
