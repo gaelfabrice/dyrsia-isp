@@ -18,7 +18,19 @@ class PppoeDeployRunner
             return;
         }
         if ($responseAlreadySent) {
-            if (PHP_SAPI === 'cli-server' && self::trySpawnBackground($jobPath)) {
+            if (PHP_SAPI === 'cli-server') {
+                if (self::trySpawnBackground($jobPath)) {
+                    return;
+                }
+                self::updateJobProgress(
+                    $jobPath,
+                    'Worker CLI indisponible — déploiement PPPoE dans ce processus (~2 min)…'
+                );
+                self::runJob($jobPath);
+
+                return;
+            }
+            if (self::trySpawnBackground($jobPath)) {
                 return;
             }
             self::runJob($jobPath);
@@ -53,6 +65,9 @@ class PppoeDeployRunner
         $disabled = strtolower((string) ini_get('disable_functions'));
         if ($disabled !== '' && str_contains($disabled, 'exec')) {
             return true;
+        }
+        if (PHP_SAPI === 'cli-server') {
+            return false;
         }
 
         return DeployAsyncHttp::canRunHeavyWorkInSameProcess();
@@ -344,6 +359,10 @@ class PppoeDeployRunner
         }
         $shellCmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobPath)
             . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
+        @exec('nohup sh -c ' . escapeshellarg($shellCmd) . ' </dev/null >/dev/null 2>&1 & echo $!', $nohupOut, $nohupCode);
+        if ($nohupCode === 0 && !empty($nohupOut[0]) && ctype_digit(trim((string) $nohupOut[0]))) {
+            return true;
+        }
         @exec('setsid sh -c ' . escapeshellarg($shellCmd) . ' < /dev/null & echo $!', $spawnOut, $spawnCode);
 
         return $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));

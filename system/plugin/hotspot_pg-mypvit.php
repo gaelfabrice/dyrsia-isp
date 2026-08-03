@@ -137,7 +137,10 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
             $gatewayResponse['customer_name'] ?? 'Client Hotspot',
             $gatewayResponse['customer_address'] ?? 'Hotspot'
         );
-        $prepared = HotspotCustomer::prepareForHotspotActivation($customer);
+        if (function_exists('hotspot_cleanup_stale_recharge')) {
+            hotspot_cleanup_stale_recharge((int) $customer->id, $routername);
+        }
+        $prepared = HotspotCustomer::prepareForHotspotActivation($customer, $routername);
         $customer = $prepared['customer'];
         $networkPassword = HotspotCustomer::defaultPassword();
 
@@ -150,7 +153,18 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
             return false;
         }
 
-        HotspotCustomer::forceMikrotikHotspotPassword($customer->username, $routername, $networkPassword);
+        if (Package::$lastDeviceSyncError !== '') {
+            _log('[MyPVit Hotspot] rechargeUser device sync warning: ' . Package::$lastDeviceSyncError);
+        }
+
+        $deviceSynced = Package::$lastDeviceSyncError === '';
+        $mikrotikOk = $deviceSynced;
+        if (!$deviceSynced) {
+            $mikrotikOk = HotspotCustomer::pushActiveRechargeToMikrotikWithRetry((int) $customer->id, $routername, (int) $planid, 2);
+        }
+        if (!$mikrotikOk) {
+            HotspotCustomer::schedulePostPaymentMikrotikSync((int) $trx->id);
+        }
     } finally {
         HotspotCustomer::clearActivationNetworkPassword();
         if ($previousGlobalTrx !== null) {
@@ -184,9 +198,23 @@ function hotspot_pg_mypvit_activate_user($trx, $operator = 'MyPVit')
     $trx->payment_date = date('Y-m-d H:i:s');
     $trx->voucher_code = $customer->username;
     $trx->save();
+
+    if ($expiration) {
+        $planRow = ORM::for_table('tbl_plans')->find_one((int) $planid);
+        if ($planRow && !Mikrotik::hotspotPlanAllowsSharing($planRow)) {
+            HotspotCustomer::lockDeviceMacOnRecharge(
+                $expiration,
+                (string) ($trx->mac_address ?? ''),
+                $planRow
+            );
+        }
+    }
+
     if (function_exists('hotspot_invalidate_overview_cache')) {
         hotspot_invalidate_overview_cache();
     }
+    HotspotCustomer::ensureMikrotikHotspotUserForPayment($trx);
+
     return true;
 }
 
@@ -248,7 +276,7 @@ function hotspot_processPayment_mypvit($data)
     }
 
     if (function_exists('hotspot_cleanup_stale_recharge')) {
-        $customerCheck = class_exists('HotspotCustomer') ? HotspotCustomer::findByPhone($phone) : null;
+        $customerCheck = class_exists('HotspotCustomer') ? HotspotCustomer::findByPhoneForHotspot($phone) : null;
         if ($customerCheck) {
             hotspot_cleanup_stale_recharge((int) $customerCheck->id, $routername);
         }

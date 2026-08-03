@@ -85,6 +85,22 @@
         }
     }
 
+    // MAC verrouillée pour forfaits Hotspot non partagés (shared_users = 1)
+    try {
+        if (in_array('tbl_user_recharges', $tables, true)) {
+            $rechargeCols = [];
+            $rechargeColsRes = $db->query('SHOW COLUMNS FROM tbl_user_recharges');
+            while ($row = $rechargeColsRes->fetch(PDO::FETCH_ASSOC)) {
+                $rechargeCols[] = $row['Field'];
+            }
+            if (!in_array('device_mac', $rechargeCols, true)) {
+                $db->exec("ALTER TABLE tbl_user_recharges ADD device_mac VARCHAR(32) NULL DEFAULT NULL AFTER username");
+            }
+        }
+    } catch (Exception $e) {
+        // silent fail
+    }
+
     try {
 
         $cols = [];
@@ -231,6 +247,43 @@
             } catch (Throwable $e) {
                 _log('[Hotspot] CamPay sync skipped for trx #' . (int) $trx->id . ': ' . $e->getMessage());
             }
+        }
+    }
+
+    /**
+     * Coupe les forfaits expirés sans attendre le cron système (portail captif / paiements).
+     */
+    function hotspot_process_expired_recharges_if_due()
+    {
+        if (!class_exists('Package')) {
+            return;
+        }
+        Package::processExpiredRecharges([
+            'silent' => true,
+            'min_interval' => 30,
+            'reinforce_routers' => true,
+        ]);
+        hotspot_enforce_hotspot_sessions_if_due();
+    }
+
+    /**
+     * Coupe sur le routeur les sessions dont le login n'a plus de recharge active (portail / API).
+     */
+    function hotspot_enforce_hotspot_sessions_if_due()
+    {
+        global $CACHE_PATH;
+        if (!class_exists('Mikrotik')) {
+            return;
+        }
+        $stampFile = rtrim((string) $CACHE_PATH, '/') . '/hotspot_session_enforce.lastrun';
+        if (is_file($stampFile) && (time() - (int) @filemtime($stampFile)) < 45) {
+            return;
+        }
+        @touch($stampFile);
+        try {
+            Mikrotik::enforceHotspotActiveSessionsAllRouters();
+        } catch (Throwable $e) {
+            _log('[Hotspot] enforce sessions: ' . $e->getMessage());
         }
     }
 
@@ -675,8 +728,14 @@
             return false;
         }
 
-        $customer = HotspotCustomer::findByPhone($trx->phone_number ?? '');
+        $customer = HotspotCustomer::findByPhoneForHotspot($trx->phone_number ?? '');
         if ($customer && hotspot_customer_has_active_recharge($customer->id, (string) ($trx->router_name ?? ''))) {
+            if (function_exists('hotspot_pg_campay_ensure_mikrotik_sync')) {
+                hotspot_pg_campay_ensure_mikrotik_sync($trx);
+            } elseif (class_exists('HotspotCustomer')) {
+                HotspotCustomer::ensureMikrotikHotspotUserForPayment($trx);
+            }
+
             return true;
         }
 
@@ -694,6 +753,7 @@
     function hotspot_plan()
     {
         global $config;
+        hotspot_process_expired_recharges_if_due();
         $currency = $config['currency_code'];
 
         if ($_SERVER['REQUEST_METHOD'] != 'POST') {
@@ -929,6 +989,7 @@
     function hotspot_pay()
     {
         global $config;
+        hotspot_process_expired_recharges_if_due();
 
         $paymentInput = hotspot_payment_payload();
         $wantsJson = hotspot_wants_json_response($paymentInput);
@@ -1138,6 +1199,14 @@
         }
 
         return hotspot_normalize_router_name((string) ($plan->routers ?? $plan['routers'] ?? ''));
+    }
+
+    function hotspot_assistance_phone_local_digits()
+    {
+        global $config;
+        $digits = preg_replace('/\D/', '', (string) ($config['hotspot_contact_phone'] ?? ($config['hotspot_help_whatsapp'] ?? '')));
+
+        return strlen($digits) >= 9 ? substr($digits, -9) : $digits;
     }
 
     function hotspot_resolve_payment_phone(array $data)
@@ -1533,6 +1602,50 @@
     }
 
 
+    function hotspot_verify_payment_summary($check)
+    {
+        global $config;
+
+        $planName = trim((string) ($check->plan_name ?? ''));
+        $amount = (float) ($check->amount ?? 0);
+        $currency = trim((string) ($config['currency_code'] ?? 'XAF'));
+        $expiredRaw = trim((string) ($check->expired_date ?? ''));
+        $expiresLabel = '';
+
+        if ($expiredRaw !== '') {
+            $ts = strtotime($expiredRaw);
+            $expiresLabel = $ts ? date('d/m/Y H:i', $ts) : $expiredRaw;
+        }
+
+        $routerName = trim((string) ($check->router_name ?? ''));
+        if (class_exists('HotspotCustomer')) {
+            $customer = HotspotCustomer::resolveCustomerFromPayment($check);
+            if ($customer) {
+                $recharge = hotspot_customer_has_active_recharge((int) $customer->id, $routerName);
+                if ($recharge) {
+                    $expDate = trim((string) ($recharge->expiration ?? ''));
+                    $expTime = trim((string) ($recharge->time ?? ''));
+                    if ($expDate !== '') {
+                        $timePart = '';
+                        if ($expTime !== '') {
+                            $timeTs = strtotime($expTime);
+                            $timePart = $timeTs ? ' ' . date('H:i', $timeTs) : ' ' . $expTime;
+                        }
+                        $expiresLabel = $expDate . $timePart;
+                    }
+                }
+            }
+        }
+
+        return [
+            'plan_name' => $planName,
+            'amount' => $amount,
+            'currency' => $currency,
+            'expired_date' => $expiredRaw,
+            'expires_label' => $expiresLabel,
+        ];
+    }
+
     function hotspot_verify()
     {
         global $ui, $config;
@@ -1541,6 +1654,11 @@
         $message = isset($_GET['message']) ? (string) $_GET['message'] : '';
         $wantsJson = (isset($_GET['format']) && $_GET['format'] === 'json')
             || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
+
+        // Le poll JSON captif ne doit pas attendre l’expire/enforce MikroTik (timeout UX).
+        if (!$wantsJson) {
+            hotspot_process_expired_recharges_if_due();
+        }
 
         if ($wantsJson) {
             header('Content-Type: application/json; charset=utf-8');
@@ -1575,6 +1693,11 @@
                 'message' => $message,
             ];
             if ($status === 'paid') {
+                if (!HotspotCustomer::paymentMikrotikSyncSatisfied($check)) {
+                    HotspotCustomer::ensureMikrotikHotspotUserForPayment($check, 1);
+                    HotspotCustomer::schedulePostPaymentMikrotikSync((int) $check->id);
+                }
+                $check = ORM::for_table('tbl_hotspot_payments')->find_one($check->id) ?: $check;
                 $credentials = HotspotCustomer::credentialsFromPayment($check);
                 if ($credentials['username'] !== '') {
                     $payload['username'] = $credentials['username'];
@@ -1582,6 +1705,7 @@
                 }
                 $payload['password'] = $credentials['password'];
                 $payload['auto_login'] = true;
+                $payload = array_merge($payload, hotspot_verify_payment_summary($check));
             } elseif ($status === 'failed') {
                 $failReason = hotspot_payment_failure_reason($check);
                 $payload['message'] = $failReason !== ''

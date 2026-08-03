@@ -80,6 +80,16 @@ class WifiZoneHotspot
             hotspot_throwError(Lang::T('An error occurred while logging in: plan not found'));
             return false;
         }
+        if (!Mikrotik::hotspotPlanAllowsSharing($p)) {
+            $macCheck = HotspotCustomer::assertSingleDeviceMacAccess($plan, $p, $mac_address, $router_name, true);
+            if (!$macCheck['ok']) {
+                hotspot_throwError(HotspotCustomer::voucherAlreadyUsedMessage());
+                return false;
+            }
+        } elseif (!Mikrotik::hotspotSharedUsersAllowLogin($username, $router_name, $p, $ip, $mac_address)) {
+            hotspot_throwError(Lang::T('Maximum number of devices for this plan is already in use'));
+            return false;
+        }
         $dvc = Package::getDevice($p);
         if (!file_exists($dvc)) {
             hotspot_throwError(Lang::T('Devices Not Found'));
@@ -196,7 +206,6 @@ class WifiZoneHotspot
             'hotspot_cookie_lifetime',
             'hotspot_idle_timeout',
             'hotspot_keepalive_timeout',
-            'hotspot_address_per_mac',
             'hotspot_smtp_server',
             'hotspot_use_radius',
             'hotspot_radius_secret',

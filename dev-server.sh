@@ -7,10 +7,9 @@ cd "$(dirname "$0")"
 
 PORT="${PORT:-8082}"
 PIDFILE=".dev-server.pid"
-# Multi-process via PHP_CLI_SERVER_WORKERS (ex. 4). Sur certains macOS/PHP,
-# les workers plantent ("Failed to poll event") et tuent les déploiements async —
-# défaut stable = 1. Pour forcer le multi : PHP_CLI_SERVER_WORKERS=4 ./dev-server.sh
-WORKERS="${PHP_CLI_SERVER_WORKERS:-1}"
+# Défaut 2 : worker #1 peut tenir le déploiement MikroTik pendant que #2 sert le poll JSON.
+# Si "Failed to poll event" : PHP_CLI_SERVER_WORKERS=1 ./dev-server.sh
+WORKERS="${PHP_CLI_SERVER_WORKERS:-2}"
 
 stop_port() {
   pkill -f "php .* -S localhost:${PORT}" 2>/dev/null || true

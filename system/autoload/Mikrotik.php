@@ -1790,6 +1790,17 @@ class Mikrotik
         if (empty($profileID)) {
             Mikrotik::addHotspotPlan($client, $name, $sharedusers, $rate);
         } else {
+            $detailRequest = new RouterOS\Request(
+                '/ip hotspot user profile print .proplist=shared-users,rate-limit',
+                RouterOS\Query::where('name', $name)
+            );
+            $profileRow = $client->sendSync($detailRequest);
+            $currentShared = (string) $profileRow->getProperty('shared-users');
+            $currentRate = (string) $profileRow->getProperty('rate-limit');
+            $rateStr = (string) $rate;
+            if ($currentShared === (string) $sharedusers && $currentRate === $rateStr) {
+                return null;
+            }
             $setRequest = new RouterOS\Request('/ip/hotspot/user/profile/set');
             $client->sendSync(
                 $setRequest
@@ -2130,6 +2141,42 @@ class Mikrotik
             return;
         }
         self::runRouterOneShotScript($client, 'dyrsia_flush_conn', implode("\n", $lines));
+    }
+
+    /**
+     * Supprime baux DHCP dynamiques et entrées ARP pour un client hotspot afin de forcer
+     * le retour au portail captif sans demander « oublier le Wi‑Fi ».
+     *
+     * @param array<int, string> $ips
+     * @param array<int, string> $macs
+     */
+    public static function releaseHotspotCaptiveNetworkState($client, array $ips, array $macs): void
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo' || !$client) {
+            return;
+        }
+
+        $lines = [];
+        foreach (array_values(array_unique(array_filter(array_map('trim', $ips)))) as $ip) {
+            if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+                continue;
+            }
+            $safeIp = str_replace('"', '', $ip);
+            $lines[] = '/ip dhcp-server lease remove [find address="' . $safeIp . '"]';
+            $lines[] = '/ip arp remove [find address="' . $safeIp . '"]';
+        }
+        foreach (array_values(array_unique(array_filter(array_map('trim', $macs)))) as $mac) {
+            if ($mac === '') {
+                continue;
+            }
+            $safeMac = str_replace('"', '', $mac);
+            $lines[] = '/ip dhcp-server lease remove [find mac-address="' . $safeMac . '"]';
+        }
+        if ($lines === []) {
+            return;
+        }
+        self::runRouterOneShotScript($client, 'dyrsia_hs_captive', implode("\n", $lines));
     }
 
     public static function isPppoeExpiredCaptiveConfigured($client)
@@ -2751,6 +2798,7 @@ class Mikrotik
         $expectedNames = [];
         $upserted = 0;
         $errors = [];
+        $maxSharedUsers = 1;
 
         $profileMap = [];
         try {
@@ -2785,6 +2833,9 @@ class Mikrotik
             $sharedUsers = (int) ($plan['shared_users'] ?? 1);
             if ($sharedUsers < 1) {
                 $sharedUsers = 1;
+            }
+            if ($sharedUsers > $maxSharedUsers) {
+                $maxSharedUsers = $sharedUsers;
             }
             $sharedUsersStr = (string) $sharedUsers;
             $rateStr = (string) $rate;
@@ -2847,12 +2898,480 @@ class Mikrotik
             }
         }
 
+        try {
+            self::syncHotspotServerAddressesPerMac($client, $routerName, '1');
+        } catch (Throwable $e) {
+            $errors[] = 'addresses-per-mac: ' . $e->getMessage();
+        } catch (Exception $e) {
+            $errors[] = 'addresses-per-mac: ' . $e->getMessage();
+        }
+
         return [
             'ok' => empty($errors),
             'upserted' => $upserted,
             'removed' => $removed,
             'errors' => $errors,
         ];
+    }
+
+    /**
+     * Adresses IP par MAC sur le serveur hotspot (toujours 1).
+     * Le partage du même voucher = shared-users sur le profil forfait (10M=1, DUO=2), pas addresses-per-mac.
+     */
+    public static function resolveHotspotAddressesPerMacForRouter($routerName): string
+    {
+        return '1';
+    }
+
+    /**
+     * Applique shared-users + débit du forfait sur le profil MikroTik (/ip/hotspot/user/profile).
+     */
+    public static function syncHotspotPlanProfileFromPlanRow($client, $plan): void
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo' || !$client) {
+            return;
+        }
+        if (is_object($plan) && method_exists($plan, 'as_array')) {
+            $plan = $plan->as_array();
+        }
+        if (!is_array($plan)) {
+            return;
+        }
+        $name = trim((string) ($plan['name_plan'] ?? ''));
+        if ($name === '') {
+            return;
+        }
+        $sharedUsers = Mikrotik::hotspotSharedUsersLimit($plan);
+        if ($sharedUsers < 1) {
+            $sharedUsers = 1;
+        }
+        $bw = ORM::for_table('tbl_bandwidth')->find_one($plan['id_bw'] ?? 0);
+        $rate = self::hotspotPlanRateLimit($bw ? $bw->as_array() : null);
+        self::setHotspotPlan($client, $name, $sharedUsers, $rate);
+    }
+
+    /**
+     * Limite « Shared Users » du forfait (1 = un seul appareil, pas de partage).
+     */
+    public static function hotspotSharedUsersLimit($plan): int
+    {
+        if (is_object($plan) && method_exists($plan, 'as_array')) {
+            $plan = $plan->as_array();
+        }
+        if (!is_array($plan)) {
+            return 1;
+        }
+        $n = (int) ($plan['shared_users'] ?? 1);
+
+        return $n < 1 ? 1 : $n;
+    }
+
+    /** Partage du même identifiant : uniquement si shared_users &gt;= 2. */
+    public static function hotspotPlanAllowsSharing($plan): bool
+    {
+        return self::hotspotSharedUsersLimit($plan) >= 2;
+    }
+
+    public static function normalizeHotspotMacAddress($mac): string
+    {
+        $mac = strtoupper(trim(preg_replace('/[^A-F0-9:]/', '', (string) $mac)));
+        if ($mac === '') {
+            return '';
+        }
+        if (strlen($mac) === 12 && strpos($mac, ':') === false) {
+            $mac = implode(':', str_split($mac, 2));
+        }
+
+        return $mac;
+    }
+
+    public static function getHotspotUserBoundMacOnClient($client, $username): string
+    {
+        $username = trim((string) $username);
+        if (!$client || $username === '') {
+            return '';
+        }
+        try {
+            $request = (new RouterOS\Request('/ip/hotspot/user/print'))
+                ->setArgument('.proplist', 'mac-address')
+                ->setQuery(RouterOS\Query::where('name', $username));
+            foreach ($client->sendSync($request) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+
+                return self::normalizeHotspotMacAddress((string) $row->getProperty('mac-address'));
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    public static function getHotspotUserBoundMac($routerName, $username): string
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return '';
+        }
+        $routerName = trim((string) $routerName);
+        $username = trim((string) $username);
+        if ($routerName === '' || $username === '') {
+            return '';
+        }
+        if (function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+        $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+        if (!$router) {
+            return '';
+        }
+        try {
+            $client = self::getClient(
+                $router['ip_address'],
+                $router['username'],
+                self::routerPassword($router['password']),
+                15
+            );
+            if (!$client) {
+                return '';
+            }
+
+            return self::getHotspotUserBoundMacOnClient($client, $username);
+        } catch (Throwable $e) {
+            return '';
+        } catch (Exception $e) {
+            return '';
+        }
+    }
+
+    /**
+     * Forfait non partagé (shared=1) : lie ou vérifie la MAC sur /ip/hotspot/user.
+     *
+     * @return array{ok: bool, message: string}
+     */
+    public static function enforceHotspotSingleDeviceMac($routerName, $username, $plan, $mac): array
+    {
+        if (self::hotspotPlanAllowsSharing($plan)) {
+            return ['ok' => true, 'message' => ''];
+        }
+
+        $username = trim((string) $username);
+        $mac = self::normalizeHotspotMacAddress($mac);
+        if ($username === '' || $mac === '') {
+            return ['ok' => true, 'message' => ''];
+        }
+
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '' && function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+        $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+        if (!$router) {
+            return ['ok' => false, 'message' => 'Routeur introuvable'];
+        }
+
+        try {
+            $client = self::getClient(
+                $router['ip_address'],
+                $router['username'],
+                self::routerPassword($router['password']),
+                20
+            );
+            if (!$client) {
+                return ['ok' => false, 'message' => 'API routeur indisponible'];
+            }
+
+            $bound = self::getHotspotUserBoundMacOnClient($client, $username);
+            if ($bound !== '' && $bound !== $mac) {
+                $msg = class_exists('HotspotCustomer')
+                    ? HotspotCustomer::voucherAlreadyUsedMessage()
+                    : 'Voucher déjà utilisé';
+
+                return [
+                    'ok' => false,
+                    'message' => $msg,
+                ];
+            }
+
+            if ($bound === '') {
+                foreach ($client->sendSync(
+                    (new RouterOS\Request('/ip/hotspot/user/print'))
+                        ->setArgument('.proplist', '.id')
+                        ->setQuery(RouterOS\Query::where('name', $username))
+                ) as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    $id = $row->getProperty('.id');
+                    if ($id === null || $id === '') {
+                        continue;
+                    }
+                    $client->sendSync(
+                        (new RouterOS\Request('/ip/hotspot/user/set'))
+                            ->setArgument('numbers', $id)
+                            ->setArgument('mac-address', $mac)
+                    );
+                    break;
+                }
+            }
+
+            return ['ok' => true, 'message' => ''];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'message' => $e->getMessage()];
+        } catch (Exception $e) {
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Sessions actives hotspot pour un login (limite shared-users).
+     */
+    public static function countHotspotActiveSessionsForUser($routerName, $username): int
+    {
+        global $_app_stage;
+        $routerName = trim((string) $routerName);
+        $username = trim((string) $username);
+        if ($username === '' || $routerName === '' || $_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return 0;
+        }
+        if ($routerName !== '' && function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+        $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+        if (!$router) {
+            return 0;
+        }
+        try {
+            $client = self::getClient(
+                $router['ip_address'],
+                $router['username'],
+                self::routerPassword($router['password']),
+                15
+            );
+            if (!$client) {
+                return 0;
+            }
+            $count = 0;
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/active/print'))
+                    ->setArgument('.proplist', 'user')
+                    ->setQuery(RouterOS\Query::where('user', $username))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if (strcasecmp(trim((string) $row->getProperty('user')), $username) === 0) {
+                    $count++;
+                }
+            }
+
+            return $count;
+        } catch (Throwable $e) {
+            return 0;
+        } catch (Exception $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Refuse si le login a déjà atteint shared_users du forfait (même IP/MAC exclue = reconnect).
+     */
+    public static function hotspotSharedUsersAllowLogin($username, $routerName, $plan, $clientIp = '', $clientMac = ''): bool
+    {
+        if (is_object($plan) && method_exists($plan, 'as_array')) {
+            $plan = $plan->as_array();
+        }
+        if (!is_array($plan)) {
+            return true;
+        }
+        if (strtolower(trim((string) ($plan['type'] ?? ''))) !== 'hotspot') {
+            return true;
+        }
+        $limit = self::hotspotSharedUsersLimit($plan);
+        $clientIp = trim((string) $clientIp);
+        $clientMac = self::normalizeHotspotMacAddress($clientMac);
+
+        if (!self::hotspotPlanAllowsSharing($plan)) {
+            $bound = self::getHotspotUserBoundMac($routerName, $username);
+            if ($bound !== '' && $clientMac !== '' && $bound !== $clientMac) {
+                return false;
+            }
+
+            $active = self::countHotspotActiveSessionsForUser($routerName, $username);
+            if ($active >= 1) {
+                if ($clientMac === '' && $clientIp === '') {
+                    return false;
+                }
+                try {
+                    $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+                    if (!$router) {
+                        return false;
+                    }
+                    $client = self::getClient(
+                        $router['ip_address'],
+                        $router['username'],
+                        self::routerPassword($router['password']),
+                        15
+                    );
+                    if (!$client) {
+                        return false;
+                    }
+                    foreach ($client->sendSync(
+                        (new RouterOS\Request('/ip/hotspot/active/print'))
+                            ->setArgument('.proplist', 'address,mac-address')
+                            ->setQuery(RouterOS\Query::where('user', $username))
+                    ) as $row) {
+                        if ($row->getType() === 'trap') {
+                            continue;
+                        }
+                        $ip = trim((string) $row->getProperty('address'));
+                        $mac = self::normalizeHotspotMacAddress((string) $row->getProperty('mac-address'));
+                        if ($clientIp !== '' && $ip === $clientIp) {
+                            return true;
+                        }
+                        if ($clientMac !== '' && $mac === $clientMac) {
+                            return true;
+                        }
+                    }
+                } catch (Throwable $e) {
+                    return false;
+                }
+
+                return false;
+            }
+
+            return true;
+        }
+
+        $active = self::countHotspotActiveSessionsForUser($routerName, $username);
+        if ($active < $limit) {
+            return true;
+        }
+
+        if ($clientIp === '' && $clientMac === '') {
+            return false;
+        }
+
+        try {
+            $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+            if (!$router) {
+                return false;
+            }
+            $client = self::getClient(
+                $router['ip_address'],
+                $router['username'],
+                self::routerPassword($router['password']),
+                15
+            );
+            if (!$client) {
+                return false;
+            }
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/active/print'))
+                    ->setArgument('.proplist', 'user,address,mac-address')
+                    ->setQuery(RouterOS\Query::where('user', $username))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $ip = trim((string) $row->getProperty('address'));
+                $mac = strtoupper(trim((string) $row->getProperty('mac-address')));
+                if ($clientIp !== '' && $ip === $clientIp) {
+                    return true;
+                }
+                if ($clientMac !== '' && $mac === $clientMac) {
+                    return true;
+                }
+            }
+        } catch (Throwable $e) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Nom du serveur /ip/hotspot (ex. dyrsia-brige-hotspot) — évite server=all sur les users.
+     */
+    public static function resolveHotspotServerName($client, $routerName = ''): string
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '' && function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+
+        $name = '';
+        if ($routerName !== '' && class_exists('WifiZoneHotspot')) {
+            $config = [];
+            WifiZoneHotspot::loadHotspotConfigForRouter($config, $routerName);
+            $name = trim((string) ($config['hotspot_name'] ?? ''));
+        }
+
+        if ($name !== '' || !$client) {
+            return $name;
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', 'name,disabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $disabled = strtolower(trim((string) $row->getProperty('disabled')));
+                if ($disabled === 'true' || $disabled === 'yes') {
+                    continue;
+                }
+                $hsName = trim((string) $row->getProperty('name'));
+                if ($hsName !== '') {
+                    return $hsName;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return '';
+    }
+
+    /**
+     * Aligne addresses-per-mac sur le serveur hotspot (partage multi-appareils = Shared Users du forfait).
+     */
+    public static function syncHotspotServerAddressesPerMac($client, $routerName, $addressesPerMac = null): void
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo' || !$client) {
+            return;
+        }
+
+        if ($addressesPerMac === null || $addressesPerMac === '') {
+            $addressesPerMac = self::resolveHotspotAddressesPerMacForRouter($routerName);
+        }
+        $addressesPerMac = trim((string) $addressesPerMac);
+        if ($addressesPerMac === '' || !ctype_digit($addressesPerMac)) {
+            $addressesPerMac = '1';
+        }
+
+        foreach ($client->sendSync(
+            (new RouterOS\Request('/ip/hotspot/print'))->setArgument('.proplist', '.id,name')
+        ) as $row) {
+            if ($row->getType() === 'trap') {
+                continue;
+            }
+            $id = $row->getProperty('.id');
+            if ($id === null || $id === '') {
+                continue;
+            }
+            $client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/set'))
+                    ->setArgument('numbers', $id)
+                    ->setArgument('addresses-per-mac', $addressesPerMac)
+            );
+        }
     }
 
     /**
@@ -4490,6 +5009,9 @@ class Mikrotik
             RouterOS\Query::where('name', $username)
         );
         $userID = $client->sendSync($printRequest)->getProperty('.id');
+        if ($userID === null || $userID === '') {
+            return null;
+        }
         $removeRequest = new RouterOS\Request('/ip/hotspot/user/remove');
         $client->sendSync(
             $removeRequest
@@ -6243,6 +6765,20 @@ class Mikrotik
             1
         ) ?? $html;
 
+        $assistDigits = preg_replace('/\D/', '', (string) ($config['hotspot_contact_phone'] ?? ($config['hotspot_help_whatsapp'] ?? '')));
+        $assistLocal = strlen($assistDigits) >= 9 ? substr($assistDigits, -9) : $assistDigits;
+        $assistJs = 'const HOTSPOT_ASSISTANCE_PHONE_LOCAL = ' . json_encode($assistLocal) . ';';
+        if (preg_match('/const HOTSPOT_ASSISTANCE_PHONE_LOCAL = .*?;/', $html)) {
+            $html = preg_replace('/const HOTSPOT_ASSISTANCE_PHONE_LOCAL = .*?;/', $assistJs, $html, 1) ?? $html;
+        } else {
+            $html = preg_replace(
+                '/const HOTSPOT_PAYMENT_GATEWAY = .*?;/',
+                'const HOTSPOT_PAYMENT_GATEWAY = ' . json_encode($paymentGateway) . ";\n" . $assistJs,
+                $html,
+                1
+            ) ?? $html;
+        }
+
         $dnsName = trim((string) ($config['hotspot_dns_name'] ?? ''));
         $html = self::patchHotspotLoginCaptiveApi($html, $captiveApiUrl, $dnsName);
         $html = self::patchHotspotLoginHelpSection($html, [
@@ -7698,12 +8234,16 @@ class Mikrotik
         $loginMethods = self::captivePortalLoginBy();
         $cookieLifetime = self::normalizeHotspotCookieLifetime($config['hotspot_cookie_lifetime'] ?? '1d 00:00:00');
         $idleTimeout = trim((string) ($config['hotspot_idle_timeout'] ?? '00:10:00'));
-        $addressPerMac = trim((string) ($config['hotspot_address_per_mac'] ?? '1'));
+        $routerNameForPlans = '';
+        if (is_array($routerRow) && !empty($routerRow['name'])) {
+            $routerNameForPlans = trim((string) $routerRow['name']);
+        }
+        if ($routerNameForPlans === '') {
+            $routerNameForPlans = trim((string) ($config['hotspot_login_router'] ?? ''));
+        }
+        $addressPerMac = self::resolveHotspotAddressesPerMacForRouter($routerNameForPlans);
         if ($idleTimeout === '') {
             $idleTimeout = '00:10:00';
-        }
-        if ($addressPerMac === '' || !ctype_digit($addressPerMac)) {
-            $addressPerMac = '1';
         }
 
         if ($interface === '') {
@@ -9180,9 +9720,10 @@ class Mikrotik
      * Déconnecte un client hotspot : active, cookies, hôtes autorisés + purge conntrack.
      *
      * @param array<int, string> $extraIps
+     * @param array<int, string> $extraMacs
      * @return array{ok: bool, ips: array<int, string>, enforced: int}
      */
-    public static function disconnectHotspotUser($client, $username, array $extraIps = [])
+    public static function disconnectHotspotUser($client, $username, array $extraIps = [], array $extraMacs = [])
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
@@ -9196,6 +9737,12 @@ class Mikrotik
             $ip = trim((string) $ip);
             if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP)) {
                 $ips[$ip] = true;
+            }
+        }
+        foreach ($extraMacs as $mac) {
+            $mac = trim((string) $mac);
+            if ($mac !== '') {
+                $macs[$mac] = true;
             }
         }
 
@@ -9279,8 +9826,12 @@ class Mikrotik
         }
 
         $ipList = array_keys($ips);
+        $macList = array_keys($macs);
         if ($ipList !== []) {
             self::flushConnectionTrackingForIps($client, $ipList);
+        }
+        if ($ipList !== [] || $macList !== []) {
+            self::releaseHotspotCaptiveNetworkState($client, $ipList, $macList);
         }
 
         return ['ok' => true, 'ips' => $ipList, 'enforced' => count($ipList)];
@@ -9324,6 +9875,7 @@ class Mikrotik
         }
 
         $flushIps = [];
+        $flushMacs = [];
         $lines = [];
         try {
             foreach ($client->sendSync(
@@ -9352,6 +9904,7 @@ class Mikrotik
                     $flushIps[$ip] = true;
                 }
                 if ($mac !== '') {
+                    $flushMacs[$mac] = true;
                     $safeMac = str_replace('"', '', $mac);
                     $lines[] = '/ip hotspot host remove [find mac-address="' . $safeMac . '"]';
                     $lines[] = '/ip hotspot cookie remove [find mac-address="' . $safeMac . '"]';
@@ -9371,8 +9924,12 @@ class Mikrotik
             self::runRouterOneShotScript($client, 'dyrsia_hs_sweep', implode("\n", array_unique($lines)));
         }
         $ipList = array_keys($flushIps);
+        $macList = array_keys($flushMacs);
         if ($ipList !== []) {
             self::flushConnectionTrackingForIps($client, $ipList);
+        }
+        if ($ipList !== [] || $macList !== []) {
+            self::releaseHotspotCaptiveNetworkState($client, $ipList, $macList);
         }
 
         return ['ok' => true, 'enforced' => count($ipList)];
@@ -9380,8 +9937,9 @@ class Mikrotik
 
     /**
      * @param array<int, string> $extraIps
+     * @param array<int, string> $extraMacs
      */
-    public static function disconnectHotspotUserOnRouter($routerName, $username, array $extraIps = [])
+    public static function disconnectHotspotUserOnRouter($routerName, $username, array $extraIps = [], array $extraMacs = [])
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
@@ -9420,7 +9978,7 @@ class Mikrotik
             if (!$client) {
                 return ['ok' => false, 'ips' => [], 'enforced' => 0];
             }
-            $result = self::disconnectHotspotUser($client, $username, $extraIps);
+            $result = self::disconnectHotspotUser($client, $username, $extraIps, $extraMacs);
             self::sweepOrphanHotspotSessions($client);
 
             return $result;
@@ -9436,6 +9994,160 @@ class Mikrotik
     }
 
     /**
+     * Coupure des sessions hotspot dont le login n'a plus de recharge Hotspot active (non expirée).
+     *
+     * @return array{disconnected: int, removed_users: int}
+     */
+    public static function purgeHotspotSessionsWithoutActiveRecharge($client, $routerName = '')
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo' || !$client) {
+            return ['disconnected' => 0, 'removed_users' => 0];
+        }
+
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '' && function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+
+        $disconnected = 0;
+        $removedUsers = 0;
+        $expiredSessions = [];
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/active/print'))
+                    ->setArgument('.proplist', 'user,address,mac-address')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $username = trim((string) $row->getProperty('user'));
+                if ($username === '') {
+                    continue;
+                }
+                if (self::hotspotLoginHasActiveRecharge($username, $routerName)) {
+                    continue;
+                }
+                if (!isset($expiredSessions[$username])) {
+                    $expiredSessions[$username] = ['ips' => [], 'macs' => []];
+                }
+                $ip = trim((string) $row->getProperty('address'));
+                if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP)) {
+                    $expiredSessions[$username]['ips'][$ip] = true;
+                }
+                $mac = trim((string) $row->getProperty('mac-address'));
+                if ($mac !== '') {
+                    $expiredSessions[$username]['macs'][$mac] = true;
+                }
+            }
+
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/cookie/print'))
+                    ->setArgument('.proplist', 'user,mac-address')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $username = trim((string) $row->getProperty('user'));
+                if ($username === '' || self::hotspotLoginHasActiveRecharge($username, $routerName)) {
+                    continue;
+                }
+                if (!isset($expiredSessions[$username])) {
+                    $expiredSessions[$username] = ['ips' => [], 'macs' => []];
+                }
+                $mac = trim((string) $row->getProperty('mac-address'));
+                if ($mac !== '') {
+                    $expiredSessions[$username]['macs'][$mac] = true;
+                }
+            }
+
+            foreach ($expiredSessions as $username => $bundle) {
+                $extraIps = array_keys($bundle['ips']);
+                $extraMacs = array_keys($bundle['macs']);
+                $result = self::disconnectHotspotUser($client, $username, $extraIps, $extraMacs);
+                $disconnected += max(1, (int) ($result['enforced'] ?? 0));
+                self::removeHotspotUser($client, $username);
+                $removedUsers++;
+            }
+        } catch (Throwable $e) {
+            _log('[Hotspot purge inactive] ' . $routerName . ': ' . $e->getMessage());
+        }
+
+        self::sweepOrphanHotspotSessions($client);
+
+        return ['disconnected' => $disconnected, 'removed_users' => $removedUsers];
+    }
+
+    /**
+     * @param string $username Login hotspot (/ip/hotspot/user name)
+     */
+    public static function hotspotLoginHasActiveRecharge($username, $routerName = ''): bool
+    {
+        $username = trim((string) $username);
+        if ($username === '') {
+            return false;
+        }
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '' && function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+
+        $q = ORM::for_table('tbl_user_recharges')
+            ->where('username', $username)
+            ->where('status', 'on')
+            ->where('type', 'Hotspot')
+            ->order_by_desc('id');
+        if ($routerName !== '') {
+            $q->where('routers', $routerName);
+        }
+
+        foreach ($q->find_many() as $recharge) {
+            if (class_exists('Package') && Package::isRechargeActive($recharge)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Parcourt les routeurs et coupe toute session sans forfait actif en base.
+     */
+    public static function enforceHotspotActiveSessionsAllRouters(): int
+    {
+        global $_app_stage;
+        if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
+            return 0;
+        }
+
+        $total = 0;
+        foreach (ORM::for_table('tbl_routers')->find_many() as $router) {
+            $routerName = trim((string) ($router['name'] ?? ''));
+            if ($routerName === '') {
+                continue;
+            }
+            try {
+                $client = self::getClient(
+                    $router['ip_address'],
+                    $router['username'],
+                    self::routerPassword($router['password']),
+                    25
+                );
+                if (!$client) {
+                    continue;
+                }
+                $result = self::purgeHotspotSessionsWithoutActiveRecharge($client, $routerName);
+                $total += (int) ($result['disconnected'] ?? 0) + (int) ($result['removed_users'] ?? 0);
+            } catch (Throwable $e) {
+                _log('[Hotspot enforce sessions] ' . $routerName . ': ' . $e->getMessage());
+            }
+        }
+
+        return $total;
+    }
+
+    /**
      * Renforce les déconnexions hotspot expirées (sessions fantômes + conntrack), comme PPPoE.
      */
     public static function reinforceExpiredHotspotOnAllRouters()
@@ -9445,14 +10157,24 @@ class Mikrotik
             return 0;
         }
 
-        $now = date('Y-m-d H:i:s');
         $routerUsers = [];
         foreach (ORM::for_table('tbl_user_recharges')
             ->where_raw("LOWER(type) = 'hotspot'")
-            ->where_raw("(status = 'off' OR CONCAT(expiration, ' ', time) <= ?)", [$now])
             ->find_many() as $row) {
-            $routerName = trim((string) ($row['routers'] ?? ''));
-            $username = trim((string) ($row['username'] ?? ''));
+            $status = strtolower(trim((string) ($row->status ?? '')));
+            $expired = $status === 'off' || Package::isRechargeExpired($row);
+            if (!$expired) {
+                continue;
+            }
+            if ($status === 'on' && Package::isRechargeExpired($row)) {
+                $u = ORM::for_table('tbl_user_recharges')->find_one($row->id);
+                if ($u && (string) $u->status === 'on') {
+                    $u->status = 'off';
+                    $u->save();
+                }
+            }
+            $routerName = trim((string) ($row->routers ?? ''));
+            $username = trim((string) ($row->username ?? ''));
             if ($routerName === '' || strcasecmp($routerName, 'radius') === 0 || $username === '') {
                 continue;
             }
@@ -9475,9 +10197,11 @@ class Mikrotik
                 if (!$client) {
                     continue;
                 }
+                self::purgeHotspotSessionsWithoutActiveRecharge($client, $routerName);
                 foreach (array_keys($users) as $username) {
                     $result = self::disconnectHotspotUser($client, $username);
                     $total += (int) ($result['enforced'] ?? 0);
+                    self::removeHotspotUser($client, $username);
                 }
                 $sweep = self::sweepOrphanHotspotSessions($client);
                 $total += (int) ($sweep['enforced'] ?? 0);

@@ -222,6 +222,39 @@ function hotspot_pg_campay_customer_has_active_plan($trx)
     return $recharge && Package::isRechargeActive($recharge);
 }
 
+/**
+ * Pousse l'utilisateur hotspot sur le MikroTik pour un paiement (idempotent, safe après activation).
+ */
+function hotspot_pg_campay_ensure_mikrotik_sync($trx)
+{
+    if (!$trx || !class_exists('HotspotCustomer')) {
+        return false;
+    }
+    if (is_numeric($trx)) {
+        $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx);
+    } elseif (isset($trx->id)) {
+        $fresh = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
+        if ($fresh) {
+            $trx = $fresh;
+        }
+    }
+    if (!$trx) {
+        return false;
+    }
+
+    $hasRecharge = hotspot_pg_campay_customer_has_active_plan($trx);
+    $isPaid = (string) ($trx->transaction_status ?? '') === 'paid';
+    if (!$hasRecharge && !$isPaid) {
+        return false;
+    }
+
+    if (HotspotCustomer::paymentMikrotikSyncSatisfied($trx)) {
+        return true;
+    }
+
+    return HotspotCustomer::ensureMikrotikHotspotUserForPayment($trx, 1);
+}
+
 function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 {
     if (!$trx || empty($trx->id)) {
@@ -254,15 +287,18 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
             if (function_exists('hotspot_invalidate_overview_cache')) {
                 hotspot_invalidate_overview_cache();
             }
+            hotspot_pg_campay_ensure_mikrotik_sync($trx);
 
             return true;
         }
     }
 
     if ((string) $trx->transaction_status === 'paid' && trim((string) ($trx->voucher_code ?? '')) !== '') {
-        $customerPaid = HotspotCustomer::findByPhone($trx->phone_number ?? '');
+        $customerPaid = HotspotCustomer::findByPhoneForHotspot($trx->phone_number ?? '');
         if ($customerPaid && function_exists('hotspot_customer_has_active_recharge')
             && hotspot_customer_has_active_recharge((int) $customerPaid->id, (string) ($trx->router_name ?? ''))) {
+            hotspot_pg_campay_ensure_mikrotik_sync($trx);
+
             return true;
         }
     }
@@ -286,10 +322,13 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
                 $trx->transaction_status = 'paid';
                 $trx->save();
             }
+            hotspot_pg_campay_ensure_mikrotik_sync($trx);
 
             return true;
         }
         if ((string) $trx->transaction_status === 'paid') {
+            hotspot_pg_campay_ensure_mikrotik_sync($trx);
+
             return true;
         }
         if ((string) $trx->transaction_status === 'activating') {
@@ -297,9 +336,13 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
             $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id);
             if ($trx && class_exists('WifiZoneSales')
                 && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
+                hotspot_pg_campay_ensure_mikrotik_sync($trx);
+
                 return true;
             }
             if ($trx && (string) $trx->transaction_status === 'paid') {
+                hotspot_pg_campay_ensure_mikrotik_sync($trx);
+
                 return true;
             }
         }
@@ -313,6 +356,7 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
     if (class_exists('WifiZoneSales') && WifiZoneSales::findTransactionByHotspotPaymentId((int) $trx->id)) {
         $trx->transaction_status = 'paid';
         $trx->save();
+        hotspot_pg_campay_ensure_mikrotik_sync($trx);
 
         return true;
     }
@@ -356,7 +400,10 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
 
     try {
         $customer = HotspotCustomer::findOrCreate($phone, $fullname, $address);
-        $prepared = HotspotCustomer::prepareForHotspotActivation($customer);
+        if (function_exists('hotspot_cleanup_stale_recharge')) {
+            hotspot_cleanup_stale_recharge((int) $customer->id, $routername);
+        }
+        $prepared = HotspotCustomer::prepareForHotspotActivation($customer, $routername);
         $customer = $prepared['customer'];
         $networkPassword = HotspotCustomer::defaultPassword();
 
@@ -378,9 +425,29 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
             }
         }
 
-        HotspotCustomer::forceMikrotikHotspotPassword($customer->username, $routername, $networkPassword);
+        if (Package::$lastDeviceSyncError !== '') {
+            _log('[CamPay Hotspot] rechargeUser device sync warning trx ' . $trx->transaction_ref . ': ' . Package::$lastDeviceSyncError);
+        }
+
+        $deviceSynced = Package::$lastDeviceSyncError === '';
+        $mikrotikOk = $deviceSynced;
+        if (!$deviceSynced) {
+            $mikrotikOk = HotspotCustomer::pushActiveRechargeToMikrotikWithRetry((int) $customer->id, $routername, (int) $planid, 2);
+            if (!$mikrotikOk) {
+                _log(
+                    '[CamPay Hotspot] Mikrotik user NOT created trx '
+                    . $trx->transaction_ref
+                    . ' login pending verify — '
+                    . HotspotCustomer::$lastMikrotikSyncError
+                );
+            }
+        }
+        if (!$mikrotikOk && class_exists('HotspotCustomer')) {
+            HotspotCustomer::schedulePostPaymentMikrotikSync((int) $trx->id);
+        }
     } finally {
         HotspotCustomer::clearActivationNetworkPassword();
+        HotspotCustomer::consumePendingRechargeUsername();
         if ($previousGlobalTrx !== null) {
             $GLOBALS['trx'] = $previousGlobalTrx;
         } else {
@@ -397,6 +464,14 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
         ->where('status', 'on')
         ->find_one();
 
+    $hotspotLogin = $expiration ? trim((string) $expiration->username) : '';
+    if ($hotspotLogin === '') {
+        $hotspotLogin = HotspotCustomer::loginUsernameFromPayment($trx);
+    }
+    if ($hotspotLogin === '') {
+        $hotspotLogin = trim((string) $customer->username);
+    }
+
     $expired = date('Y-m-d H:i:s', strtotime('+1 day'));
     if ($expiration) {
         $expired = $expiration->expiration . ' ' . date('h:i A', strtotime($expiration->time));
@@ -404,22 +479,44 @@ function hotspot_pg_campay_activate_user($trx, $operator = 'CamPay')
             hotspot_scheduleCredentialsNotify(
                 $phone,
                 $expiration->namebp,
-                $customer->username,
+                $hotspotLogin,
                 $expired
             );
         }
     }
 
     $trx->router_name = $routername;
-    $trx->voucher_code = $customer->username;
+    $trx->voucher_code = $hotspotLogin;
     $trx->payment_method = 'CamPay - ' . $operator;
     $trx->payment_date = date('Y-m-d H:i:s');
     $trx->transaction_status = 'paid';
     $trx->expired_date = date('Y-m-d H:i:s', strtotime($expired));
     $trx->save();
 
+    // Verrouille la MAC du payeur pour les forfaits shared_users = 1
+    if ($expiration) {
+        $planRow = ORM::for_table('tbl_plans')->find_one((int) $planid);
+        if ($planRow && !Mikrotik::hotspotPlanAllowsSharing($planRow)) {
+            HotspotCustomer::lockDeviceMacOnRecharge(
+                $expiration,
+                (string) ($mac_address ?: ($trx->mac_address ?? '')),
+                $planRow
+            );
+            HotspotCustomer::pushActiveRechargeToMikrotikWithRetry(
+                (int) $customer->id,
+                $routername,
+                (int) $planid,
+                1
+            );
+        }
+    }
+
     if (function_exists('hotspot_invalidate_overview_cache')) {
         hotspot_invalidate_overview_cache();
+    }
+
+    if (!HotspotCustomer::paymentMikrotikSyncSatisfied($trx)) {
+        hotspot_pg_campay_ensure_mikrotik_sync($trx);
     }
 
     return true;
@@ -437,6 +534,8 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
     }
 
     if ((string) $trx->transaction_status === 'paid') {
+        hotspot_pg_campay_ensure_mikrotik_sync($trx);
+
         return $trx;
     }
 
@@ -506,6 +605,8 @@ function hotspot_pg_campay_sync_transaction($trx, $curlTimeout = 30)
             );
             $trx->save();
         }
+        $trx = ORM::for_table('tbl_hotspot_payments')->find_one((int) $trx->id) ?: $trx;
+        hotspot_pg_campay_ensure_mikrotik_sync($trx);
     } elseif (hotspot_pg_campay_is_failed_status($status)) {
         if (!hotspot_pg_campay_customer_has_active_plan($trx)) {
             $existingMeta['campay_failure_reason'] = hotspot_pg_campay_extract_failure_reason(
@@ -559,7 +660,7 @@ function hotspot_processPayment_campay($data)
     }
 
     if (function_exists('hotspot_cleanup_stale_recharge')) {
-        $customerCheck = class_exists('HotspotCustomer') ? HotspotCustomer::findByPhone($phone) : null;
+        $customerCheck = class_exists('HotspotCustomer') ? HotspotCustomer::findByPhoneForHotspot($phone) : null;
         if ($customerCheck) {
             hotspot_cleanup_stale_recharge((int) $customerCheck->id, $routername);
         }

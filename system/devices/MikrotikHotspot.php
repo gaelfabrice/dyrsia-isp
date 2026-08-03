@@ -32,9 +32,9 @@ class MikrotikHotspot
     function add_customer($customer, $plan)
     {
         $client = $this->routerClient($plan['routers']);
+        $this->ensureHotspotPlanProfile($client, $plan);
         $isExp = ORM::for_table('tbl_plans')->select("id")->where('plan_expired', $plan['id'])->find_one();
-        $this->removeHotspotUser($client, $customer['username']);
-        if ($isExp){
+        if ($isExp) {
             $this->removeHotspotActiveUser($client, $customer['username']);
         }
         $this->addHotspotUser($client, $plan, $customer);
@@ -42,42 +42,60 @@ class MikrotikHotspot
     
     function sync_customer($customer, $plan)
     {
-        $client = $this->routerClient($plan['routers']);
-        $t = ORM::for_table('tbl_user_recharges')->where('username', $customer['username'])->where('status', 'on')->find_one();
-        if ($t) {
-            $printRequest = new RouterOS\Request('/ip/hotspot/user/print');
-            $printRequest->setArgument('.proplist', '.id,limit-uptime,limit-bytes-total');
-            $printRequest->setQuery(RouterOS\Query::where('name', $customer['username']));
-            $userInfo = $client->sendSync($printRequest);
-            $id = $userInfo->getProperty('.id');
-            $uptime = $userInfo->getProperty('limit-uptime');
-            $data = $userInfo->getProperty('limit-bytes-total');
-            if (!empty($id) && (!empty($uptime) || !empty($data))) {
-                $setRequest = new RouterOS\Request('/ip/hotspot/user/set');
-                $setRequest->setArgument('numbers', $id);
-                $setRequest->setArgument('profile', $t['namebp']);
-                $client->sendSync($setRequest);
-            } else {
-                $this->add_customer($customer, $plan);
-            }
+        $customerRow = is_array($customer) ? $customer : $customer->as_array();
+        $planRow = is_array($plan) ? $plan : $plan->as_array();
+        $routerName = trim((string) ($planRow['routers'] ?? ''));
+
+        $rechargeQuery = ORM::for_table('tbl_user_recharges')
+            ->where('customer_id', (int) ($customerRow['id'] ?? 0))
+            ->where('status', 'on')
+            ->order_by_desc('id');
+        if ($routerName !== '') {
+            $rechargeQuery->where('routers', $routerName);
         }
+        $recharge = $rechargeQuery->find_one();
+
+        if (!$recharge) {
+            $recharge = ORM::for_table('tbl_user_recharges')
+                ->where('username', (string) ($customerRow['username'] ?? ''))
+                ->where('status', 'on')
+                ->order_by_desc('id')
+                ->find_one();
+        }
+
+        if ($recharge && class_exists('Package')) {
+            [$customerRow, $planRow] = Package::deviceSyncRows(
+                $planRow,
+                (string) ($recharge->routers ?? $routerName),
+                $customerRow,
+                (string) $recharge->username
+            );
+        }
+
+        $this->add_customer($customerRow, $planRow);
     }
 
 
     function remove_customer($customer, $plan)
     {
         $client = $this->routerClient($plan['routers']);
-        if (!empty($plan['plan_expired'])) {
+        $username = trim((string) ($customer['username'] ?? ''));
+        $planType = strtolower(trim((string) ($plan['type'] ?? '')));
+
+        // Hotspot prépayé : à l'expiration, supprimer le user (pas de profil « expiré » sur le routeur).
+        if ($planType !== 'hotspot' && !empty($plan['plan_expired'])) {
             $p = ORM::for_table("tbl_plans")->find_one($plan['plan_expired']);
-            if($p){
+            if ($p) {
                 $this->add_customer($customer, $p);
-                Mikrotik::disconnectHotspotUser($client, $customer['username']);
+                Mikrotik::disconnectHotspotUser($client, $username);
                 Mikrotik::sweepOrphanHotspotSessions($client);
+
                 return;
             }
         }
-        $this->removeHotspotUser($client, $customer['username']);
-        Mikrotik::disconnectHotspotUser($client, $customer['username']);
+
+        $this->removeHotspotUser($client, $username);
+        Mikrotik::disconnectHotspotUser($client, $username);
         Mikrotik::sweepOrphanHotspotSessions($client);
     }
 
@@ -209,7 +227,12 @@ class MikrotikHotspot
     {
         global $admin;
 
-        return Mikrotik::resolveRouterRecord($name, $admin ?? null);
+        $mikrotik = Mikrotik::resolveRouterRecord($name, $admin ?? null);
+        if (!$mikrotik) {
+            $mikrotik = Mikrotik::resolveRouterRecord($name, null);
+        }
+
+        return $mikrotik;
     }
 
     function routerClient($routerName)
@@ -224,11 +247,64 @@ class MikrotikHotspot
             );
         }
         $password = Mikrotik::routerPassword($mikrotik['password']);
-        return Mikrotik::getClient(
+        $client = Mikrotik::getClient(
             $mikrotik['ip_address'],
             $mikrotik['username'],
-            $password
+            $password,
+            30,
+            true,
+            true
         );
+        if ($client === null) {
+            throw new Exception(
+                Lang::T('Cannot connect to MikroTik')
+                . ' — sync routeur désactivée (mode démo) ou API injoignable (VPN / IP / port 8728).'
+            );
+        }
+
+        return $client;
+    }
+
+    /**
+     * Serveur hotspot MikroTik (pas « all ») pour lier le user au bon /ip/hotspot.
+     */
+    function hotspotServerNameForPlan($client, $plan)
+    {
+        $router = trim((string) (is_array($plan) ? ($plan['routers'] ?? '') : ($plan->routers ?? '')));
+
+        return Mikrotik::resolveHotspotServerName($client, $router);
+    }
+
+    /**
+     * Crée le profil hotspot sur le routeur si absent (requis avant /ip hotspot user add).
+     */
+    function ensureHotspotPlanProfile($client, $plan)
+    {
+        global $_app_stage;
+        if ($_app_stage == 'Demo' || !$client) {
+            return;
+        }
+        $planId = (int) ($plan['id'] ?? 0);
+        $bw = null;
+        if (!empty($plan['id_bw'])) {
+            $bw = ORM::for_table('tbl_bandwidth')->find_one($plan['id_bw']);
+        }
+        if (!$bw && $planId > 0) {
+            $planRow = ORM::for_table('tbl_plans')->find_one($planId);
+            if ($planRow && !empty($planRow->id_bw)) {
+                $bw = ORM::for_table('tbl_bandwidth')->find_one($planRow->id_bw);
+            }
+        }
+        $rate = Mikrotik::hotspotPlanRateLimit($bw);
+        $sharedUsers = (int) ($plan['shared_users'] ?? 1);
+        if ($sharedUsers < 1) {
+            $sharedUsers = 1;
+        }
+        $profileName = trim((string) ($plan['name_plan'] ?? ''));
+        if ($profileName === '') {
+            return;
+        }
+        Mikrotik::setHotspotPlan($client, $profileName, $sharedUsers, $rate);
     }
 
     function getClient($ip, $user, $pass, $timeout = 5, $fallback = true, $failOnUnreachable = false)
@@ -247,6 +323,9 @@ class MikrotikHotspot
             RouterOS\Query::where('name', $username)
         );
         $userID = $client->sendSync($printRequest)->getProperty('.id');
+        if ($userID === null || $userID === '') {
+            return null;
+        }
         $removeRequest = new RouterOS\Request('/ip/hotspot/user/remove');
         $client->sendSync(
             $removeRequest
@@ -260,8 +339,13 @@ class MikrotikHotspot
         if ($_app_stage == 'Demo') {
             return null;
         }
+        if (!$client) {
+            throw new Exception('Client API MikroTik indisponible (connexion nulle).');
+        }
 
-        // Toujours le mot de passe clair hotspot (123456) — jamais le hash bcrypt.
+        $this->ensureHotspotPlanProfile($client, $plan);
+        $allowsSharing = Mikrotik::hotspotPlanAllowsSharing($plan);
+
         $networkPass = HotspotCustomer::defaultPassword();
         if (Password::isStoredHash($networkPass) || $networkPass === '') {
             throw new Exception('Mot de passe réseau invalide pour ' . ($customer['username'] ?? ''));
@@ -295,6 +379,15 @@ class MikrotikHotspot
 
         $targetComment = "Name: $fullname | Phone: $phone | Address: $address | Created: $created_time | Expired: $expired_time | Method: $method";
 
+        $hotspotServer = $this->hotspotServerNameForPlan($client, $plan);
+
+        $deviceMac = '';
+        if (!$allowsSharing) {
+            if (isset($customer['mac']) && trim((string) $customer['mac']) !== '') {
+                $deviceMac = Mikrotik::normalizeHotspotMacAddress((string) $customer['mac']);
+            }
+        }
+
         // ===============================
         // 1. Check existing users by Username
         // ===============================
@@ -310,20 +403,25 @@ class MikrotikHotspot
             $found = true;
             $existingUserID = $user->getProperty('.id');
 
-            // ===============================
-            // Remove active session if exists
-            // ===============================
-            $activeRequest = new RouterOS\Request('/ip/hotspot/active/print');
-            $activeRequest->setArgument('.proplist', '.id');
-            $activeRequest->setQuery(RouterOS\Query::where('user', $customer['username']));
-            $activeSessions = $client->sendSync($activeRequest);
-            foreach ($activeSessions as $session) {
-                $removeActive = new RouterOS\Request('/ip/hotspot/active/remove');
-                $removeActive->setArgument('numbers', $session->getProperty('.id'));
-                $client->sendSync($removeActive);
+            // Un seul appareil (shared=1) : couper les autres sessions à la resync.
+            if (!$allowsSharing) {
+                $activeRequest = new RouterOS\Request('/ip/hotspot/active/print');
+                $activeRequest->setArgument('.proplist', '.id');
+                $activeRequest->setQuery(RouterOS\Query::where('user', $customer['username']));
+                $activeSessions = $client->sendSync($activeRequest);
+                foreach ($activeSessions as $session) {
+                    $removeActive = new RouterOS\Request('/ip/hotspot/active/remove');
+                    $removeActive->setArgument('numbers', $session->getProperty('.id'));
+                    $client->sendSync($removeActive);
+                }
             }
-            break; 
+            break;
         }
+
+        if (!$allowsSharing && $deviceMac === '' && $found) {
+            $deviceMac = Mikrotik::getHotspotUserBoundMacOnClient($client, $customer['username']);
+        }
+        $bindMac = !$allowsSharing && $deviceMac !== '';
 
         // ===============================
         // 2. If found, update username, profile, comment, etc.
@@ -334,8 +432,13 @@ class MikrotikHotspot
             $setRequest->setArgument('profile', $plan['name_plan']);
             $setRequest->setArgument('comment', $targetComment);
             $setRequest->setArgument('password', $networkPass);
-            if (isset($customer['mac']) && $customer['mac'] != '') {
-                $setRequest->setArgument('mac-address', $customer['mac']);
+            if ($hotspotServer !== '') {
+                $setRequest->setArgument('server', $hotspotServer);
+            }
+            if ($bindMac) {
+                $setRequest->setArgument('mac-address', $deviceMac);
+            } elseif ($allowsSharing) {
+                $setRequest->setArgument('mac-address', '');
             }
             $client->sendSync($setRequest);
             return;
@@ -350,13 +453,16 @@ class MikrotikHotspot
             ->setArgument('profile', $plan['name_plan'])
             ->setArgument('password', $networkPass)
             ->setArgument('comment', $targetComment);
+        if ($hotspotServer !== '') {
+            $addRequest->setArgument('server', $hotspotServer);
+        }
 
         if (isset($customer['email']) && $customer['email'] != '') {
             $addRequest->setArgument('email', $customer['email']);
         }
 
-        if (isset($customer['mac']) && $customer['mac'] != '') {
-            $addRequest->setArgument('mac-address', $customer['mac']);
+        if ($bindMac) {
+            $addRequest->setArgument('mac-address', $deviceMac);
         }
 
         // Handle Limited plans

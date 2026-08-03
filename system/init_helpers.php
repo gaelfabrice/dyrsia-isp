@@ -50,7 +50,8 @@ if (!function_exists('wifizone_verify_csrf')) {
         $handler = $routes[0] ?? '';
         $action = $routes[1] ?? '';
         $publicPlugins = [
-            'hotspot_login', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
+            'hotspot_login', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify', 'hotspot_prepare_login',
+            'hotspot_recover_plan', 'hotspot_plan',
             'pppoe_portal', 'pppoe_plan', 'pppoe_pay', 'pppoe_verify',
             'wifizone_reseller_api', 'hotspot_resellers_login',
         ];

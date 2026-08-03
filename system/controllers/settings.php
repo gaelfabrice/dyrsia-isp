@@ -1620,7 +1620,6 @@ switch ($action) {
             'hotspot_cookie_lifetime',
             'hotspot_idle_timeout',
             'hotspot_keepalive_timeout',
-            'hotspot_address_per_mac',
             'hotspot_smtp_server',
             'hotspot_use_radius',
             'hotspot_radius_secret',
@@ -2081,9 +2080,6 @@ HTML;
             }
             if (trim((string) ($_POST['hotspot_idle_timeout'] ?? '')) === '') {
                 $_POST['hotspot_idle_timeout'] = '00:10:00';
-            }
-            if (trim((string) ($_POST['hotspot_address_per_mac'] ?? '')) === '') {
-                $_POST['hotspot_address_per_mac'] = '1';
             }
             $contactPhone = preg_replace('/\D/', '', (string) ($_POST['hotspot_contact_phone'] ?? ''));
             if ($contactPhone !== '' && strlen($contactPhone) === 9 && str_starts_with($contactPhone, '6')) {

@@ -13,6 +13,99 @@ class Package
     public static $lastDeviceSyncError = '';
 
     /**
+     * Lignes client + forfait pour MikrotikHotspot::add_customer (routeur = celui de la recharge / paiement).
+     *
+     * @param object|array $planOrm
+     * @param object|array $customerOrm
+     * @return array{0: array, 1: array}
+     */
+    public static function deviceSyncRows($planOrm, $routerName, $customerOrm, $rechargeUsername = '')
+    {
+        if (is_array($planOrm)) {
+            $planRow = $planOrm;
+        } elseif (is_object($planOrm) && method_exists($planOrm, 'as_array')) {
+            $planRow = $planOrm->as_array();
+        } else {
+            $planRow = [];
+        }
+
+        if ($routerName !== '') {
+            if (function_exists('hotspot_normalize_router_name')) {
+                $routerName = hotspot_normalize_router_name((string) $routerName);
+            } else {
+                $routerName = trim((string) $routerName);
+            }
+            $planRow['routers'] = $routerName;
+        }
+
+        if (is_array($customerOrm)) {
+            $customerRow = $customerOrm;
+        } elseif (is_object($customerOrm) && method_exists($customerOrm, 'as_array')) {
+            $customerRow = $customerOrm->as_array();
+        } else {
+            $customerRow = [];
+        }
+
+        $login = trim((string) $rechargeUsername);
+        if ($login !== '') {
+            $customerRow['username'] = $login;
+        }
+
+        return [$customerRow, $planRow];
+    }
+
+    /**
+     * Sync MikroTik / RADIUS pour une recharge active (routeur + login de la recharge).
+     */
+    public static function syncDeviceRecharge($customer, $planOrm, $rechargeRow)
+    {
+        global $_app_stage;
+
+        self::$lastDeviceSyncError = '';
+        if (!$customer || !$planOrm || !$rechargeRow) {
+            return false;
+        }
+
+        $routerName = trim((string) ($rechargeRow->routers ?? $rechargeRow['routers'] ?? ''));
+        $rechargeLogin = trim((string) ($rechargeRow->username ?? $rechargeRow['username'] ?? ''));
+        [$customerRow, $planRow] = self::deviceSyncRows($planOrm, $routerName, $customer, $rechargeLogin);
+
+        $dvc = self::getDevice($planRow);
+        if (!is_string($dvc) || $dvc === '' || !file_exists($dvc)) {
+            self::$lastDeviceSyncError = Lang::T('Devices Not Found');
+
+            return false;
+        }
+
+        if ($_app_stage === 'Demo' || $_app_stage === 'demo') {
+            return true;
+        }
+
+        require_once $dvc;
+        $deviceClass = self::resolveDeviceClass($planRow);
+        if ($deviceClass === '' || !class_exists($deviceClass)) {
+            self::$lastDeviceSyncError = 'Device class missing';
+
+            return false;
+        }
+
+        try {
+            $device = new $deviceClass();
+            if (method_exists($device, 'sync_customer')) {
+                $device->sync_customer($customerRow, $planRow);
+            } else {
+                $device->add_customer($customerRow, $planRow);
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            self::$lastDeviceSyncError = $e->getMessage();
+
+            return false;
+        }
+    }
+
+    /**
      * When extending an active plan, never stack time from a past expiry.
      */
     private static function extensionBaseTimestamp($expiration, $time, int $adminId = 0)
@@ -281,14 +374,71 @@ class Package
                     continue;
                 }
 
+                // Clôturer en base avant MikroTik (évite recharge « on » si l'API routeur échoue).
+                $u->status = 'off';
+                $u->save();
+
+                $rechargeLogin = trim((string) ($u['username'] ?? ''));
+                $routerName = trim((string) ($u['routers'] ?? ''));
+                if ($routerName === '') {
+                    $routerName = trim((string) ($p['routers'] ?? ''));
+                }
+
+                $customerForDevice = $c;
+                if (is_object($customerForDevice) && method_exists($customerForDevice, 'as_array')) {
+                    $customerForDevice = $customerForDevice->as_array();
+                } elseif (!is_array($customerForDevice)) {
+                    $customerForDevice = (array) $customerForDevice;
+                }
+                [$customerRow, $planRow] = self::deviceSyncRows($p, $routerName, $customerForDevice, $rechargeLogin);
+                $deviceClass = self::resolveDeviceClass($p);
+
                 $dvc = self::getDevice($p);
+                $mikrotikRemoved = true;
                 if ($_app_stage != 'demo' && $_app_stage != 'Demo') {
                     if (file_exists($dvc)) {
                         require_once $dvc;
-                        (new $p['device'])->remove_customer($c, $p);
+                        try {
+                            (new $deviceClass)->remove_customer($customerRow, $planRow);
+                        } catch (Throwable $e) {
+                            $mikrotikRemoved = false;
+                            _log(
+                                '[Expire] remove_customer failed #' . (int) $u['id'] . ' login='
+                                . $rechargeLogin . ' router=' . $routerName . ': ' . $e->getMessage()
+                            );
+                        }
                     } else {
-                        throw new Exception('Devices ' . $p['device'] . ' not found, cannot suspend ' . $c['username']);
+                        throw new Exception('Devices ' . $deviceClass . ' not found, cannot suspend ' . $rechargeLogin);
                     }
+                }
+
+                if (!$mikrotikRemoved && $rechargeLogin !== ''
+                    && strtolower(trim((string) ($u['type'] ?? ''))) === 'hotspot'
+                    && class_exists('Mikrotik')) {
+                    Mikrotik::disconnectHotspotUserOnRouter($routerName, $rechargeLogin);
+                    $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+                    if ($router) {
+                        try {
+                            $client = Mikrotik::getClient(
+                                $router['ip_address'],
+                                $router['username'],
+                                Mikrotik::routerPassword($router['password']),
+                                30
+                            );
+                            if ($client) {
+                                Mikrotik::removeHotspotUser($client, $rechargeLogin);
+                                Mikrotik::sweepOrphanHotspotSessions($client);
+                            }
+                        } catch (Throwable $e) {
+                            _log('[Expire] hotspot fallback cut failed: ' . $e->getMessage());
+                        }
+                    }
+                }
+
+                if ($rechargeLogin !== ''
+                    && strtolower(trim((string) ($u['type'] ?? ''))) === 'hotspot'
+                    && class_exists('Mikrotik')) {
+                    Mikrotik::disconnectHotspotUserOnRouter($routerName, $rechargeLogin);
                 }
 
                 try {
@@ -301,8 +451,6 @@ class Package
                             $config['user_notification_expired']
                         ) . "\n";
                     }
-                    $u->status = 'off';
-                    $u->save();
                 } catch (Throwable $e) {
                     _log($e->getMessage());
                     if (!$silent) {
@@ -450,6 +598,12 @@ class Package
 
         if (!$isVoucher) {
             $c = ORM::for_table('tbl_customers')->where('id', $id_customer)->find_one();
+            if ($c && class_exists('HotspotCustomer')) {
+                $hotspotLogin = HotspotCustomer::consumePendingRechargeUsername();
+                if ($hotspotLogin !== '') {
+                    $c->username = $hotspotLogin;
+                }
+            }
             if ($c['status'] != 'Active') {
                 _alert(Lang::T('This account status') . ' : ' . Lang::T($c['status']), 'danger', "");
             }
@@ -615,7 +769,10 @@ class Package
                 try {
                     if (file_exists($dvc)) {
                         require_once $dvc;
-                        (new $p['device'])->add_customer($c, $p);
+                        $rechargeLogin = isset($b) && $b ? trim((string) ($b->username ?? $b['username'] ?? '')) : '';
+                        [$customerRow, $planRow] = self::deviceSyncRows($p, $router_name, $c, $rechargeLogin);
+                        $deviceClass = self::resolveDeviceClass($p);
+                        (new $deviceClass)->add_customer($customerRow, $planRow);
                     } else {
                         throw new Exception(Lang::T("Devices Not Found"));
                     }
@@ -739,7 +896,10 @@ class Package
                 try {
                     if (file_exists($dvc)) {
                         require_once $dvc;
-                        (new $p['device'])->add_customer($c, $p);
+                        $rechargeLogin = isset($d) && $d ? trim((string) ($d->username ?? $d['username'] ?? '')) : '';
+                        [$customerRow, $planRow] = self::deviceSyncRows($p, $router_name, $c, $rechargeLogin);
+                        $deviceClass = self::resolveDeviceClass($p);
+                        (new $deviceClass)->add_customer($customerRow, $planRow);
                     } else {
                         throw new Exception(Lang::T("Devices Not Found"));
                     }
@@ -1108,30 +1268,43 @@ class Package
         return $tax;
     }
 
+    /**
+     * Driver MikroTik / RADIUS effectif (type Hotspot ≠ device MikrotikPppoe en base).
+     *
+     * @param array|object|false $plan
+     */
+    public static function resolveDeviceClass($plan): string
+    {
+        if ($plan === false) {
+            return '';
+        }
+        $row = is_array($plan) ? $plan : (is_object($plan) && method_exists($plan, 'as_array') ? $plan->as_array() : []);
+        $type = strtoupper(trim((string) ($row['type'] ?? '')));
+        $device = trim((string) ($row['device'] ?? ''));
+        if (!empty($row['is_radius']) && stripos($device, 'radius') !== false) {
+            return 'Radius';
+        }
+        if ($type === 'HOTSPOT') {
+            return 'MikrotikHotspot';
+        }
+        if ($type === 'PPPOE') {
+            return 'MikrotikPppoe';
+        }
+
+        return $device !== '' ? $device : 'MikrotikHotspot';
+    }
+
     public static function getDevice($plan)
     {
         global $DEVICE_PATH;
         if ($plan === false) {
             return "none";
         }
-        if (!isset($plan['device'])) {
-            return "none";
+        $class = self::resolveDeviceClass($plan);
+        if ($class === '' || $class === 'none') {
+            return 'none';
         }
-        if (!empty($plan['device'])) {
-            return $DEVICE_PATH . DIRECTORY_SEPARATOR . $plan['device'] . '.php';
-        }
-        if ($plan['is_radius'] == 1) {
-            $plan->device = 'Radius';
-            $plan->save();
-            return $DEVICE_PATH . DIRECTORY_SEPARATOR . 'Radius' . '.php';
-        }
-        if ($plan['type'] == 'PPPOE') {
-            $plan->device = 'MikrotikPppoe';
-            $plan->save();
-            return $DEVICE_PATH . DIRECTORY_SEPARATOR . 'MikrotikPppoe' . '.php';
-        }
-        $plan->device = 'MikrotikHotspot';
-        $plan->save();
-        return $DEVICE_PATH . DIRECTORY_SEPARATOR . 'MikrotikHotspot' . '.php';
+
+        return $DEVICE_PATH . DIRECTORY_SEPARATOR . $class . '.php';
     }
 }

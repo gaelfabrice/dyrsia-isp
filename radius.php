@@ -353,9 +353,29 @@ function process_radiust_rest($tur, $code)
         ->find_array();
     // get all the IP
     $ips = array_column($USRon, 'framedipaddress');
+    $sharedLimit = Mikrotik::hotspotSharedUsersLimit($plan);
+    $activeCount = count($USRon);
+    if ($plan['type'] == 'Hotspot' && class_exists('Mikrotik')) {
+        $routerName = trim((string) ($tur['routers'] ?? ''));
+        if ($routerName !== '') {
+            $liveCount = Mikrotik::countHotspotActiveSessionsForUser($routerName, $tur['username']);
+            $activeCount = max($activeCount, $liveCount);
+        }
+    }
+    $clientIp = trim((string) (_post('framedIPAddress') ?: _post('Framed-IP-Address') ?: ''));
+    $clientMac = Mikrotik::normalizeHotspotMacAddress(
+        (string) (_post('callingStationId') ?: _post('Calling-Station-Id') ?: '')
+    );
+    if ($plan['type'] == 'Hotspot' && !Mikrotik::hotspotPlanAllowsSharing($plan)) {
+        $routerName = trim((string) ($tur['routers'] ?? ''));
+        $macCheck = HotspotCustomer::assertSingleDeviceMacAccess($tur, $plan, $clientMac, $routerName, true);
+        if (!$macCheck['ok']) {
+            show_radius_result(['Reply-Message' => HotspotCustomer::voucherAlreadyUsedMessage()], 401);
+        }
+    }
     // check if user reach shared_users limit but IP is not in the list active
-    if (count($USRon) >= $plan['shared_users'] && $plan['type'] == 'Hotspot' && !in_array(_post('framedIPAddress'), $ips)) {
-        show_radius_result(["control:Auth-Type" => "Accept", 'Reply-Message' => 'You are already logged in - access denied (' . $USRon . ')'], 401);
+    if ($activeCount >= $sharedLimit && $plan['type'] == 'Hotspot' && ($clientIp === '' || !in_array($clientIp, $ips, true))) {
+        show_radius_result(["control:Auth-Type" => "Accept", 'Reply-Message' => 'You are already logged in - access denied (' . $activeCount . '/' . $sharedLimit . ')'], 401);
     }
     $ratos = Mikrotik::hotspotPlanRateLimit($bw);
     if ($ratos === '') {
@@ -388,7 +408,7 @@ function process_radiust_rest($tur, $code)
 
     
     $attrs['reply:Reply-Message'] = 'success';
-    $attrs['Simultaneous-Use'] = $plan['shared_users'];
+    $attrs['Simultaneous-Use'] = $sharedLimit;
     $attrs['reply:Mikrotik-Wireless-Comment'] = $plan['name_plan'] . ' | ' . $tur['expiration'] . ' ' . $tur['time'];
 
     $attrs['reply:Ascend-Data-Rate'] = str_replace('M', '000000', str_replace('K', '000', $rates[1]));

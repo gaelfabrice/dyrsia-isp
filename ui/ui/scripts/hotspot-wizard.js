@@ -419,8 +419,7 @@
             'hotspot_dns_server',
             'hotspot_dns_name',
             'hotspot_cookie_lifetime',
-            'hotspot_idle_timeout',
-            'hotspot_address_per_mac'
+            'hotspot_idle_timeout'
         ];
         fields.forEach(function (field) {
             var el = $(field);
@@ -1111,7 +1110,7 @@
             ['Login', loginMethodsSummary()],
             ['HTTP Cookie Lifetime', val('hotspot_cookie_lifetime')],
             ['Idle Timeout', val('hotspot_idle_timeout')],
-            ['Address Per Mac', val('hotspot_address_per_mac')],
+            ['Partage appareils', 'Shared Users par forfait (profil MikroTik)'],
             ['Auth RADIUS', $('hotspot_use_radius') && $('hotspot_use_radius').checked ? 'Oui (use-radius=yes)' : 'Non'],
             ['Serveur RADIUS', (function () {
                 var api = val('hotspot_api_url') || '';

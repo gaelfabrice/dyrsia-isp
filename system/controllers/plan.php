@@ -146,20 +146,21 @@ switch ($action) {
             if ($p) {
                 $c = ORM::for_table('tbl_customers')->findOne($tur['customer_id']);
                 if ($c) {
-                    $dvc = Package::getDevice($p);
-                    if ($_app_stage != 'demo') {
-                        if (file_exists($dvc)) {
-                            require_once $dvc;
-                            if (method_exists($dvc, 'sync_customer')) {
-                                (new $p['device'])->sync_customer($c, $p);
+                    if ($_app_stage != 'demo' && $_app_stage != 'Demo') {
+                        if (trim((string) ($p['type'] ?? '')) === 'Hotspot' && class_exists('HotspotCustomer')) {
+                            if (HotspotCustomer::pushActiveRechargeToMikrotikWithRetry((int) $c->id, (string) $tur['routers'], (int) $tur['plan_id'], 3)) {
+                                $log .= "DONE : $tur[username], $tur[namebp], $tur[type], $tur[routers]<br>";
                             } else {
-                                (new $p['device'])->add_customer($c, $p);
+                                $log .= "MIKROTIK FAIL : $tur[username], $tur[routers] — " . htmlspecialchars(HotspotCustomer::$lastMikrotikSyncError ?: Package::$lastDeviceSyncError) . "<br>";
                             }
+                        } elseif (Package::syncDeviceRecharge($c, $p, $tur)) {
+                            $log .= "DONE : $tur[username], $tur[namebp], $tur[type], $tur[routers]<br>";
                         } else {
-                            throw new Exception(Lang::T("Devices Not Found"));
+                            $log .= "SYNC FAIL : $tur[username], $tur[routers] — " . htmlspecialchars(Package::$lastDeviceSyncError) . "<br>";
                         }
+                    } else {
+                        $log .= "DONE (demo) : $tur[username], $tur[namebp], $tur[type], $tur[routers]<br>";
                     }
-                    $log .= "DONE : $tur[username], $tur[namebp], $tur[type], $tur[routers]<br>";
                 } else {
                     $log .= "Customer NOT FOUND : $tur[username], $tur[namebp], $tur[type], $tur[routers]<br>";
                 }

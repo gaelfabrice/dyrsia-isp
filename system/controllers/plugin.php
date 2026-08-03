@@ -30,7 +30,7 @@ if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $pluginFn)) {
 }
 
 $publicPlugins = [
-    'hotspot_login', 'hotspot_login_file', 'hotspot_portal', 'hotspot_mikrotik_auth', 'hotspot_ticker', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
+    'hotspot_login', 'hotspot_login_file', 'hotspot_portal', 'hotspot_mikrotik_auth', 'hotspot_ticker', 'hotspot_plan', 'hotspot_log', 'hotspot_voucher_check', 'hotspot_account_check', 'hotspot_recover_plan', 'hotspot_prepare_login', 'hotspot_pay', 'hotspot_verify', 'hotspot_pg_campay_verify',
     'pppoe_portal', 'pppoe_plan', 'pppoe_pay', 'pppoe_verify',
     'wifizone_reseller_api',
 ];
@@ -233,18 +233,37 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
     function hotspot_recover_plan()
     {
         header('Content-Type: application/json');
+        if (function_exists('hotspot_process_expired_recharges_if_due')) {
+            hotspot_process_expired_recharges_if_due();
+        }
+
         $phone = preg_replace('/\D/', '', trim(_post('phone') ?: _get('phone')));
+        if (strlen($phone) === 12 && str_starts_with($phone, '237')) {
+            $phone = substr($phone, 3);
+        }
         if (strlen($phone) !== 9) {
             echo json_encode(['success' => false, 'message' => 'Le numéro doit contenir 9 chiffres']);
             exit;
         }
 
         $routerName = hotspot_normalize_router_name(trim((string) (_post('routername') ?: _get('routername'))));
-        $customer = HotspotCustomer::findByPhone($phone);
+        $requestMac = class_exists('Mikrotik')
+            ? Mikrotik::normalizeHotspotMacAddress((string) (_post('mac_address') ?: _post('mac') ?: _get('mac') ?: ''))
+            : trim((string) (_post('mac_address') ?: _post('mac') ?: ''));
+        if (class_exists('HotspotCustomer') && HotspotCustomer::isPlaceholderHotspotMac($requestMac)) {
+            $requestMac = '';
+        }
+        $customer = HotspotCustomer::findByPhoneForHotspot($phone);
+        if (!$customer) {
+            $customer = HotspotCustomer::findByPhoneForHotspot('237' . $phone);
+        }
 
         $recharge = null;
         if ($customer) {
             $recharge = hotspot_customer_has_active_recharge($customer->id, $routerName);
+            if (!$recharge && $routerName !== '') {
+                $recharge = hotspot_customer_has_active_recharge($customer->id, '');
+            }
         }
 
         if (!$recharge && function_exists('hotspot_find_paid_payment_by_phone')) {
@@ -252,7 +271,7 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             if ($paidTrx && function_exists('hotspot_retry_activate_payment')) {
                 hotspot_retry_activate_payment($paidTrx);
                 if (!$customer) {
-                    $customer = HotspotCustomer::findByPhone($phone);
+                    $customer = HotspotCustomer::findByPhoneForHotspot($phone);
                 }
                 if ($customer) {
                     $recharge = hotspot_customer_has_active_recharge($customer->id, $routerName);
@@ -260,9 +279,9 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             }
         }
 
-        if (!$recharge && $routerName === '') {
+        if (!$recharge && $customer && $routerName === '') {
             $recharge = ORM::for_table('tbl_user_recharges')
-                ->where('username', $phone)
+                ->where('customer_id', (int) $customer->id)
                 ->where('status', 'on')
                 ->where('type', 'Hotspot')
                 ->order_by_desc('id')
@@ -277,21 +296,122 @@ if ($pluginFn === 'hotspot_recover_plan' && !function_exists('hotspot_recover_pl
             echo json_encode(['success' => false, 'message' => 'Aucun forfait actif trouvé pour ce numéro sur ce routeur']);
             exit;
         }
+
+        $effectiveRouter = trim((string) ($recharge['routers'] ?? $routerName));
+        if ($effectiveRouter === '') {
+            $effectiveRouter = trim((string) ($plan['routers'] ?? ''));
+        }
+
         if (!$customer) {
             $customer = ORM::for_table('tbl_customers')->where('id', $recharge['customer_id'])->find_one();
         }
+
+        $login = trim((string) ($recharge['username'] ?? ''));
+        if ($login === '' && $customer) {
+            $login = trim((string) ($customer['username'] ?? ''));
+        }
+
+        // shared_users = 1 : refuse la récupération depuis un autre appareil (verrou DB, rapide)
+        if (!Mikrotik::hotspotPlanAllowsSharing($plan)) {
+            $macCheck = HotspotCustomer::assertSingleDeviceMacAccess(
+                $recharge,
+                $plan,
+                $requestMac,
+                $effectiveRouter,
+                false
+            );
+            if (!$macCheck['ok']) {
+                echo json_encode([
+                    'success' => false,
+                    'message' => HotspotCustomer::voucherAlreadyUsedMessage(),
+                    'code' => 'voucher_already_used',
+                    'shared_users' => 1,
+                ]);
+                exit;
+            }
+        }
+
+        $expiresLabel = '';
+        if (!empty($recharge['expiration'])) {
+            $expTs = strtotime(trim($recharge['expiration'] . ' ' . ($recharge['time'] ?? '')));
+            $expiresLabel = $expTs ? date('d/m/Y H:i', $expTs) : (string) $recharge['expiration'];
+        }
+
+        $sharedUsers = Mikrotik::hotspotSharedUsersLimit($plan);
+
         echo json_encode([
             'success' => true,
-            'message' => 'Forfait retrouvé',
-            'username' => $recharge['username'] ?: ($customer['username'] ?? ''),
+            'message' => $sharedUsers > 1
+                ? 'Forfait retrouvé — même identifiant utilisable sur jusqu\'à ' . $sharedUsers . ' appareils'
+                : 'Forfait retrouvé',
+            'username' => $login,
             'password' => HotspotCustomer::defaultPassword(),
+            'shared_users' => $sharedUsers,
+            'expires_label' => $expiresLabel,
             'package' => [
                 'name' => $plan['name_plan'] ?? $plan['name'] ?? '',
                 'price' => $plan['price'] ?? '',
                 'validity' => trim(($plan['validity'] ?? '') . ' ' . ($plan['validity_unit'] ?? '')),
-                'router' => $plan['routers'] ?? '',
+                'router' => $effectiveRouter,
             ],
         ]);
+        exit;
+    }
+}
+
+if ($pluginFn === 'hotspot_prepare_login') {
+    function hotspot_prepare_login()
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        wifizone_hotspot_plugin_cors();
+
+        $username = trim((string) (_post('username') ?: _req('username') ?: ''));
+        $routerName = trim((string) (_post('router') ?: _post('routername') ?: _req('router') ?: ''));
+        $mac = trim((string) (_post('mac_address') ?: _post('mac') ?: _req('mac') ?: ''));
+
+        if ($username === '' || $routerName === '') {
+            echo json_encode(['ok' => false, 'message' => 'Paramètres manquants']);
+            exit;
+        }
+        if (function_exists('hotspot_normalize_router_name')) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
+
+        $recharge = ORM::for_table('tbl_user_recharges')
+            ->where('username', $username)
+            ->where('status', 'on')
+            ->where('type', 'Hotspot')
+            ->order_by_desc('id')
+            ->find_one();
+        if (!$recharge || !Package::isRechargeActive($recharge)) {
+            echo json_encode(['ok' => false, 'message' => 'Forfait actif introuvable']);
+            exit;
+        }
+
+        $plan = ORM::for_table('tbl_plans')->find_one((int) $recharge['plan_id']);
+        if (!$plan) {
+            echo json_encode(['ok' => false, 'message' => 'Forfait introuvable']);
+            exit;
+        }
+
+        if (Mikrotik::hotspotPlanAllowsSharing($plan)) {
+            echo json_encode(['ok' => true, 'sharing' => true]);
+            exit;
+        }
+
+        $mac = Mikrotik::normalizeHotspotMacAddress($mac);
+        // Contrôle MAC en base uniquement (rapide) — pas d'appel API MikroTik ici.
+        $check = HotspotCustomer::assertSingleDeviceMacAccess($recharge, $plan, $mac, $routerName, false);
+        if (!$check['ok']) {
+            echo json_encode([
+                'ok' => false,
+                'message' => HotspotCustomer::voucherAlreadyUsedMessage(),
+                'code' => 'voucher_already_used',
+            ]);
+            exit;
+        }
+
+        echo json_encode(['ok' => true, 'sharing' => false, 'locked_mac' => $check['locked_mac'] ?? '']);
         exit;
     }
 }

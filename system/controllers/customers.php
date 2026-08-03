@@ -610,24 +610,19 @@ switch ($action) {
                 $c = ORM::for_table('tbl_customers')->find_one($id_customer);
                 $p = ORM::for_table('tbl_plans')->where('id', $b['plan_id'])->find_one();
                 if ($p) {
-                    $dvc = Package::getDevice($p);
-                    if ($_app_stage != 'demo') {
-                        if (file_exists($dvc)) {
-                            require_once $dvc;
-                            try {
-                                if (method_exists($dvc, 'sync_customer')) {
-                                    (new $p['device'])->sync_customer($c, $p);
-                                } else {
-                                    (new $p['device'])->add_customer($c, $p);
-                                }
+                    if ($_app_stage != 'demo' && $_app_stage != 'Demo') {
+                        if (trim((string) ($p['type'] ?? '')) === 'Hotspot' && class_exists('HotspotCustomer')) {
+                            if (!HotspotCustomer::pushActiveRechargeToMikrotikWithRetry((int) $c->id, (string) $b['routers'], (int) $b['plan_id'], 3)) {
+                                $errors[] = $b['routers'] . ': ' . (HotspotCustomer::$lastMikrotikSyncError ?: Package::$lastDeviceSyncError ?: 'sync failed');
+                            } else {
                                 $routers[] = $b['routers'];
-                            } catch (Throwable $e) {
-                                $errors[] = $b['routers'] . ': ' . $e->getMessage();
-                            } catch (Exception $e) {
-                                $errors[] = $b['routers'] . ': ' . $e->getMessage();
                             }
+                            continue;
+                        }
+                        if (Package::syncDeviceRecharge($c, $p, $b)) {
+                            $routers[] = $b['routers'];
                         } else {
-                            $errors[] = $b['routers'] . ': ' . Lang::T('Devices Not Found');
+                            $errors[] = $b['routers'] . ': ' . (Package::$lastDeviceSyncError ?: 'sync failed');
                         }
                     } else {
                         $routers[] = $b['routers'];

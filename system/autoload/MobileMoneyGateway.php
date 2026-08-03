@@ -304,7 +304,7 @@ class MobileMoneyGateway
                 . 'const HOTSPOT_PAYMENT_PROFILE = ' . $profileJson . ";\n"
                 . <<<'JS'
         const CAMPAY_WAIT_SECONDS = 120;
-        const CAMPAY_POLL_START_DELAY_MS = 10000;
+        const CAMPAY_POLL_START_DELAY_MS = 3000;
         function parsePaymentUrl(paymentUrl) {
             try {
                 const url = new URL(paymentUrl, APP_URL + '/');
@@ -461,18 +461,33 @@ class MobileMoneyGateway
             const prefixLabel = String(p.prefixDisplay || '').trim();
             const prefixHtml = prefixLabel ? '<span class="campay-phone-prefix">' + escapeHtml(prefixLabel) + '</span>' : '';
             const phoneHint = escapeHtml((p.errors && p.errors.length) ? p.errors.length : ('Entrez exactement ' + phoneLen + ' chiffres (ex: 677123456)'));
-            return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro Mobile Money (' + phoneLen + ' chiffres)</label><div class="campay-phone-wrap">' + prefixHtml + '<input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="' + escapeHtml(p.placeholder) + '" maxlength="' + phoneLen + '" minlength="' + phoneLen + '" /></div><p class="campay-pay-hint" style="margin:8px 0 0;font-size:12px;color:#94a3b8">' + phoneHint + '</p></div></div>';
+            return '<div class="campay-pay-modal"><div class="campay-pay-header"><div class="campay-pay-badge">📱 ' + escapeHtml(p.badge) + '</div><h4>Paiement sécurisé</h4><p>' + escapeHtml(p.subtitle) + '</p></div><div class="campay-pay-body"><div class="campay-pay-plan"><div><span class="campay-pay-plan-name">' + escapeHtml(planName) + '</span><span class="campay-pay-plan-meta">⏱️ ' + escapeHtml(validity || '—') + '</span></div><div class="campay-pay-price">' + escapeHtml(String(price)) + ' <small>' + escapeHtml(currency || 'XAF') + '</small></div></div><label class="campay-pay-label" for="campayPhoneInput">Numéro Mobile Money (' + phoneLen + ' chiffres)</label><div class="campay-phone-wrap">' + prefixHtml + '<input id="campayPhoneInput" type="tel" inputmode="numeric" autocomplete="off" autocapitalize="off" name="hotspot_momo_msisdn" data-lpignore="true" placeholder="Ex: 656190448" maxlength="' + phoneLen + '" minlength="' + phoneLen + '" /></div><p class="campay-pay-hint" style="margin:8px 0 0;font-size:12px;color:#94a3b8">' + phoneHint + '</p></div></div>';
         }
         function bindPaymentPhoneInput() {
-            bindHotspotPhoneField(document.getElementById('campayPhoneInput'));
             const input = document.getElementById('campayPhoneInput');
+            if (input) {
+                input.value = '';
+                input.setAttribute('autocomplete', 'off');
+            }
+            bindHotspotPhoneField(input);
             if (input) setTimeout(function () { input.focus(); }, 80);
         }
-        function buildPaymentSuccessHtml(planName, validity) {
+        function buildPaymentSuccessHtml(planName, validity, paymentResult) {
+            paymentResult = paymentResult || {};
+            const plan = escapeHtml(paymentResult.plan_name || planName || 'Forfait');
+            const exp = escapeHtml(paymentResult.expires_label || paymentResult.expired_date || validity || '');
+            let amountLine = '';
+            if (paymentResult.amount != null && !isNaN(Number(paymentResult.amount))) {
+                const cur = escapeHtml(String(paymentResult.currency || 'XAF'));
+                amountLine = '<p class="hotspot-pay-success-amount"><strong>' + escapeHtml(String(paymentResult.amount)) + ' ' + cur + '</strong></p>';
+            }
+            const expLine = exp ? ('<p class="hotspot-pay-success-exp">Expire le <strong>' + exp + '</strong></p>') : '';
             return '<div class="hotspot-pay-success">' +
                 '<div class="hotspot-pay-success-ring"><svg viewBox="0 0 48 48"><path d="M12 24l8 8 16-16"/></svg></div>' +
                 '<h3>Paiement confirmé</h3>' +
-                '<p class="hotspot-pay-success-plan">' + escapeHtml(planName) + (validity ? (' · ' + escapeHtml(validity)) : '') + '</p>' +
+                '<p class="hotspot-pay-success-plan">' + plan + '</p>' +
+                amountLine +
+                expLine +
                 '<p class="hotspot-pay-success-sub">Connexion automatique en cours…</p>' +
                 '<div class="hotspot-pay-success-bar"><span></span></div></div>';
         }
@@ -483,46 +498,47 @@ class MobileMoneyGateway
             }
             return password;
         }
-        function connectAfterPayment(code, password, planName, validity) {
+        function connectAfterPayment(code, password, planName, validity, paymentResult) {
             const loginPassword = normalizeHotspotLoginPassword(password || '123456');
             if (!loginPassword) {
                 Swal.fire('Erreur', 'Mot de passe non reçu du serveur.', 'error');
                 return;
             }
             Swal.fire({
-                html: buildPaymentSuccessHtml(planName, validity),
-                showConfirmButton: false,
+                html: buildPaymentSuccessHtml(planName, validity, paymentResult),
+                showConfirmButton: true,
+                confirmButtonText: 'Accéder à Internet',
                 showCloseButton: false,
                 allowOutsideClick: false,
                 allowEscapeKey: false,
                 customClass: { popup: 'campay-swal-popup hotspot-pay-success-popup' },
-                didOpen: function () {
-                    setTimeout(function () {
-                        if (typeof fillAndSubmitHotspotLogin === 'function') {
-                            fillAndSubmitHotspotLogin(code, loginPassword);
-                        } else if (typeof fillAndSubmitLogin === 'function') {
-                            fillAndSubmitLogin(code, loginPassword);
-                        } else if (typeof submitHotspotLogin === 'function') {
-                            const userEl = document.getElementById('user') || document.getElementById('loginUsername');
-                            const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
-                            if (userEl && code) userEl.value = code;
-                            if (passEl) {
-                                passEl.value = loginPassword;
-                                delete passEl.dataset.chapDone;
-                            }
-                            submitHotspotLogin();
-                        } else {
-                            const userField = document.getElementById('user') || document.getElementById('loginUsername');
-                            const pwdField = document.getElementById('pass') || document.getElementById('loginPassword');
-                            const form = document.getElementById('loginForm');
-                            if (userField && code) userField.value = code;
-                            if (pwdField) pwdField.value = loginPassword;
-                            if (form && typeof prepareMikrotikLogin === 'function' && prepareMikrotikLogin(form)) form.submit();
-                        }
-                    }, 1200);
-                },
-                timer: 2500,
-                timerProgressBar: false
+                timer: 12000,
+                timerProgressBar: true
+            }).then(function (result) {
+                if (result.isDismissed && !result.isConfirmed && result.dismiss !== Swal.DismissReason.timer) {
+                    return;
+                }
+                if (typeof fillAndSubmitHotspotLogin === 'function') {
+                    fillAndSubmitHotspotLogin(code, loginPassword, {skipPrepare: true});
+                } else if (typeof fillAndSubmitLogin === 'function') {
+                    fillAndSubmitLogin(code, loginPassword);
+                } else if (typeof submitHotspotLogin === 'function') {
+                    const userEl = document.getElementById('user') || document.getElementById('loginUsername');
+                    const passEl = document.getElementById('pass') || document.getElementById('loginPassword');
+                    if (userEl && code) userEl.value = code;
+                    if (passEl) {
+                        passEl.value = loginPassword;
+                        delete passEl.dataset.chapDone;
+                    }
+                    submitHotspotLogin();
+                } else {
+                    const userField = document.getElementById('user') || document.getElementById('loginUsername');
+                    const pwdField = document.getElementById('pass') || document.getElementById('loginPassword');
+                    const form = document.getElementById('loginForm');
+                    if (userField && code) userField.value = code;
+                    if (pwdField) pwdField.value = loginPassword;
+                    if (form && typeof prepareMikrotikLogin === 'function' && prepareMikrotikLogin(form)) form.submit();
+                }
             });
         }
         async function handlePlanPayment(planName, price, currency, validity, paymentUrl) {
@@ -535,13 +551,13 @@ class MobileMoneyGateway
             catch (e) { await Swal.fire({ title: 'Erreur réseau', text: (e && e.message) ? e.message : 'Impossible de contacter le serveur.', icon: 'error' }); return; }
             if (!initResult.ok) { await Swal.fire({ title: 'Paiement refusé', text: initResult.message || 'Erreur', icon: 'error' }); return; }
             const operator = detectMobileOperator(phone, initResult.operator, initResult.ussd_code);
-            await openUssdWaitModal(phone, operator, planName, price, currency);
+            openUssdWaitModal(phone, operator, planName, price, currency);
             const paymentResult = await pollPaymentStatus(initResult.reference, CAMPAY_WAIT_SECONDS);
             if (typeof Swal !== 'undefined') await Swal.close();
             if (paymentResult.status === 'paid') {
                 const loginUser = paymentResult.username || paymentResult.voucher_code || '';
                 const loginPass = paymentResult.password || '123456';
-                connectAfterPayment(loginUser, loginPass, planName, validity);
+                connectAfterPayment(loginUser, loginPass, planName, validity, paymentResult);
                 return;
             }
             if (paymentResult.status === 'failed') { await Swal.fire({ title: 'Paiement échoué', text: paymentResult.message || 'Transaction refusée.', icon: 'error' }); return; }
@@ -865,7 +881,20 @@ class MobileMoneyGateway
         public static function repairHotspotLoginHtml($html)
         {
             if (self::isModernSelfContainedHotspotLogin($html)) {
-                return self::stripHotspotLightTheme($html);
+                $html = self::stripHotspotLightTheme($html);
+                // SweetAlert2 : await bloque le poll tant que la modale USSD est ouverte.
+                $html = preg_replace(
+                    '/await\s+SwalUi\.fire\(\s*\{\s*title:\s*[\'"]Validez sur votre téléphone[\'"]/s',
+                    'SwalUi.fire({ title:\'Validez sur votre téléphone\'',
+                    $html
+                ) ?? $html;
+                $html = preg_replace(
+                    '/await\s+openUssdWaitModal\(/',
+                    'openUssdWaitModal(',
+                    $html
+                ) ?? $html;
+
+                return $html;
             }
 
             if (strpos($html, '/* ===== CONNEXION ===== */') === false && strpos($html, 'function showVoucherError') !== false) {

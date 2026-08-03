@@ -798,10 +798,12 @@
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label class="col-md-4 control-label">Address Per Mac</label>
+                                <label class="col-md-4 control-label">Partage multi-appareils</label>
                                 <div class="col-md-8">
-                                    <input type="number" min="1" max="255" name="hotspot_address_per_mac" id="hotspot_address_per_mac" class="form-control" value="{$hs_address_per_mac|escape}" placeholder="1">
-                                    <p class="help-block">Nombre d'adresses IP simultanées par adresse MAC sur le serveur hotspot.</p>
+                                    <p class="form-control-static" style="padding-top:7px;margin:0">
+                                        Réglé par forfait : champ <strong>Shared Users</strong> dans <em>Services → Hotspot Plans</em>.
+                                        Le routeur reçoit <code>shared-users</code> sur chaque profil (ex. 10M&nbsp;=&nbsp;1, DUO&nbsp;=&nbsp;2). <code>addresses-per-mac</code> reste à 1 sur le serveur hotspot.
+                                    </p>
                                 </div>
                             </div>
 
@@ -1203,7 +1205,7 @@
                             + 'Le déploiement peut encore tourner en arrière-plan — vérifiez WireGuard puis relancez l\'assistant.'));
                         return;
                     }
-                    postHotspotDeployForm({ ajax_hotspot_deploy: 'status', job_id: jobId, send_mikrotik: '1' }, 30000)
+                    postHotspotDeployForm({ ajax_hotspot_deploy: 'status', job_id: jobId, send_mikrotik: '1' }, 120000)
                         .then(function (data) {
                             if (!data) {
                                 reject(new Error('Réponse serveur vide.'));

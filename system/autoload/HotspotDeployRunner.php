@@ -23,8 +23,7 @@ class HotspotDeployRunner
 
         $logFile = $root . DIRECTORY_SEPARATOR . 'system' . DIRECTORY_SEPARATOR . 'cache'
             . DIRECTORY_SEPARATOR . 'hotspot_deploy_worker.log';
-        $cmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobPath)
-            . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
+        $cmd = self::workerShellCommand($php, $script, $jobPath, $logFile);
 
         $spawned = false;
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
@@ -62,7 +61,19 @@ class HotspotDeployRunner
             return;
         }
         if ($responseAlreadySent) {
-            if (PHP_SAPI === 'cli-server' && self::spawnBackground($jobPath)) {
+            if (PHP_SAPI === 'cli-server') {
+                if (self::spawnBackground($jobPath)) {
+                    return;
+                }
+                self::updateJobProgress(
+                    $jobPath,
+                    'Worker CLI indisponible — envoi login.html dans ce processus (~2 min, ne fermez pas l’onglet)…'
+                );
+                self::runJob($jobPath);
+
+                return;
+            }
+            if (self::spawnBackground($jobPath)) {
                 return;
             }
             self::runJob($jobPath);
@@ -92,6 +103,10 @@ class HotspotDeployRunner
         $disabled = strtolower((string) ini_get('disable_functions'));
         if ($disabled !== '' && str_contains($disabled, 'exec')) {
             return true;
+        }
+        // dev-server = un seul worker : garder le processus libre pour l'UI admin.
+        if (PHP_SAPI === 'cli-server') {
+            return false;
         }
 
         return DeployAsyncHttp::canRunHeavyWorkInSameProcess();
@@ -354,13 +369,31 @@ class HotspotDeployRunner
         return (int) $routerAdminId === (int) $admin['id'];
     }
 
+    private static function workerShellCommand(string $php, string $script, string $jobPath, string $logFile): string
+    {
+        $env = [];
+        foreach (['APP_URL', 'APP_STAGE', 'DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD'] as $key) {
+            $val = getenv($key);
+            if ($val !== false && $val !== '') {
+                $env[] = $key . '=' . escapeshellarg($val);
+            }
+        }
+        $prefix = $env !== [] ? ('env ' . implode(' ', $env) . ' ') : '';
+
+        return $prefix . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' '
+            . escapeshellarg($jobPath) . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
+    }
+
     private static function spawnDetachedUnix(string $php, string $script, string $jobPath, string $logFile): bool
     {
         if (!function_exists('exec') || stripos((string) ini_get('disable_functions'), 'exec') !== false) {
             return false;
         }
-        $shellCmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobPath)
-            . ' >> ' . escapeshellarg($logFile) . ' 2>&1';
+        $shellCmd = self::workerShellCommand($php, $script, $jobPath, $logFile);
+        @exec('nohup sh -c ' . escapeshellarg($shellCmd) . ' </dev/null >/dev/null 2>&1 & echo $!', $nohupOut, $nohupCode);
+        if ($nohupCode === 0 && !empty($nohupOut[0]) && ctype_digit(trim((string) $nohupOut[0]))) {
+            return true;
+        }
         @exec('setsid sh -c ' . escapeshellarg($shellCmd) . ' < /dev/null & echo $!', $spawnOut, $spawnCode);
 
         return $spawnCode === 0 && !empty($spawnOut[0]) && ctype_digit(trim((string) $spawnOut[0]));
