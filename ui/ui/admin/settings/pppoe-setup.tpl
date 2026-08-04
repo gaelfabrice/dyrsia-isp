@@ -445,6 +445,7 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                                 <span><span class="ps-legend-dot hotspot"></span> Hotspot / bridge-hotspot (bloqué)</span>
                             </div>
                             <div id="ps-port-hints" class="ps-port-hints"></div>
+                            <div id="ps-port-conflict" class="ps-sync-status error" style="display:none;"></div>
                             <p class="help-block">Cliquez un port <strong>orange</strong> pour l'ajouter au bridge PPPoE. Les ports <strong>verts</strong> sont déjà sélectionnés ou configurés sur le routeur. <strong>ether1</strong> (WAN) et les ports déjà sur <strong>bridge-hotspot</strong> sont grisés et non cliquables.</p>
                         </div>
                     </div>
@@ -573,7 +574,7 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
                             <i class="fa fa-refresh"></i> Sync routeur
                         </button>
                     </div>
-                    <p class="ps-help" style="margin-top:12px;">Envoie l'<strong>infrastructure</strong> (bridge, pool, serveur PPPoE, NAT, portail expirés) et synchronise les <strong>profils forfaits</strong>. Les <strong>clients</strong> sont poussés sur le routeur à chaque création, modification ou recharge.</p>
+                    <p class="ps-help" style="margin-top:12px;">Service <strong>PPPoE isolé</strong> : <code>bridge-pppoe</code>, pool PPPoE, serveur PPPoE, NAT WAN, profils forfaits. Le bridge Hotspot n’est pas modifié ; en fin de déploiement, le DHCP/firewall Hotspot est seulement <strong>revérifié</strong> (comme en version stable). En cas de conflit de ports, le déploiement est refusé.</p>
                 </div>
 
                 <aside class="ps-aside">
@@ -620,6 +621,9 @@ body.dark-mode .ps-section-title { color: #f1f5f9; }
 <script>
 window.PPPOE_FETCH_URL = '{$pppoe_fetch_url|escape:'javascript'}';
 window.PPPOE_INITIAL_ROUTER = '{$ps_router|escape:'javascript'}';
+window.PPPOE_HOTSPOT_BRIDGE = '{$_c['hotspot_interface']|default:'bridge-hotspot'|escape:'javascript'}';
+window.PPPOE_HOTSPOT_PORTS = '{$_c['hotspot_bridge_ports']|default:($_c['lan_hotspot_access_ports']|default:'')|escape:'javascript'}';
+window.PPPOE_MANAGEMENT_PORTS = '{$_c['lan_management_interface']|default:'ether2'|escape:'javascript'}';
 </script>
 
 {include file="sections/footer.tpl"}

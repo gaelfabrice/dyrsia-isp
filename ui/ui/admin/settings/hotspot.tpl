@@ -12,7 +12,7 @@
     {assign var=hs_display value=$_c['hotspot_card_display']|default:'auto'}
     {assign var=hs_name value=$_c['hotspot_name']|default:''}
     {assign var=hs_interface value=$_c['hotspot_interface']|default:'bridge-hotspot'}
-    {assign var=hs_bridge_ports value=$_c['hotspot_bridge_ports']|default:'wlan1,ether3'}
+    {assign var=hs_bridge_ports value=$_c['hotspot_bridge_ports']|default:'wifi1,ether3'}
     {assign var=hs_wan_interface value=$_c['lan_wan_interface']|default:'ether1'}
     {assign var=hs_management_bridge value=$_c['lan_management_bridge_name']|default:'bridge-management'}
     {assign var=hs_management_interface value=$_c['lan_management_interface']|default:'ether2'}
@@ -649,8 +649,8 @@
                             <div class="form-group">
                                 <label class="col-md-3 control-label">Ports Hotspot (bridge)</label>
                                 <div class="col-md-9">
-                                    <input name="hotspot_bridge_ports" id="hotspot_bridge_ports" class="form-control" value="{$hs_bridge_ports|escape}" placeholder="wlan1,ether3">
-                                    <p class="help-block">Interfaces placées dans <code>bridge-hotspot</code> (séparées du PPPoE).</p>
+                                    <input name="hotspot_bridge_ports" id="hotspot_bridge_ports" class="form-control" value="{$hs_bridge_ports|escape}" placeholder="wifi1,ether3">
+                                    <p class="help-block">Interfaces sur <code>bridge-hotspot</code> uniquement (ex. <code>wifi1,ether3</code> sur L009). Aucun chevauchement avec les ports PPPoE (<code>bridge-pppoe</code>) — le déploiement Hotspot ne modifie jamais le PPPoE.</p>
                                 </div>
                             </div>
 <div id="hs-step1-sync-status" class="hs-sync-status"></div>

@@ -1424,22 +1424,7 @@ class Mikrotik
     private static function deployPppoeOptionalExtras($client, array $params)
     {
         $actions = [];
-        $dnsAllowRemote = !empty($params['dnsAllowRemote']);
-        $dnsServers = (string) ($params['dnsServers'] ?? '');
         $expiredList = (string) ($params['expiredList'] ?? 'pppoe-expired');
-        $blockIface = (string) ($params['blockIface'] ?? '');
-        $poolCidr = (string) ($params['poolCidr'] ?? '');
-
-        try {
-            $client->sendSync(
-                (new RouterOS\Request('/ip/dns/set'))
-                    ->setArgument('allow-remote-requests', $dnsAllowRemote ? 'yes' : 'no')
-                    ->setArgument('servers', $dnsServers)
-            );
-            $actions[] = 'DNS routeur';
-        } catch (Throwable $e) {
-        } catch (Exception $e) {
-        }
 
         try {
             $listExists = false;
@@ -1464,16 +1449,6 @@ class Mikrotik
             $actions[] = 'liste « ' . $expiredList . ' »';
         } catch (Throwable $e) {
         } catch (Exception $e) {
-        }
-
-        if ($blockIface !== '') {
-            $bridgeBlock = self::ensurePppoeBridgeForwardBlock($client, $blockIface, $poolCidr);
-            if (!empty($bridgeBlock['added'])) {
-                $actions[] = 'firewall anti-contournement sur ' . $blockIface
-                    . ($poolCidr !== '' ? ' (hors ' . $poolCidr . ')' : '');
-            } elseif (!empty($bridgeBlock['updated'])) {
-                $actions[] = 'firewall bridge corrigé (clients PPPoE autorisés)';
-            }
         }
 
         return $actions;
@@ -4085,6 +4060,191 @@ class Mikrotik
     }
 
     /**
+     * Détecte sur le routeur réel si des ports PPPoE touchent encore le bridge Hotspot.
+     * Sert de garde-fou quand la config enregistrée est incomplète ou obsolète.
+     */
+    private static function detectRuntimeHotspotPortConflict($client, array $pppoePorts, array $config = [])
+    {
+        $pppoePorts = array_values(array_unique(array_filter(array_map('trim', $pppoePorts))));
+        if ($client === null || $pppoePorts === []) {
+            return '';
+        }
+
+        $snapshot = self::fetchPppoeSetupSnapshot($client, true);
+        $hotspotBridges = [];
+        $runtimeHotspotBridge = trim((string) (($snapshot['suggested']['hotspot_interface'] ?? '')));
+        if ($runtimeHotspotBridge !== '') {
+            $hotspotBridges[] = $runtimeHotspotBridge;
+        }
+        $configuredHotspotBridge = trim((string) ($config['hotspot_interface'] ?? 'bridge-hotspot'));
+        if ($configuredHotspotBridge !== '' && !in_array($configuredHotspotBridge, $hotspotBridges, true)) {
+            $hotspotBridges[] = $configuredHotspotBridge;
+        }
+        foreach (array_keys((array) ($snapshot['bridge_ports'] ?? [])) as $bridgeName) {
+            if (stripos((string) $bridgeName, 'hotspot') !== false && !in_array($bridgeName, $hotspotBridges, true)) {
+                $hotspotBridges[] = $bridgeName;
+            }
+        }
+
+        $runtimeHotspotPorts = [];
+        foreach ($hotspotBridges as $bridgeName) {
+            foreach ((array) (($snapshot['bridge_ports'] ?? [])[$bridgeName] ?? []) as $port) {
+                $port = trim((string) $port);
+                if ($port !== '' && !in_array($port, $runtimeHotspotPorts, true)) {
+                    $runtimeHotspotPorts[] = $port;
+                }
+            }
+        }
+        if ($runtimeHotspotPorts === [] && !empty($snapshot['suggested']['hotspot_bridge_ports'])) {
+            $runtimeHotspotPorts = self::parseInterfacePortsList((string) $snapshot['suggested']['hotspot_bridge_ports']);
+        }
+        if ($runtimeHotspotPorts === []) {
+            $runtimeHotspotPorts = self::resolveHotspotBridgePorts($config);
+        }
+        $runtimeHotspotPorts = self::normalizeHotspotBridgePortsForRouter($client, $runtimeHotspotPorts);
+        foreach (self::listActiveWirelessInterfaceNames($client) as $wlanIface) {
+            if ($wlanIface !== '' && !in_array($wlanIface, $runtimeHotspotPorts, true)) {
+                $runtimeHotspotPorts[] = $wlanIface;
+            }
+        }
+
+        $overlap = [];
+        foreach ($pppoePorts as $pppoePort) {
+            foreach ($runtimeHotspotPorts as $hotspotPort) {
+                if (strcasecmp((string) $pppoePort, (string) $hotspotPort) === 0) {
+                    $overlap[] = $pppoePort;
+                    break;
+                }
+            }
+        }
+        if ($overlap === []) {
+            return '';
+        }
+
+        $bridgeLabel = $hotspotBridges !== [] ? implode(', ', $hotspotBridges) : 'bridge-hotspot';
+        return 'Conflit de ports détecté sur le routeur : « '
+            . implode(', ', $overlap)
+            . ' » appartient déjà au bridge Hotspot (« '
+            . $bridgeLabel
+            . ' »). Retirez ces ports du PPPoE, sinon le Hotspot cesse de fonctionner.';
+    }
+
+    /**
+     * Valide en amont l'isolation Hotspot / PPPoE / Management à partir de la config courante.
+     */
+    public static function resolvePppoeIsolationConflict(array $config, $routerName = ''): string
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '' && class_exists('WifiZoneHotspot')) {
+            WifiZoneHotspot::loadHotspotConfigForDeploy($config, $routerName);
+        }
+        $config = self::mergeServiceBridgeDefaults($config);
+        self::mergePppoeSetupConfigForIsolation($config);
+        $pppoePorts = self::parseInterfacePortsList((string) ($config['pppoe_setup_bridge_ports'] ?? ''));
+        $hotspotPorts = self::resolveHotspotBridgePorts($config);
+        $managementPorts = self::resolveManagementBridgePorts($config);
+
+        return self::validateServicePortIsolation($pppoePorts, $hotspotPorts, $managementPorts);
+    }
+
+    /**
+     * Valide l'isolation Hotspot / PPPoE / Management à partir de la config courante (déploiement Hotspot).
+     */
+    public static function resolveHotspotIsolationConflict(array $config, $routerName = ''): string
+    {
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '' && class_exists('WifiZoneHotspot')) {
+            WifiZoneHotspot::loadHotspotConfigForDeploy($config, $routerName);
+        }
+        $config = self::mergeServiceBridgeDefaults($config);
+        self::mergePppoeSetupConfigForIsolation($config);
+        $pppoePorts = self::parseInterfacePortsList((string) ($config['pppoe_setup_bridge_ports'] ?? ''));
+        $hotspotPorts = self::resolveHotspotBridgePorts($config);
+        $managementPorts = self::resolveManagementBridgePorts($config);
+
+        return self::validateServicePortIsolation($pppoePorts, $hotspotPorts, $managementPorts);
+    }
+
+    /**
+     * Complète la config avec les clés PPPoE Setup enregistrées (validation croisée sans déployer le PPPoE).
+     *
+     * @param array<string, mixed> $config
+     */
+    public static function mergePppoeSetupConfigForIsolation(array &$config)
+    {
+        foreach (['pppoe_setup_bridge_ports', 'pppoe_setup_bridge_name', 'pppoe_setup_router'] as $key) {
+            if (trim((string) ($config[$key] ?? '')) !== '') {
+                continue;
+            }
+            try {
+                $row = ORM::for_table('tbl_appconfig')->where('setting', $key)->find_one();
+                if ($row && trim((string) $row->value) !== '') {
+                    $config[$key] = $row->value;
+                }
+            } catch (Throwable $e) {
+            } catch (Exception $e) {
+            }
+        }
+    }
+
+    /**
+     * Garde-fou routeur : un port Hotspot ne doit pas être membre du bridge PPPoE.
+     */
+    private static function detectRuntimePppoePortConflict($client, array $hotspotPorts, array $config = [])
+    {
+        $hotspotPorts = array_values(array_unique(array_filter(array_map('trim', $hotspotPorts))));
+        if ($client === null || $hotspotPorts === []) {
+            return '';
+        }
+
+        $snapshot = self::fetchPppoeSetupSnapshot($client, true);
+        $pppoeBridges = [];
+        $configuredPppoeBridge = trim((string) ($config['pppoe_setup_bridge_name'] ?? 'bridge-pppoe'));
+        if ($configuredPppoeBridge !== '') {
+            $pppoeBridges[] = $configuredPppoeBridge;
+        }
+        foreach (array_keys((array) ($snapshot['bridge_ports'] ?? [])) as $bridgeName) {
+            if (stripos((string) $bridgeName, 'pppoe') !== false && !in_array($bridgeName, $pppoeBridges, true)) {
+                $pppoeBridges[] = $bridgeName;
+            }
+        }
+
+        $runtimePppoePorts = [];
+        foreach ($pppoeBridges as $bridgeName) {
+            foreach ((array) (($snapshot['bridge_ports'] ?? [])[$bridgeName] ?? []) as $port) {
+                $port = trim((string) $port);
+                if ($port !== '' && !in_array($port, $runtimePppoePorts, true)) {
+                    $runtimePppoePorts[] = $port;
+                }
+            }
+        }
+        if ($runtimePppoePorts === [] && !empty($snapshot['suggested']['pppoe_setup_bridge_ports'])) {
+            $runtimePppoePorts = self::parseInterfacePortsList((string) $snapshot['suggested']['pppoe_setup_bridge_ports']);
+        }
+
+        $overlap = [];
+        foreach ($hotspotPorts as $hotspotPort) {
+            foreach ($runtimePppoePorts as $pppoePort) {
+                if (strcasecmp((string) $hotspotPort, (string) $pppoePort) === 0) {
+                    $overlap[] = $hotspotPort;
+                    break;
+                }
+            }
+        }
+        if ($overlap === []) {
+            return '';
+        }
+
+        $bridgeLabel = $pppoeBridges !== [] ? implode(', ', $pppoeBridges) : 'bridge-pppoe';
+
+        return 'Conflit de ports sur le routeur : « '
+            . implode(', ', $overlap)
+            . ' » appartient déjà au bridge PPPoE (« '
+            . $bridgeLabel
+            . ' »). Retirez ces ports du Hotspot ou déplacez-les manuellement dans Winbox.';
+    }
+
+    /**
      * Ports du bridge Management (défaut ether2 — jamais mélanger avec Hotspot / PPPoE).
      *
      * @return array<int, string>
@@ -4287,51 +4447,26 @@ class Mikrotik
     }
 
     /**
-     * Profiles + client secrets + anti-bypass firewall for one PPPoE router.
+     * Safe PPPoE sync: profiles + client secrets + expirations only.
+     * Does not touch Hotspot/DHCP-adjacent firewall or captive rules.
      *
      * @return array{ok: bool, plans: array<string, mixed>, secrets: array<string, mixed>, firewall: array<string, mixed>}
      */
     public static function fullPppoeRouterSync($client, $routerName, $admin = null, $bridgeName = '')
     {
-        global $config;
-
         self::resetPppoeSyncRuntimeState();
 
         $routerName = trim((string) $routerName);
-        if ($bridgeName === '') {
-            $bridgeName = self::resolvePppoeBridgeName(is_array($config) ? $config : []);
-        }
-        if ($bridgeName === '') {
-            $bridgeName = 'bridge-pppoe';
-        }
-
         $planSync = self::syncPppoePlans($client, $routerName, $admin);
         $secretSync = self::syncPppoeSecrets($client, $routerName, $admin, true);
-        $poolCidr = self::resolvePppoePoolNetworkCidr(
-            trim((string) ($config['pppoe_setup_gateway'] ?? '')),
-            trim((string) ($config['pppoe_setup_pool_range'] ?? ''))
-        );
-        $blockIface = $bridgeName;
-        if ($blockIface === '') {
-            $blockIface = 'bridge-pppoe';
-        }
-        $firewall = self::ensurePppoeBridgeForwardBlock($client, $blockIface, $poolCidr);
         self::ensureActivePppoeSessionsUnblocked($client);
-
-        $captive = ['ok' => true, 'errors' => []];
-        $backendUrl = self::resolvePppoeCaptiveBackendUrl(is_array($config) ? $config : []);
-        $portalUrl = self::buildPppoeCaptivePortalUrl($routerName, is_array($config) ? $config : []);
-        if ($backendUrl !== '' && $portalUrl !== '') {
-            $captive = self::ensurePppoeExpiredCaptive($client, $portalUrl, $backendUrl, $routerName);
-        } elseif ($backendUrl === '') {
-            $captive = [
-                'ok' => false,
-                'errors' => [
-                    'URL backend captive introuvable — Settings → Hotspot → Hotspot API URL (ex. http://10.0.0.2:8080 ou https://wifizones.org)',
-                ],
-            ];
-        }
-
+        $firewall = ['ok' => true, 'added' => false, 'updated' => false, 'errors' => []];
+        $captive = [
+            'ok' => true,
+            'errors' => [],
+            'skipped' => true,
+            'message' => 'Cohabitation Hotspot/PPPoE: firewall et captive PPPoE non modifies.',
+        ];
         $suspensions = self::syncExpiredPppoeSuspensions($client, $routerName, $admin, true);
 
         $errors = array_merge(
@@ -8253,6 +8388,15 @@ class Mikrotik
         $config = self::mergeServiceBridgeDefaults($config);
         $interface = trim((string) ($config['hotspot_interface'] ?? $interface));
 
+        $routerNameForIsolation = $routerNameForPlans;
+        if ($routerNameForIsolation === '' && is_array($routerRow) && !empty($routerRow['name'])) {
+            $routerNameForIsolation = trim((string) $routerRow['name']);
+        }
+        $portConflict = self::resolveHotspotIsolationConflict($config, $routerNameForIsolation);
+        if ($portConflict !== '') {
+            return ['ok' => false, 'errors' => [$portConflict], 'actions' => []];
+        }
+
         $deviceMode = self::ensureHotspotDeviceMode($client);
         if (empty($deviceMode['ok'])) {
             return [
@@ -8302,6 +8446,15 @@ class Mikrotik
                 $localAddress = $derivedGw . '/24';
                 $actions[] = 'passerelle hotspot déduite du pool (' . $localAddress . ')';
             }
+        }
+
+        $hotspotPortsForRuntime = self::normalizeHotspotBridgePortsForRouter(
+            $client,
+            self::resolveHotspotBridgePorts($config)
+        );
+        $runtimePppoeConflict = self::detectRuntimePppoePortConflict($client, $hotspotPortsForRuntime, $config);
+        if ($runtimePppoeConflict !== '') {
+            return ['ok' => false, 'errors' => [$runtimePppoeConflict], 'actions' => $actions];
         }
 
         $mgmtPrep = self::ensureDedicatedManagementBridge($client, $config);
@@ -8647,6 +8800,7 @@ class Mikrotik
         if ($ports === []) {
             $ports = self::resolveHotspotBridgePorts($config);
         }
+        $ports = self::normalizeHotspotBridgePortsForRouter($client, $ports);
 
         $errors = [];
         $actions = [];
@@ -8679,7 +8833,24 @@ class Mikrotik
                 }
             }
 
+            self::pruneInvalidHotspotBridgeWirelessPorts($client, $bridgeName, $actions);
+
+            foreach (self::listActiveWirelessInterfaceNames($client) as $wifiIface) {
+                if (self::routerEntityId($client, '/interface/wifi', 'name', $wifiIface) === null) {
+                    continue;
+                }
+                $dp = self::ensureRouterWifi7DatapathForHotspotBridge($client, $bridgeName, $wifiIface);
+                $actions = array_merge($actions, $dp['actions'] ?? []);
+                if (!empty($dp['errors'])) {
+                    $errors = array_merge($errors, $dp['errors']);
+                }
+            }
+
             foreach ($ports as $port) {
+                // RouterOS 7 Wi‑Fi (/interface/wifi) : bridge via datapath, pas port esclave.
+                if (self::routerEntityId($client, '/interface/wifi', 'name', $port) !== null) {
+                    continue;
+                }
                 $membership = self::ensureBridgePortMembership($client, $bridgeName, $port);
                 if (!empty($membership['ok']) && !empty($membership['moved'])) {
                     $actions[] = 'port « ' . $port . ' » placé sur « ' . $bridgeName . ' »';
@@ -9057,6 +9228,138 @@ class Mikrotik
     private static function isWlanInterfaceName($name)
     {
         return preg_match('/^(wlan|wifi)/i', trim((string) $name)) === 1;
+    }
+
+    private static function interfaceExistsOnRouter($client, $name)
+    {
+        $name = trim((string) $name);
+        if ($name === '') {
+            return false;
+        }
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/interface/print'))
+                    ->setArgument('.proplist', 'name')
+                    ->setQuery(RouterOS\Query::where('name', $name))
+            ) as $row) {
+                if ($row->getType() !== 'trap') {
+                    return true;
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
+
+        return false;
+    }
+
+    /**
+     * Remplace wlan1 par wifi1 (RouterOS 7) quand la config legacy ne correspond pas au routeur.
+     *
+     * @param array<int, string> $ports
+     * @return array<int, string>
+     */
+    private static function normalizeHotspotBridgePortsForRouter($client, array $ports)
+    {
+        $activeWireless = self::listActiveWirelessInterfaceNames($client);
+        $normalized = [];
+        foreach ($ports as $port) {
+            $port = trim((string) $port);
+            if ($port === '') {
+                continue;
+            }
+            if (self::isWlanInterfaceName($port) && preg_match('/^wlan(\d+)$/i', $port, $matches)) {
+                $candidate = 'wifi' . $matches[1];
+                if (in_array($candidate, $activeWireless, true)) {
+                    if (!in_array($candidate, $normalized, true)) {
+                        $normalized[] = $candidate;
+                    }
+                    continue;
+                }
+            }
+            if (self::isWlanInterfaceName($port) && !self::interfaceExistsOnRouter($client, $port)) {
+                $replacement = null;
+                if (count($activeWireless) === 1) {
+                    $replacement = $activeWireless[0];
+                }
+                if ($replacement !== null) {
+                    if (!in_array($replacement, $normalized, true)) {
+                        $normalized[] = $replacement;
+                    }
+                    continue;
+                }
+            }
+            if (!in_array($port, $normalized, true)) {
+                $normalized[] = $port;
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Retire du bridge les anciens ports wlan* fantômes (ex. wlan1 alors que le Wi‑Fi réel est wifi1).
+     */
+    private static function pruneInvalidHotspotBridgeWirelessPorts($client, $bridgeName, &$actions = null)
+    {
+        $bridgeName = trim((string) $bridgeName);
+        if ($bridgeName === '') {
+            return;
+        }
+        $activeWireless = self::listActiveWirelessInterfaceNames($client);
+        foreach (self::listBridgeMemberInterfaceNames($client, $bridgeName) as $member) {
+            // L009 / ROS7 : wifi1 peut apparaître comme port bridge (driver) en plus du datapath — ne pas retirer.
+            if (self::routerEntityId($client, '/interface/wifi', 'name', $member) !== null) {
+                continue;
+            }
+
+            if (!self::isWlanInterfaceName($member)) {
+                continue;
+            }
+            if (preg_match('/^wlan(\d+)$/i', $member, $matches)) {
+                $wifiPeer = 'wifi' . $matches[1];
+                if (in_array($wifiPeer, $activeWireless, true)) {
+                    self::removeBridgePortMembership($client, $bridgeName, $member, $actions);
+
+                    continue;
+                }
+            }
+            if (self::interfaceExistsOnRouter($client, $member) && in_array($member, $activeWireless, true)) {
+                continue;
+            }
+            self::removeBridgePortMembership($client, $bridgeName, $member, $actions);
+        }
+    }
+
+    private static function removeBridgePortMembership($client, $bridgeName, $member, &$actions = null)
+    {
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/interface/bridge/port/print'))
+                    ->setArgument('.proplist', '.id,interface,bridge')
+                    ->setQuery(RouterOS\Query::where('interface', $member))
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('bridge') !== $bridgeName) {
+                    continue;
+                }
+                $portId = $row->getProperty('.id');
+                if ($portId === null || $portId === '') {
+                    continue;
+                }
+                $client->sendSync(
+                    (new RouterOS\Request('/interface/bridge/port/remove'))
+                        ->setArgument('numbers', $portId)
+                );
+                if ($actions !== null) {
+                    $actions[] = 'port bridge invalide « ' . $member . ' » retiré de « ' . $bridgeName . ' »';
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
     }
 
     /**
@@ -11609,14 +11912,89 @@ class Mikrotik
         }
 
         if ($interface !== '' && self::isBridgeInterface($client, $interface)) {
-            foreach (self::listBridgeMemberInterfaceNames($client, $interface) as $member) {
-                if ($member !== '' && !in_array($member, $interfaces, true)) {
-                    $interfaces[] = $member;
+            // Wi‑Fi ROS7 (datapath) n'est pas port esclave du bridge : règles sur wifi1/wlan1 seulement.
+            // Ne pas ajouter ether3 etc. (ports esclaves) — RouterOS invalide in-interface=ether3.
+            foreach (self::listActiveWirelessInterfaceNames($client) as $wlanIface) {
+                if ($wlanIface === '') {
+                    continue;
+                }
+                if (self::isInterfaceBridgeMember($client, $interface, $wlanIface)) {
+                    continue;
+                }
+                if (!in_array($wlanIface, $interfaces, true)) {
+                    $interfaces[] = $wlanIface;
                 }
             }
         }
 
         return $interfaces;
+    }
+
+    private static function isInterfaceBridgeMember($client, $bridgeName, $portName)
+    {
+        $bridgeName = trim((string) $bridgeName);
+        $portName = trim((string) $portName);
+        if ($bridgeName === '' || $portName === '') {
+            return false;
+        }
+        foreach (self::listBridgeMemberInterfaceNames($client, $bridgeName) as $member) {
+            if (strcasecmp($member, $portName) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Supprime les règles DHCP Hotspot invalides (in-interface = port esclave du bridge).
+     */
+    private static function removeInvalidHotspotDhcpSlaveFirewallRules($client, $bridgeName, &$actions = null)
+    {
+        $bridgeName = trim((string) $bridgeName);
+        if ($bridgeName === '') {
+            return;
+        }
+        $members = self::listBridgeMemberInterfaceNames($client, $bridgeName);
+        if ($members === []) {
+            return;
+        }
+        $memberMap = [];
+        foreach ($members as $member) {
+            $memberMap[strtolower($member)] = true;
+        }
+
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/firewall/filter/print'))
+                    ->setArgument('.proplist', '.id,chain,in-interface,comment,disabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                $comment = (string) $row->getProperty('comment');
+                if (strpos($comment, 'DYRSIA hotspot DHCP') !== 0) {
+                    continue;
+                }
+                $inIface = trim((string) $row->getProperty('in-interface'));
+                if ($inIface === '' || !isset($memberMap[strtolower($inIface)])) {
+                    continue;
+                }
+                $id = $row->getProperty('.id');
+                if ($id === null || $id === '') {
+                    continue;
+                }
+                $client->sendSync(
+                    (new RouterOS\Request('/ip/firewall/filter/remove'))
+                        ->setArgument('numbers', $id)
+                );
+                if ($actions !== null) {
+                    $actions[] = 'règle DHCP invalide supprimée (port esclave « ' . $inIface . ' »)';
+                }
+            }
+        } catch (Throwable $e) {
+        } catch (Exception $e) {
+        }
     }
 
     /**
@@ -12003,6 +12381,7 @@ class Mikrotik
         $errors = [];
         $actions = [];
         $comment = 'DYRSIA hotspot DHCP';
+        self::removeInvalidHotspotDhcpSlaveFirewallRules($client, $interface, $actions);
         $interfaces = self::collectHotspotDhcpFirewallInterfaces($client, $interface);
 
         foreach ($interfaces as $iface) {
@@ -12431,6 +12810,7 @@ class Mikrotik
         $actions = [];
         $errors = [];
 
+        // Un "Send complet Hotspot" ne déplace jamais un port depuis bridge-pppoe (services séparés).
         $bridgePrep = self::ensureDedicatedHotspotBridge($client, $config);
         if (!empty($bridgePrep['interface'])) {
             $hsIface = (string) $bridgePrep['interface'];
@@ -12538,10 +12918,16 @@ class Mikrotik
         $errors = array_merge($errors, $hwResult['errors'] ?? []);
 
         if (self::isBridgeInterface($client, $hsIface)) {
+            $wlanPrep = self::prepareSimpleWlanHotspotInterface($client, $hsIface);
+            $actions = array_merge($actions, $wlanPrep['actions'] ?? []);
+            $errors = array_merge($errors, $wlanPrep['errors'] ?? []);
+
             $wlanRun = self::ensureHotspotWirelessRunning($client, $hsIface);
             $actions = array_merge($actions, $wlanRun['actions'] ?? []);
             $errors = array_merge($errors, $wlanRun['errors'] ?? []);
         }
+
+        self::pruneInvalidHotspotBridgeWirelessPorts($client, $hsIface, $actions);
 
         $poolName = trim((string) ($config['hotspot_pool_name'] ?? ''));
         $poolRange = trim((string) ($config['hotspot_address_pool'] ?? $config['hotspot_pool_range'] ?? ''));
@@ -12564,6 +12950,18 @@ class Mikrotik
         $errors = array_merge($errors, $wgDhcp['errors'] ?? []);
 
         self::ensureHotspotDhcpRawPass($client, $hsIface, $actions, $errors);
+
+        $fwPass = self::ensureHotspotDhcpFirewallPass($client, $hsIface);
+        $actions = array_merge($actions, $fwPass['actions'] ?? []);
+        $errors = array_merge($errors, $fwPass['errors'] ?? []);
+
+        $bypass = self::removeHotspotBypassForwardRules($client, trim((string) ($config['hotspot_local_address'] ?? '')));
+        $actions = array_merge($actions, $bypass['actions'] ?? []);
+        $errors = array_merge($errors, $bypass['errors'] ?? []);
+
+        $anchors = self::ensureHotspotFirewallAnchors($client, trim((string) ($config['hotspot_name'] ?? '')));
+        $actions = array_merge($actions, $anchors['actions'] ?? []);
+        $errors = array_merge($errors, $anchors['errors'] ?? []);
 
         $verify = self::verifyHotspotDhcpCoexistence($client, $hsIface);
         if (empty($verify['ok'])) {
@@ -14014,6 +14412,17 @@ class Mikrotik
             $actions = array_merge($actions, $result['actions'] ?? []);
         }
 
+        self::ensureHotspotDhcpRawPass($client, $interface, $actions, $errors);
+
+        $verify = self::verifyHotspotDhcpCoexistence($client, $interface);
+        if (empty($verify['ok'])) {
+            self::repositionHotspotDhcpFirewallRulesBatch($client, $actions);
+            $verify = self::verifyHotspotDhcpCoexistence($client, $interface);
+        }
+        if (empty($verify['ok'])) {
+            $errors = array_merge($errors, $verify['errors'] ?? []);
+        }
+
         return ['ok' => empty($errors), 'errors' => $errors, 'actions' => $actions];
     }
 
@@ -14472,313 +14881,19 @@ class Mikrotik
     }
 
     /**
-     * Applique la configuration PPPoE Setup sur le MikroTik (équivalent mikrotik-pppoe-setup.rsc).
+     * Applique la configuration PPPoE Setup sur le MikroTik (délègue au déploiement isolé PPPoE).
      *
+     * @param array<string, mixed>|object|null $routerRow
      * @return array{ok: bool, errors?: array<int, string>, actions?: array<int, string>}
      */
-    public static function applyPppoeSetupFromConfig($client, array $config)
+    public static function applyPppoeSetupFromConfig($client, array $config, $routerRow = null)
     {
         global $_app_stage;
         if ($_app_stage == 'demo' || $_app_stage == 'Demo') {
             return ['ok' => false, 'errors' => ['Indisponible en mode démo.']];
         }
 
-        $defaults = self::pppoeSetupDefaults();
-        $get = static function ($key) use ($config, $defaults) {
-            $value = trim((string) ($config[$key] ?? $defaults[$key] ?? ''));
-
-            return $value;
-        };
-
-        $bridgeName = $get('pppoe_setup_bridge_name');
-        $bridgePorts = array_values(array_unique(array_filter(array_map('trim', explode(',', $get('pppoe_setup_bridge_ports'))))));
-        $gateway = $get('pppoe_setup_gateway');
-        $poolName = $get('pppoe_setup_pool_name');
-        $poolRange = $get('pppoe_setup_pool_range');
-        $profileDefault = $get('pppoe_setup_profile_default') ?: 'default';
-        $profileExpire = $get('pppoe_setup_profile_expire') ?: 'EXPIRE';
-        $routerName = $get('pppoe_setup_router');
-        global $admin;
-        $expireRate = self::resolvePppoeExpireRateLimit($routerName, $admin ?? null);
-        $dnsServers = $get('pppoe_setup_dns_servers');
-        $dnsAllowRemote = !empty($config['pppoe_setup_dns_allow_remote']) && (string) $config['pppoe_setup_dns_allow_remote'] !== '0';
-        $serviceName = $get('pppoe_setup_service_name') ?: 'internet';
-        $serverInterface = $get('pppoe_setup_server_interface') ?: $bridgeName;
-        $oneSession = !empty($config['pppoe_setup_one_session']) && (string) $config['pppoe_setup_one_session'] !== '0';
-        $maxMru = $get('pppoe_setup_max_mru') ?: '1480';
-        $maxMtu = $get('pppoe_setup_max_mtu') ?: '1480';
-        $expiredList = $get('pppoe_setup_expired_list') ?: 'pppoe-expired';
-        $natInterface = $get('pppoe_setup_nat_interface');
-        $natMasquerade = !empty($config['pppoe_setup_nat_masquerade']) && (string) $config['pppoe_setup_nat_masquerade'] !== '0';
-
-        if ($bridgeName === '') {
-            return ['ok' => false, 'errors' => ['Nom du bridge PPPoE manquant.']];
-        }
-        if (empty($bridgePorts)) {
-            return ['ok' => false, 'errors' => ['Ports bridge PPPoE manquants (ex. ether2,ether3,ether4,ether5).']];
-        }
-        if ($poolName === '' || $poolRange === '') {
-            return ['ok' => false, 'errors' => ['Pool PPPoE manquant (nom et plage IP).']];
-        }
-        if ($serverInterface === '') {
-            return ['ok' => false, 'errors' => ['Interface serveur PPPoE manquante.']];
-        }
-
-        $localGateway = self::resolvePoolGatewayAddress([
-            'local_ip' => explode('/', $gateway)[0] ?? '',
-            'range_ip' => $poolRange,
-        ]);
-        if ($localGateway === '') {
-            $localGateway = '10.10.10.1';
-        }
-
-        $errors = [];
-        $actions = [];
-        $expiredScripts = self::pppoeExpiredProfileScripts($expiredList);
-
-        try {
-            if (!self::routerEntityId($client, '/interface/bridge', 'name', $bridgeName)) {
-                $client->sendSync(
-                    (new RouterOS\Request('/interface/bridge/add'))
-                        ->setArgument('name', $bridgeName)
-                        ->setArgument('comment', 'DYRSIA PPPoE LAN')
-                );
-            }
-            $actions[] = 'bridge « ' . $bridgeName . ' »';
-        } catch (Throwable $e) {
-            $errors[] = 'bridge: ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'bridge: ' . $e->getMessage();
-        }
-
-        foreach ($bridgePorts as $port) {
-            try {
-                $existing = $client->sendSync(
-                    (new RouterOS\Request('/interface/bridge/port/print'))
-                        ->setArgument('.proplist', '.id,bridge,interface')
-                        ->setQuery(RouterOS\Query::where('interface', $port))
-                );
-                $found = false;
-                foreach ($existing as $row) {
-                    if ((string) $row->getProperty('bridge') === $bridgeName) {
-                        $found = true;
-                        break;
-                    }
-                }
-                if (!$found) {
-                    $client->sendSync(
-                        (new RouterOS\Request('/interface/bridge/port/add'))
-                            ->setArgument('bridge', $bridgeName)
-                            ->setArgument('interface', $port)
-                    );
-                }
-            } catch (Throwable $e) {
-                $errors[] = 'port ' . $port . ': ' . $e->getMessage();
-            } catch (Exception $e) {
-                $errors[] = 'port ' . $port . ': ' . $e->getMessage();
-            }
-        }
-        $actions[] = 'ports ' . implode(', ', $bridgePorts);
-
-        if ($gateway !== '') {
-            try {
-                self::ensureHotspotInterfaceAddress($client, $bridgeName, $gateway);
-                $actions[] = 'passerelle ' . $gateway;
-            } catch (Throwable $e) {
-                $errors[] = 'passerelle: ' . $e->getMessage();
-            } catch (Exception $e) {
-                $errors[] = 'passerelle: ' . $e->getMessage();
-            }
-        }
-
-        try {
-            self::setPool($client, $poolName, $poolRange);
-            $actions[] = 'pool « ' . $poolName . ' »';
-        } catch (Throwable $e) {
-            $errors[] = 'pool: ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'pool: ' . $e->getMessage();
-        }
-
-        foreach ([
-            $profileDefault => ['rate' => '', 'expire' => false],
-            $profileExpire => ['rate' => $expireRate, 'expire' => true],
-        ] as $profileName => $meta) {
-            try {
-                $profileId = self::routerEntityId($client, '/ppp/profile', 'name', $profileName);
-                $args = [
-                    'name' => $profileName,
-                    'local-address' => $localGateway,
-                    'remote-address' => $poolName,
-                ];
-                if (!empty($meta['rate'])) {
-                    $args['rate-limit'] = $meta['rate'];
-                }
-                if (!empty($dnsServers)) {
-                    $args['dns-server'] = $dnsServers;
-                }
-                if (!empty($meta['expire'])) {
-                    $args['on-up'] = $expiredScripts['on-up'];
-                    $args['on-down'] = $expiredScripts['on-down'];
-                }
-
-                if ($profileId === null) {
-                    $add = new RouterOS\Request('/ppp/profile/add');
-                    foreach ($args as $k => $v) {
-                        $add->setArgument($k, $v);
-                    }
-                    $client->sendSync($add);
-                } else {
-                    $set = new RouterOS\Request('/ppp/profile/set');
-                    $set->setArgument('numbers', $profileId);
-                    foreach ($args as $k => $v) {
-                        $set->setArgument($k, $v);
-                    }
-                    $client->sendSync($set);
-                }
-                if ($profileName === $profileExpire) {
-                    self::unsetPppoeProfileRateLimit($client, $profileName);
-                }
-                $actions[] = 'profil « ' . $profileName . ' »';
-            } catch (Throwable $e) {
-                $errors[] = 'profil ' . $profileName . ': ' . $e->getMessage();
-            } catch (Exception $e) {
-                $errors[] = 'profil ' . $profileName . ': ' . $e->getMessage();
-            }
-        }
-
-        try {
-            $client->sendSync(
-                (new RouterOS\Request('/ip/dns/set'))
-                    ->setArgument('allow-remote-requests', $dnsAllowRemote ? 'yes' : 'no')
-                    ->setArgument('servers', $dnsServers)
-            );
-            $actions[] = 'DNS routeur';
-        } catch (Throwable $e) {
-            $errors[] = 'dns: ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'dns: ' . $e->getMessage();
-        }
-
-        try {
-            $listExists = false;
-            $responses = $client->sendSync(
-                (new RouterOS\Request('/ip/firewall/address-list/print'))
-                    ->setArgument('.proplist', 'list')
-                    ->setQuery(RouterOS\Query::where('list', $expiredList))
-            );
-            foreach ($responses as $row) {
-                if ((string) $row->getProperty('list') === $expiredList) {
-                    $listExists = true;
-                    break;
-                }
-            }
-            if (!$listExists) {
-                $client->sendSync(
-                    (new RouterOS\Request('/ip/firewall/address-list/add'))
-                        ->setArgument('list', $expiredList)
-                        ->setArgument('comment', 'DYRSIA clients PPPoE expires')
-                );
-            }
-            $actions[] = 'liste « ' . $expiredList . ' »';
-        } catch (Throwable $e) {
-            $errors[] = 'address-list: ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'address-list: ' . $e->getMessage();
-        }
-
-        try {
-            $serverId = null;
-            $responses = $client->sendSync(
-                (new RouterOS\Request('/interface/pppoe-server/server/print'))
-                    ->setArgument('.proplist', '.id,interface,service-name')
-            );
-            foreach ($responses as $row) {
-                $iface = (string) $row->getProperty('interface');
-                $svc = (string) $row->getProperty('service-name');
-                if ($iface === $serverInterface || $svc === $serviceName) {
-                    $serverId = $row->getProperty('.id');
-                    break;
-                }
-            }
-
-            $serverArgs = [
-                'service-name' => $serviceName,
-                'interface' => $serverInterface,
-                'default-profile' => $profileDefault,
-                'disabled' => 'no',
-                'one-session-per-host' => $oneSession ? 'yes' : 'no',
-                'max-mru' => $maxMru,
-                'max-mtu' => $maxMtu,
-                'comment' => 'DYRSIA PPPoE server',
-            ];
-
-            if ($serverId === null) {
-                $add = new RouterOS\Request('/interface/pppoe-server/server/add');
-                foreach ($serverArgs as $k => $v) {
-                    $add->setArgument($k, $v);
-                }
-                $client->sendSync($add);
-            } else {
-                $set = new RouterOS\Request('/interface/pppoe-server/server/set');
-                $set->setArgument('numbers', $serverId);
-                foreach ($serverArgs as $k => $v) {
-                    $set->setArgument($k, $v);
-                }
-                $client->sendSync($set);
-            }
-            $actions[] = 'serveur PPPoE « ' . $serviceName . ' » sur ' . $serverInterface;
-        } catch (Throwable $e) {
-            $errors[] = 'serveur PPPoE: ' . $e->getMessage();
-        } catch (Exception $e) {
-            $errors[] = 'serveur PPPoE: ' . $e->getMessage();
-        }
-
-        if ($natMasquerade && $natInterface !== '') {
-            try {
-                $natId = null;
-                $responses = $client->sendSync(
-                    (new RouterOS\Request('/ip/firewall/nat/print'))
-                        ->setArgument('.proplist', '.id,chain,action,out-interface,comment')
-                );
-                foreach ($responses as $row) {
-                    if ((string) $row->getProperty('chain') === 'srcnat'
-                        && (string) $row->getProperty('action') === 'masquerade'
-                        && (string) $row->getProperty('out-interface') === $natInterface) {
-                        $natId = $row->getProperty('.id');
-                        break;
-                    }
-                }
-                if ($natId === null) {
-                    $client->sendSync(
-                        (new RouterOS\Request('/ip/firewall/nat/add'))
-                            ->setArgument('chain', 'srcnat')
-                            ->setArgument('action', 'masquerade')
-                            ->setArgument('out-interface', $natInterface)
-                            ->setArgument('comment', 'DYRSIA PPPoE NAT')
-                    );
-                }
-                $actions[] = 'NAT masquerade sur ' . $natInterface;
-            } catch (Throwable $e) {
-                $errors[] = 'NAT: ' . $e->getMessage();
-            } catch (Exception $e) {
-                $errors[] = 'NAT: ' . $e->getMessage();
-            }
-        }
-
-        $bridgeBlock = self::ensurePppoeBridgeForwardBlock($client, $bridgeName);
-        if (!empty($bridgeBlock['added'])) {
-            $actions[] = 'firewall anti-contournement sur ' . $bridgeName;
-        }
-        if (!empty($bridgeBlock['errors'])) {
-            $errors = array_merge($errors, $bridgeBlock['errors']);
-        }
-
-        return [
-            'ok' => empty($errors),
-            'errors' => $errors,
-            'actions' => $actions,
-        ];
+        return self::consolidatePppoeRouterSetup($client, $config, $routerRow, null);
     }
 
     /**
@@ -14793,8 +14908,8 @@ class Mikrotik
             'lan_management_bridge_name' => 'bridge-management',
             'lan_management_interface' => 'ether2',
             'lan_management_address' => '10.99.99.1/24',
-            'lan_hotspot_access_ports' => 'wlan1,ether3',
-            'hotspot_bridge_ports' => 'wlan1,ether3',
+            'lan_hotspot_access_ports' => 'wifi1,ether3',
+            'hotspot_bridge_ports' => 'wifi1,ether3',
             'lan_pppoe_access_ports' => 'ether6,ether7',
             'lan_unused_ports' => '',
         ];
@@ -14978,6 +15093,14 @@ class Mikrotik
 
         $config = self::normalizePppoeSetupConfig($config);
         $config = self::mergeServiceBridgeDefaults($config);
+        $routerNameEarly = trim((string) ($config['pppoe_setup_router'] ?? ''));
+        if ($routerNameEarly === '' && is_array($routerRow) && !empty($routerRow['name'])) {
+            $routerNameEarly = trim((string) $routerRow['name']);
+        }
+        if ($routerNameEarly !== '' && class_exists('WifiZoneHotspot')) {
+            WifiZoneHotspot::loadHotspotConfigForDeploy($config, $routerNameEarly);
+        }
+        self::mergePppoeSetupConfigForIsolation($config);
         $routerArray = is_array($routerRow)
             ? $routerRow
             : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
@@ -15037,6 +15160,16 @@ class Mikrotik
                 ];
             }
         }
+        try {
+            $runtimePortConflict = self::detectRuntimeHotspotPortConflict($client, $bridgePorts, $config);
+            if ($runtimePortConflict !== '') {
+                return ['ok' => false, 'errors' => [$runtimePortConflict], 'actions' => []];
+            }
+        } catch (Throwable $e) {
+            return ['ok' => false, 'errors' => ['Vérification des ports Hotspot/PPPoE impossible : ' . $e->getMessage()], 'actions' => []];
+        } catch (Exception $e) {
+            return ['ok' => false, 'errors' => ['Vérification des ports Hotspot/PPPoE impossible : ' . $e->getMessage()], 'actions' => []];
+        }
 
         $localGateway = self::resolvePoolGatewayAddress([
             'local_ip' => explode('/', $gateway)[0] ?? '',
@@ -15086,23 +15219,6 @@ class Mikrotik
         $errors = [];
 
         try {
-            $mgmtResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($config) {
-                return self::ensureDedicatedManagementBridge($apiClient, $config);
-            }, 30);
-            if (is_array($mgmtResult)) {
-                $actions = array_merge($actions, $mgmtResult['actions'] ?? []);
-                if (!empty($mgmtResult['errors'])) {
-                    $errors = array_merge($errors, $mgmtResult['errors']);
-                }
-                if (array_key_exists('ok', $mgmtResult) && empty($mgmtResult['ok'])) {
-                    return [
-                        'ok' => false,
-                        'errors' => $errors ?: ['Échec bridge management.'],
-                        'actions' => $actions,
-                    ];
-                }
-            }
-
             $coreResult = self::runDeployPhase($routerArray, $client, static function ($apiClient) use ($coreParams) {
                 return self::deployPppoeCoreInfrastructure($apiClient, $coreParams);
             }, 45);
@@ -15129,7 +15245,8 @@ class Mikrotik
     }
 
     /**
-     * Réparation manuelle Hotspot (scripts / maintenance) — le déploiement PPPoE n’appelle plus cette méthode.
+     * Réparation DHCP Hotspot après PPPoE (scripts ou fin de deployPppoeComplete).
+     * Ne modifie pas bridge-pppoe ni les ports PPPoE.
      *
      * @return array{ok: bool, errors: array<int, string>, actions: array<int, string>}
      */
@@ -15161,10 +15278,6 @@ class Mikrotik
             : (is_object($routerRow) && method_exists($routerRow, 'as_array') ? $routerRow->as_array() : (array) $routerRow);
         $routerName = trim((string) ($setupConfig['pppoe_setup_router'] ?? ($routerArray['name'] ?? '')));
 
-        // Ports Hotspot / Management pour validateServicePortIsolation + coexistence après PPPoE.
-        WifiZoneHotspot::loadHotspotConfigForDeploy($setupConfig, $routerName);
-        $setupConfig = self::mergeServiceBridgeDefaults($setupConfig);
-
         if (!$client && !empty($routerArray)) {
             $client = self::openDeployClient($routerArray, 45);
         }
@@ -15182,10 +15295,18 @@ class Mikrotik
         $actions = $infra['actions'] ?? [];
         $errors = $infra['errors'] ?? [];
 
-        if (!empty($infra['ok'])) {
-            $coexist = self::ensureHotspotDhcpCoexistenceEssential($client, $setupConfig);
+        // Comme « Projet version stable » : après PPPoE OK, réparer uniquement DHCP/firewall Hotspot
+        // (ensureHotspotDhcpCoexistenceEssential) — sans toucher bridge-pppoe ni les ports PPPoE.
+        if (!empty($infra['ok']) && $routerName !== '') {
+            $coexistConfig = $setupConfig;
+            if (class_exists('WifiZoneHotspot')) {
+                WifiZoneHotspot::loadHotspotConfigForDeploy($coexistConfig, $routerName);
+            }
+            $coexist = self::ensureHotspotDhcpCoexistenceEssential($client, $coexistConfig);
             if (!empty($coexist['actions'])) {
-                $actions[] = 'hotspot préservé : ' . implode('; ', $coexist['actions']);
+                $actions[] = 'Hotspot préservé (DHCP) : '
+                    . implode('; ', array_slice($coexist['actions'], 0, 8))
+                    . (count($coexist['actions']) > 8 ? '…' : '');
             }
             if (!empty($coexist['errors'])) {
                 $errors = array_merge($errors, $coexist['errors']);
@@ -15211,15 +15332,12 @@ class Mikrotik
             $actions[] = 'profils orphelins supprimés : ' . (int) $planSync['removed'];
         }
 
-        $captive = ['ok' => true, 'errors' => []];
-        $backendUrl = self::resolvePppoeCaptiveBackendUrl($appConfig);
-        $portalUrl = self::buildPppoeCaptivePortalUrl($routerName, $appConfig);
-        if ($backendUrl !== '' && $portalUrl !== '') {
-            $captive = self::ensurePppoeExpiredCaptive($client, $portalUrl, $backendUrl, $routerName);
-            if (!empty($captive['ok'])) {
-                $actions[] = 'portail clients expirés';
-            }
-        }
+        $captive = [
+            'ok' => true,
+            'errors' => [],
+            'skipped' => true,
+            'message' => 'Portail PPPoE expiré désactivé (service isolé du Hotspot).',
+        ];
 
         $errors = array_merge(
             $errors,

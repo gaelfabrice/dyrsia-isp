@@ -3,6 +3,74 @@
 
 <div class="row">
     <div class="col-sm-12">
+        <div class="panel panel-hovered mb20 panel-danger">
+            <div class="panel-heading">Sauvegarde complete</div>
+            <div class="panel-body">
+                <div class="alert alert-info">
+                    <strong>Backup complet en 1 clic:</strong> cette sauvegarde inclut la base de donnees, les transactions,
+                    les tickets, les comptes actifs/expires, les fichiers de `system/uploads` et les fichiers essentiels
+                    comme `config.php`. Lors d'une restauration complete, une sauvegarde de secours est creee
+                    automatiquement avant toute modification.
+                </div>
+                <div class="md-whiteframe-z1 mb20 text-center" style="padding: 15px">
+                    <div class="col-md-8">
+                        <form method="post" action="{$_url}plugin/backup_upload_full_form" enctype="multipart/form-data">
+                            <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                            <div class="input-group">
+                                <input class="form-control" type="file" name="file" accept=".zip,.wzb.zip,application/zip">
+                                <div class="input-group-btn">
+                                    <button class="btn btn-warning" type="submit"><span class="fa fa-upload"></span> Upload package complet</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="col-md-4">
+                        <form method="POST" action="{$_url}plugin/backup_create_full">
+                            <input type="hidden" name="csrf_token" value="{$csrf_token}">
+                            <input class="btn btn-danger btn-block waves-effect" type="submit" value="Creer un backup complet">
+                        </form>
+                    </div>&nbsp;
+                </div>
+                <div class="table-responsive">
+                    {if empty($fullBackupFiles)}
+                    <p align="center"><b>Aucun backup complet.</b></p>
+                    {else}
+                    <table class="table table-bordered table-striped table-condensed">
+                        <thead>
+                            <tr>
+                                <th>Package</th>
+                                <th>{Lang::T('Date')}</th>
+                                <th>{Lang::T('Size')}</th>
+                                <th>{Lang::T('Action')}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {foreach $fullBackupFiles as $backup}
+                            <tr>
+                                <td>{$backup.file}</td>
+                                <td>{$backup.creation_date}</td>
+                                <td>{$backup.size}</td>
+                                <td align="center">
+                                    <a href="{$_url}plugin/backup_download_full&file={$backup.file}&token={$csrf_token}"
+                                        style="margin: 0px;" class="btn btn-success btn-xs">{Lang::T('Download')}</a>
+                                    <a href="{$_url}plugin/backup_restore_full&file={$backup.file}&token={$csrf_token}"
+                                        style="margin: 0px;"
+                                        onclick="return confirm('Cette restauration va remettre la base, les uploads et la configuration de ce backup. Une sauvegarde de secours sera creee automatiquement. Continuer ?')"
+                                        class="btn btn-danger btn-xs">Restaurer complet</a>
+                                    <a href="{$_url}plugin/backup_delete_full&file={$backup.file}&token={$csrf_token}"
+                                        style="margin: 0px;"
+                                        onclick="return confirm('{Lang::T('Are you Sure you want to Delete this Database?')}')"
+                                        class="btn btn-default btn-xs">{Lang::T('Delete')}</a>
+                                </td>
+                            </tr>
+                            {/foreach}
+                        </tbody>
+                    </table>
+                    {/if}
+                </div>
+            </div>
+        </div>
+
         <div class="panel panel-hovered mb20 panel-primary">
             <div class="panel-heading">{Lang::T('Backup Database')}</div>
             <div class="panel-body">

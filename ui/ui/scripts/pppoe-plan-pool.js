@@ -59,6 +59,9 @@
             html += '<option value="' + $('<div>').text(pool.name).html() + '">' + $('<div>').text(label).html() + '</option>';
         });
         $picker.html(html);
+        if ($picker.hasClass('select2-hidden-accessible')) {
+            $picker.trigger('change.select2');
+        }
     }
 
     function buildFetchUrl(routerName) {
@@ -169,19 +172,35 @@
         return true;
     }
 
+    function syncExistingPoolForCurrentRouter() {
+        if (!$routerSelect || !$routerSelect.length || poolMode() !== 'existing') {
+            return;
+        }
+        loadRouterPools($routerSelect.val(), false);
+    }
+
     function bindEvents() {
         $('input[name="pool_mode"]').off('change.pppoePool').on('change.pppoePool', function () {
             applyModeUi();
-            if (poolMode() === 'existing' && $routerSelect.val()) {
-                loadRouterPools($routerSelect.val(), false);
-            }
+            syncExistingPoolForCurrentRouter();
         });
 
-        $routerSelect.off('change.pppoePool select2:select.pppoePool').on('change.pppoePool select2:select.pppoePool', function () {
-            if (poolMode() === 'existing') {
-                loadRouterPools($(this).val(), false);
+        $routerSelect
+            .off('change.pppoePool input.pppoePool select2:select.pppoePool select2:clear.pppoePool select2:close.pppoePool')
+            .on('change.pppoePool input.pppoePool select2:select.pppoePool select2:clear.pppoePool select2:close.pppoePool', function () {
+                syncExistingPoolForCurrentRouter();
+            });
+
+        var routerNode = $routerSelect.get(0);
+        if (routerNode) {
+            if (routerNode._pppoePoolNativeHandler) {
+                routerNode.removeEventListener('change', routerNode._pppoePoolNativeHandler);
             }
-        });
+            routerNode._pppoePoolNativeHandler = function () {
+                syncExistingPoolForCurrentRouter();
+            };
+            routerNode.addEventListener('change', routerNode._pppoePoolNativeHandler);
+        }
 
         if ($syncBtn && $syncBtn.length) {
             $syncBtn.off('click.pppoePool').on('click.pppoePool', function (e) {

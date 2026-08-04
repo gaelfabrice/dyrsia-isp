@@ -253,4 +253,4 @@
 window.PPPOE_POOL_FETCH_URL = '{$pppoe_pool_fetch_url|escape:'javascript'}';
 window.PPPOE_POOL_RADIUS_URL = '{Text::url('autoload/pool')|escape:'javascript'}';
 </script>
-<script src="{$app_url}/ui/ui/scripts/pppoe-plan-pool.js?2026.06.21d"></script>
+<script src="{$app_url}/ui/ui/scripts/pppoe-plan-pool.js?2026.08.03a"></script>

@@ -274,6 +274,15 @@ switch ($action) {
                     $log .= "FAILED : routeur « " . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8') . " » introuvable<br>";
                     continue;
                 }
+                $portConflict = Mikrotik::resolvePppoeIsolationConflict(is_array($config) ? $config : [], $routerName);
+                if ($portConflict !== '') {
+                    $log .= "FAILED : "
+                        . htmlspecialchars($routerName, ENT_QUOTES, 'UTF-8')
+                        . " — "
+                        . htmlspecialchars($portConflict, ENT_QUOTES, 'UTF-8')
+                        . "<br>";
+                    continue;
+                }
                 try {
                     $routerPassword = $router['password'];
                     if (function_exists('lcg_decrypt')) {
@@ -333,65 +342,12 @@ switch ($action) {
         }
         r2(getUrl('services/hotspot'), 'w', 'Unknown command');
     case 'pppoe-deploy-captive':
-        set_time_limit(180);
-        if ($_app_stage == 'Demo') {
-            r2(getUrl('services/pppoe'), 'e', 'You cannot perform this action in Demo mode');
-        }
-        $routerName = trim((string) _post('router'));
-        if ($routerName === '') {
-            r2(getUrl('services/pppoe'), 'e', 'Sélectionnez un routeur PPPoE.');
-        }
-        $router = services_scoped_router_query($admin)->where('name', $routerName)->find_one();
-        if (!$router) {
-            r2(getUrl('services/pppoe'), 'e', Lang::T('Router not found'));
-        }
-        try {
-            $routerPassword = $router['password'];
-            if (function_exists('lcg_decrypt')) {
-                $routerPassword = rtrim(lcg_decrypt($routerPassword));
-            } elseif (class_exists('Encryption') && method_exists('Encryption', 'decrypt')) {
-                $routerPassword = rtrim(Encryption::decrypt($routerPassword));
-            }
-            $client = Mikrotik::getClient($router['ip_address'], $router['username'], $routerPassword, 15);
-            if (!$client) {
-                r2(getUrl('services/pppoe'), 'e', 'Connexion MikroTik impossible.');
-            }
-            $portalUrl = Mikrotik::buildPppoeCaptivePortalUrl($routerName, $config);
-            $backendUrl = Mikrotik::resolvePppoeCaptiveBackendUrl($config);
-            if ($portalUrl === '' || $backendUrl === '') {
-                r2(
-                    getUrl('services/pppoe'),
-                    'e',
-                    'URL backend captive introuvable. Settings → Hotspot → Hotspot API URL : '
-                    . 'http://10.0.0.2:8080 (VPN dev Mac) ou https://wifizones.org (prod). '
-                    . 'Ne pas utiliser localhost.'
-                );
-            }
-            $expiredPlan = Mikrotik::ensurePppoeExpiredPlan($client, $routerName, $admin);
-            $planSync = Mikrotik::syncPppoePlans($client, $routerName, $admin);
-            $captive = Mikrotik::ensurePppoeExpiredCaptive($client, $portalUrl, $backendUrl, $routerName);
-            $suspensions = Mikrotik::syncExpiredPppoeSuspensions($client, $routerName, $admin);
-            if (empty($planSync['ok']) || empty($captive['ok']) || empty($expiredPlan['ok'])) {
-                $errors = array_merge($planSync['errors'] ?? [], $captive['errors'] ?? [], $expiredPlan['errors'] ?? [], $suspensions['errors'] ?? []);
-                r2(getUrl('services/pppoe'), 'e', 'Déploiement PPPoE partiel : ' . implode(' | ', $errors));
-            }
-            r2(
-                getUrl('services/pppoe'),
-                's',
-                'PPPoE déployé sur « '
-                . $routerName
-                . ' » : '
-                . (int) ($planSync['upserted'] ?? 0)
-                . ' profil(s), EXPIRE lié à '
-                . (int) ($expiredPlan['linked'] ?? 0)
-                . ' forfait(s), '
-                . (int) ($suspensions['enforced'] ?? 0)
-                . ' client(s) expiré(s) suspendu(s), captive OK. Portail : '
-                . $portalUrl
-            );
-        } catch (Throwable $e) {
-            r2(getUrl('services/pppoe'), 'e', 'Échec déploiement PPPoE : ' . $e->getMessage());
-        }
+        r2(
+            getUrl('services/pppoe'),
+            'e',
+            'Action désactivée pour protéger le Hotspot et le DHCP. '
+            . 'Utilisez uniquement le déploiement PPPoE sécurisé dans Settings → PPPoE Setup.'
+        );
         break;
     case 'hotspot':
         $name = _req('name');

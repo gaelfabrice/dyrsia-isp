@@ -527,6 +527,14 @@
         return el ? parsePortsCsv(el.value) : [];
     }
 
+    function getConfiguredHotspotPorts() {
+        return parsePortsCsv(window.PPPOE_HOTSPOT_PORTS || '');
+    }
+
+    function getConfiguredManagementPorts() {
+        return parsePortsCsv(window.PPPOE_MANAGEMENT_PORTS || 'ether2');
+    }
+
     function syncPortsInputFromPicker(ports) {
         var el = $('pppoe_setup_bridge_ports');
         if (!el) return;
@@ -608,6 +616,7 @@
         if (!memberPorts.length) {
             root.innerHTML = '<div class="ps-port-picker-empty">Sélectionnez un routeur pour afficher les ports.</div>';
             if (legend) legend.style.display = 'none';
+            renderPortConflict(data);
             return;
         }
 
@@ -682,6 +691,7 @@
 
         html += '</div></div></div></div>';
         root.innerHTML = html;
+        renderPortConflict(data);
     }
 
     function renderPortHints(snapshot) {
@@ -716,6 +726,56 @@
         box.textContent = '';
     }
 
+    function getCurrentPortConflictState(snapshot) {
+        snapshot = snapshot || lastSnapshot || {};
+        var selected = getBridgePortsValue();
+        var hotspotBridge = getHotspotBridgeName(snapshot) || window.PPPOE_HOTSPOT_BRIDGE || 'bridge-hotspot';
+        var hotspotPorts = getHotspotBridgePortsOnRouter(snapshot, hotspotBridge);
+        if (!hotspotPorts.length) {
+            hotspotPorts = getConfiguredHotspotPorts();
+        }
+        var managementPorts = getConfiguredManagementPorts();
+        var overlapHotspot = selected.filter(function (port) {
+            return isPortInList(port, hotspotPorts);
+        });
+        var overlapManagement = selected.filter(function (port) {
+            return isPortInList(port, managementPorts);
+        });
+        return {
+            hotspotBridge: hotspotBridge,
+            hotspotPorts: hotspotPorts,
+            managementPorts: managementPorts,
+            overlapHotspot: overlapHotspot,
+            overlapManagement: overlapManagement,
+            hasConflict: overlapHotspot.length > 0 || overlapManagement.length > 0
+        };
+    }
+
+    function renderPortConflict(snapshot) {
+        var box = $('ps-port-conflict');
+        if (!box) return;
+        var state = getCurrentPortConflictState(snapshot);
+        if (!state.hasConflict) {
+            box.innerHTML = '';
+            box.style.display = 'none';
+            return;
+        }
+
+        var details = [];
+        if (state.overlapHotspot.length) {
+            details.push('Hotspot : ' + state.overlapHotspot.join(', ') + ' (bridge ' + state.hotspotBridge + ')');
+        }
+        if (state.overlapManagement.length) {
+            details.push('Management : ' + state.overlapManagement.join(', '));
+        }
+
+        box.className = 'ps-sync-status error';
+        box.innerHTML = '<i class="fa fa-exclamation-triangle"></i><span>Conflit de ports détecté. '
+            + escapeHtml(details.join(' · '))
+            + '. Retirez ces ports du bridge PPPoE avant l\'envoi.</span>';
+        box.style.display = 'flex';
+    }
+
     function updateSummary() {
         var router = val('pppoe_setup_router');
         var routerEl = $('pppoe_setup_router');
@@ -746,6 +806,7 @@
         setText('ps-diag-bridge', bridge + ' · ' + gateway);
         setText('ps-diag-pool', poolRange);
         setText('ps-diag-wan', natIface + ' → Internet');
+        renderPortConflict(lastSnapshot);
     }
 
     function applySuggested(suggested, preserveEdits) {
@@ -968,6 +1029,15 @@
         var ports = getBridgePortsValue();
         if (!ports.length) {
             setSyncStatus('error', 'Sélectionnez au moins un port pour le bridge PPPoE.');
+            return;
+        }
+        var conflictState = getCurrentPortConflictState(lastSnapshot);
+        if (conflictState.hasConflict) {
+            renderPortConflict(lastSnapshot);
+            setSyncStatus(
+                'error',
+                'Conflit de ports détecté : retirez les ports Hotspot/Management du bridge PPPoE avant l\'envoi.'
+            );
             return;
         }
         syncPortsInputFromPicker(ports);

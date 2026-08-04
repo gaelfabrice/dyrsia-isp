@@ -173,8 +173,8 @@ sim_assert(
 
 $bridgeDefaults = Mikrotik::serviceBridgeDefaults();
 sim_assert(
-    $bridgeDefaults['hotspot_bridge_ports'] === 'wlan1,ether3',
-    'Défauts Hotspot bridge = wlan1,ether3'
+    $bridgeDefaults['hotspot_bridge_ports'] === 'wifi1,ether3',
+    'Défauts Hotspot bridge = wifi1,ether3'
 );
 sim_assert(
     $bridgeDefaults['lan_management_interface'] === 'ether2',

@@ -208,7 +208,6 @@
                     <li {if $_routes[1] eq 'maintenance'}class="active"{/if}><a href="{Text::url('settings/maintenance')}">{Lang::T('Maintenance_Mode')}</a></li>
                     <li {if $_routes[0] eq 'widgets'}class="active"{/if}><a href="{Text::url('widgets')}">{Lang::T('Widgets')}</a></li>
                     <li {if $_routes[1] eq 'devices'}class="active"{/if}><a href="{Text::url('settings/devices')}">{Lang::T('Devices')}</a></li>
-                    <li {if $_routes[1] eq 'dbstatus'}class="active"{/if}><a href="{Text::url('settings/dbstatus')}">{Lang::T('Backup/Restore')}</a></li>
                     <li {if $_system_menu eq 'paymentgateway'}class="active"{/if}><a href="{Text::url('paymentgateway')}">{Lang::T('Payment_Gateway')}</a></li>
                     {$_MENU_SETTINGS}
                     <li {if $_routes[0] eq 'pluginmanager'}class="active"{/if}><a href="{Text::url('pluginmanager')}">{Lang::T('Plugin_Manager')}</a></li>

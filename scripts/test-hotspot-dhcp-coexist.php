@@ -130,6 +130,21 @@ function printDhcpState($client): array
             $checks['wlan_enabled'] = true;
         }
     }
+    try {
+        foreach ($client->sendSync(new PEAR2\Net\RouterOS\Request('/interface/wifi/print')) as $row) {
+            if ($row->getType() === 'trap') {
+                continue;
+            }
+            $name = (string) $row->getProperty('name');
+            $disabled = strtolower((string) $row->getProperty('disabled')) === 'true';
+            echo "WiFi(ROS7): {$name} disabled=" . ($disabled ? 'yes' : 'no') . ' running=' . (string) $row->getProperty('running') . "\n";
+            if (preg_match('/^wifi\d+$/i', $name) && !$disabled) {
+                $checks['wlan_enabled'] = true;
+            }
+        }
+    } catch (Throwable $e) {
+    } catch (Exception $e) {
+    }
 
     $inputRules = [];
     foreach ($client->sendSync(new PEAR2\Net\RouterOS\Request('/ip/firewall/filter/print')) as $row) {
@@ -224,7 +239,7 @@ function validateDhcpCoexistence($client, array $checks): array
         'dhcp_server_ok' => 'serveur DHCP dyrsia-hotspot-dhcp actif sur bridge-hotspot',
         'dhcp_network_ok' => 'réseau DHCP 10.10.0.0/24 passerelle 10.10.0.1',
         'hotspot_ok' => 'serveur hotspot actif sur bridge-hotspot',
-        'wlan_enabled' => 'interface wlan1 activée',
+        'wlan_enabled' => 'interface Wi‑Fi hotspot activée (wifi1 ou wlan1)',
         'input_dhcp_before_drop' => 'règles DHCP input avant drop global',
         'input_dhcp_before_hs_jump' => 'règles DHCP input avant jump hotspot',
         'hs_input_dhcp' => 'règles DHCP dans chaîne hs-input',

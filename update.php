@@ -33,10 +33,10 @@ if (!isset($_SESSION['aid']) || empty($_SESSION['aid'])) {
 set_time_limit(-1);
 
 if (!is_writeable(pathFixer('system/cache/'))) {
-    r2("./?_route=community", 'e', 'Folder system/cache/ is not writable');
+    r2("./?_route=dashboard", 'e', 'Folder system/cache/ is not writable');
 }
 if (!is_writeable(pathFixer('.'))) {
-    r2("./?_route=community", 'e', 'Folder web is not writable');
+    r2("./?_route=dashboard", 'e', 'Folder web is not writable');
 }
 
 $step = $_GET['step'];

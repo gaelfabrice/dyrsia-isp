@@ -165,11 +165,11 @@ if (!isset($hotspotDeployExecuteReady) || !$hotspotDeployExecuteReady) {
 
                 $hotspotSetupNote = '';
                 @set_time_limit(600);
-                // Hotspot déjà sur le routeur : ne pas refaire pool/bridge/firewall (5–10 min via VPN).
-                // Send complet sur infra existante = réparation DHCP/firewall + login.html + forfaits (~1–3 min).
+                // Hotspot déjà sur le routeur : « Send login.html » reste léger.
+                // « Send complet » doit toujours repasser pool/bridge/DHCP/firewall (sinon le DHCP reste cassé après PPPoE).
                 $hotspotAlreadyDeployed = $hotspotListenIp !== '';
-                $skipHotspotSetup = $hotspotAlreadyDeployed;
-                $skipBridgeHardening = $hotspotAlreadyDeployed;
+                $skipHotspotSetup = $hotspotAlreadyDeployed && !$sendFullDeploy;
+                $skipBridgeHardening = $hotspotAlreadyDeployed && !$sendFullDeploy;
                 if (!$skipHotspotSetup) {
                 if (isset($hotspotDeployProgress) && is_callable($hotspotDeployProgress)) {
                     $hotspotDeployProgress('Configuration hotspot (pool, bridge, profil, serveur, DHCP)…');
@@ -275,37 +275,35 @@ if (!isset($hotspotDeployExecuteReady) || !$hotspotDeployExecuteReady) {
                     }
                     $dhcpNote = '';
                     if ($dhcpIface !== '') {
-                        // Bridge + ports même en mode incrémental (sans refaire tout le setup).
+                        // Bridge + ports ; Send complet sur infra existante = réparation complète DHCP.
                         $bridgePrep = Mikrotik::ensureDedicatedHotspotBridge($client, $config);
                         if (!empty($bridgePrep['interface'])) {
                             $dhcpIface = (string) $bridgePrep['interface'];
                         }
+                        if (!empty($bridgePrep['errors'])) {
+                            $hotspotDeployFinish(
+                                'e',
+                                'Bridge hotspot : ' . implode(' | ', $bridgePrep['errors'])
+                            );
+                        }
                         if (!empty($bridgePrep['actions'])) {
                             $dhcpNote .= ' ' . implode(', ', $bridgePrep['actions']) . '.';
                         }
-                        $dhcpResult = Mikrotik::ensureHotspotDhcpServer(
-                            $client,
-                            $dhcpIface,
-                            $dhcpPool,
-                            $dhcpLocal,
-                            trim((string) ($config['hotspot_name'] ?? ''))
-                        );
-                        if (!empty($dhcpResult['actions'])) {
-                            $dhcpNote .= ' ' . implode(', ', $dhcpResult['actions']) . '.';
+                        $coexist = Mikrotik::ensureHotspotDhcpCoexistenceEssential($client, $config);
+                        if (!empty($coexist['actions'])) {
+                            $dhcpNote .= ' ' . implode(', ', $coexist['actions']) . '.';
                         }
-                        if (!empty($dhcpResult['errors'])) {
+                        if (!empty($coexist['errors'])) {
                             $hotspotDeployFinish(
                                 'e',
-                                'DHCP hotspot échoué : ' . implode(' | ', $dhcpResult['errors'])
+                                'DHCP hotspot échoué : ' . implode(' | ', $coexist['errors'])
                             );
                         }
-                        $dhcpFw = Mikrotik::ensureHotspotDhcpFirewallPass($client, $dhcpIface);
-                        if (!empty($dhcpFw['actions'])) {
-                            $dhcpNote .= ' ' . implode(', ', $dhcpFw['actions']) . '.';
-                        }
-                        $wgDhcp = Mikrotik::ensureHotspotWalledGardenDhcp($client);
-                        if (!empty($wgDhcp['actions'])) {
-                            $dhcpNote .= ' ' . implode(', ', $wgDhcp['actions']) . '.';
+                        if (empty($coexist['ok'])) {
+                            $hotspotDeployFinish(
+                                'e',
+                                'DHCP hotspot : réparation incomplète après vérification firewall/DHCP.'
+                            );
                         }
                     }
                     $hotspotSetupNote = ' Hotspot : infra déjà sur le routeur (login.html + forfaits + walled-garden).'

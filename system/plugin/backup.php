@@ -1,5 +1,5 @@
 <?php
-register_menu("Backup/Restore DB", true, "backup_list", 'SETTINGS', '');
+register_menu("Backup/Restore", true, "backup_list", 'SETTINGS', '');
 register_hook('cronjob', 'backup_cron');
 
 function backup_dir(): string
@@ -47,11 +47,38 @@ function backup_resolve_sql_file(string $fileName): ?string
     return $realFile;
 }
 
+function backup_resolve_full_file(string $fileName): ?string
+{
+    $fileName = basename(trim($fileName));
+    if ($fileName === '' || !preg_match('/\.wzb\.zip$/i', $fileName)) {
+        return null;
+    }
+
+    $backupDir = backup_dir();
+    $filePath = $backupDir . DIRECTORY_SEPARATOR . $fileName;
+    if (!is_file($filePath)) {
+        return null;
+    }
+
+    $realFile = realpath($filePath);
+    $realDir = realpath($backupDir);
+    if ($realFile === false || $realDir === false) {
+        return $filePath;
+    }
+
+    $prefix = $realDir . DIRECTORY_SEPARATOR;
+    if (!str_starts_with($realFile, $prefix) && $realFile !== $realDir) {
+        return null;
+    }
+
+    return $realFile;
+}
+
 function backup_list(): void
 {
     global $ui;
     _admin();
-    $ui->assign('_title', 'Backup/Restore DB');
+    $ui->assign('_title', 'Backup/Restore');
     $ui->assign('_system_menu', 'settings');
     $admin = Admin::_info();
     $ui->assign('_admin', $admin);
@@ -86,8 +113,21 @@ function backup_list(): void
         ];
     }
 
+    $fullBackupFilesWithInfo = [];
+    if (class_exists('WifiZoneBackup')) {
+        foreach (WifiZoneBackup::listFullBackups() as $filePath) {
+            $file = basename($filePath);
+            $fullBackupFilesWithInfo[] = [
+                'file' => $file,
+                'size' => backup_getFileSize($filePath),
+                'creation_date' => date('Y-m-d H:i:s', filemtime($filePath)),
+            ];
+        }
+    }
+
     $ui->assign('csrf_token', Csrf::getToken());
     $ui->assign('backupFiles', $backupFilesWithInfo);
+    $ui->assign('fullBackupFiles', $fullBackupFilesWithInfo);
     $ui->display('backup.tpl');
 }
 
@@ -181,6 +221,103 @@ function backup_add($is_CLi = false)
         echo "Error creating database backup. Check the log for details.\n\n";
         return false;
     }
+}
+
+function backup_create_full(): void
+{
+    global $_app_stage;
+    _admin();
+    $admin = Admin::_info();
+
+    if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        exit;
+    }
+
+    if (backup_stage_locked()) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Backup is disabled in Demo mode'));
+    }
+
+    $csrfToken = _post('csrf_token');
+    if (!Csrf::check($csrfToken)) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+    }
+
+    try {
+        $filePath = WifiZoneBackup::createFullBackup('manual');
+        _log('[' . $admin['username'] . ']: Full backup created ' . basename($filePath), $admin['user_type']);
+        r2(U . 'plugin/backup_list', 's', Lang::T('Full backup created successfully') . ': ' . basename($filePath));
+    } catch (Throwable $e) {
+        _log('backup_create_full: ' . $e->getMessage());
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Error creating full backup') . ': ' . $e->getMessage());
+    }
+}
+
+function backup_download_full(): void
+{
+    _admin();
+    $admin = Admin::_info();
+
+    if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        exit;
+    }
+
+    if (backup_stage_locked()) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('You cannot download backup in Demo mode'));
+    }
+
+    $csrfToken = $_GET['token'] ?? '';
+    if (!Csrf::check($csrfToken)) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+    }
+
+    $fileName = basename((string) ($_GET['file'] ?? ''));
+    $filePath = backup_resolve_full_file($fileName);
+    if ($filePath === null) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('The file does not exist.'));
+    }
+
+    header('Cache-Control: public');
+    header('Content-Description: File Transfer');
+    header('Content-Disposition: attachment; filename=' . $fileName);
+    header('Content-Type: application/zip');
+    header('Content-Transfer-Encoding: binary');
+    header('Content-Length: ' . filesize($filePath));
+    readfile($filePath);
+    exit;
+}
+
+function backup_delete_full(): void
+{
+    _admin();
+    $admin = Admin::_info();
+
+    if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        exit;
+    }
+
+    if (backup_stage_locked()) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('You cannot delete backup in Demo mode'));
+    }
+
+    $csrfToken = $_GET['token'] ?? '';
+    if (!Csrf::check($csrfToken)) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+    }
+
+    $fileName = basename((string) ($_GET['file'] ?? ''));
+    $filePath = backup_resolve_full_file($fileName);
+    if ($filePath === null) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Backup file does not exist or is not in the backup directory.'));
+    }
+
+    if (@unlink($filePath)) {
+        r2(U . 'plugin/backup_list', 's', Lang::T('Backup file deleted successfully.'));
+    }
+
+    r2(U . 'plugin/backup_list', 'e', Lang::T('Error deleting backup file. Could not unlink the file.'));
 }
 
 function backup_download(): void
@@ -299,6 +436,44 @@ function backup_restore(): void
         }
     } else {
         r2(U . 'plugin/backup_list', 'e', 'No backup file specified.');
+    }
+}
+
+function backup_restore_full(): void
+{
+    _admin();
+    $admin = Admin::_info();
+    if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        exit;
+    }
+
+    if (backup_stage_locked()) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Database restore is disabled in Demo mode'));
+    }
+
+    $csrfToken = $_GET['token'] ?? '';
+    if (!Csrf::check($csrfToken)) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+    }
+
+    $fileName = basename((string) ($_GET['file'] ?? ''));
+    $filePath = backup_resolve_full_file($fileName);
+    if ($filePath === null) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Backup file not found.'));
+    }
+
+    try {
+        $result = WifiZoneBackup::restoreFullBackup($filePath);
+        _log('[' . $admin['username'] . ']: Full backup restored ' . basename($filePath), $admin['user_type']);
+        $message = Lang::T('Full backup restored successfully');
+        if (!empty($result['rescue_backup'])) {
+            $message .= '. ' . Lang::T('Rescue backup created') . ': ' . $result['rescue_backup'];
+        }
+        r2(U . 'plugin/backup_list', 's', $message);
+    } catch (Throwable $e) {
+        _log('backup_restore_full: ' . $e->getMessage());
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Error restoring full backup') . ': ' . htmlspecialchars($e->getMessage()));
     }
 }
 function backup_settingsPost(): void
@@ -747,4 +922,53 @@ function backup_upload_form(): void
     } else {
         _alert(Lang::T('No file selected'), 'danger', "plugin/backup_list");
     }
+}
+
+function backup_upload_full_form(): void
+{
+    _admin();
+    $admin = Admin::_info();
+
+    if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
+        exit;
+    }
+    if (backup_stage_locked()) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('You cannot upload backup in Demo mode'));
+    }
+
+    $uploadPath = backup_dir();
+    if (!isset($_FILES['file'])) {
+        _alert(Lang::T('No file selected'), 'danger', 'plugin/backup_list');
+    }
+
+    $csrfToken = _post('csrf_token');
+    if (!Csrf::check($csrfToken)) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
+    }
+
+    if ((int) $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('No file selected'));
+    }
+
+    $fileName = (string) ($_FILES['file']['name'] ?? '');
+    $fileSize = (int) ($_FILES['file']['size'] ?? 0);
+    $fileTmp = (string) ($_FILES['file']['tmp_name'] ?? '');
+    $allowedSize = 1024 * 1024 * 1024;
+    if ($fileSize > $allowedSize) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('File size is too large. Maximum allowed size is 1GB'));
+    }
+
+    if (!preg_match('/\.zip$/i', $fileName)) {
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid file type. Only full backup packages are allowed'));
+    }
+
+    $newFileName = WifiZoneBackup::FULL_BACKUP_PREFIX . 'uploaded_' . date('Y-m-d_H-i-s') . '.'
+        . WifiZoneBackup::FULL_BACKUP_EXTENSION;
+    if (move_uploaded_file($fileTmp, $uploadPath . DIRECTORY_SEPARATOR . $newFileName)) {
+        _log('[' . $admin['username'] . ']: Full backup uploaded ' . $newFileName, $admin['user_type']);
+        r2(U . 'plugin/backup_list', 's', Lang::T('File uploaded successfully'));
+    }
+
+    r2(U . 'plugin/backup_list', 'e', Lang::T('Failed to upload file'));
 }

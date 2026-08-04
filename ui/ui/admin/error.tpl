@@ -65,7 +65,7 @@
                         <div class="box-footer">
                             <div class="btn-group btn-group-justified" role="group" aria-label="...">
                                 <a href="./update.php?step=4" style="color: black;" class="btn btn-info btn-sm btn-block">{Lang::T('Update')} Database</a>
-                                <a href="{Text::url('community#update')}" style="color: black;" class="btn btn-success btn-sm btn-block">{Lang::T('Update DYRSIA')}</a>
+                                <a href="{$app_url}/update.php" style="color: black;" class="btn btn-success btn-sm btn-block">{Lang::T('Update DYRSIA')}</a>
                             </div>
                             <br>
                             <div class="btn-group btn-group-justified" role="group" aria-label="...">

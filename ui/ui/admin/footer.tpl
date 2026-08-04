@@ -4,7 +4,7 @@
 
 <footer class="main-footer">
     <div class="pull-right" id="version"
-         onclick="location.href = '{Text::url("community")}#latestVersion';"></div>
+         onclick="location.href = '{$app_url}/update.php';"></div>
 
     DYRSIA Powered by
     <a href="#" rel="nofollow noreferrer noopener">

@@ -2422,6 +2422,11 @@ HTML;
 
             WifiZoneHotspot::loadHotspotConfigForDeploy($config, $routerName);
 
+            $hotspotPortConflict = Mikrotik::resolveHotspotIsolationConflict(is_array($config) ? $config : [], $routerName);
+            if ($hotspotPortConflict !== '') {
+                $hotspotDeployFailEarly('e', $hotspotPortConflict);
+            }
+
             $renderedLoginHtml = $buildHotspotLoginHtml();
             if ($renderedLoginHtml === null) {
                 $hotspotDeployFailEarly( 'e', 'Échec de l\'envoi vers MikroTik : fichier login.html introuvable');
@@ -2835,6 +2840,10 @@ HTML;
             if (empty($bridgePorts)) {
                 return ['ok' => false, 'message' => 'Sélectionnez au moins un port membre pour le bridge PPPoE.', 'actions' => [], 'errors' => []];
             }
+            $portConflict = Mikrotik::resolvePppoeIsolationConflict(is_array($config) ? $config : [], $routerName);
+            if ($portConflict !== '') {
+                return ['ok' => false, 'message' => $portConflict, 'actions' => [], 'errors' => [$portConflict]];
+            }
             global $_app_stage;
             if ($_app_stage == 'Demo') {
                 return ['ok' => false, 'message' => 'Indisponible en mode démo.', 'actions' => [], 'errors' => []];
@@ -3129,17 +3138,7 @@ HTML;
             _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
         }
 
-        $dbc = new mysqli($db_host, $db_user, $db_pass, $db_name);
-        if ($result = $dbc->query('SHOW TABLE STATUS')) {
-            $tables = array();
-            while ($row = $result->fetch_array()) {
-                $tables[$row['Name']]['rows'] = ORM::for_table($row["Name"])->count();
-                $tables[$row['Name']]['name'] = $row["Name"];
-            }
-            $ui->assign('tables', $tables);
-            run_hook('view_database'); #HOOK
-            $ui->display('admin/settings/dbstatus.tpl');
-        }
+        r2(U . 'plugin/backup_list');
         break;
 
     case 'dbbackup':
