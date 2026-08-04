@@ -10,6 +10,7 @@ services:
       # Apache mod_php (pas de fastcgi_finish_request) : déploiement MikroTik dans la requête HTTP.
       WIFIZONE_HOTSPOT_DEPLOY_INLINE: ${WIFIZONE_HOTSPOT_DEPLOY_INLINE:-1}
       WIFIZONE_PPPOE_DEPLOY_INLINE: ${WIFIZONE_PPPOE_DEPLOY_INLINE:-1}
+      PHP_CLI_PATH: ${PHP_CLI_PATH:-/usr/local/bin/php}
     volumes:
       - wifizone_uploads:/var/www/html/system/uploads
       - wifizone_cache:/var/www/html/system/cache
@@ -24,6 +25,7 @@ services:
     environment:
       WIFIZONE_HOTSPOT_DEPLOY_INLINE: ${WIFIZONE_HOTSPOT_DEPLOY_INLINE:-1}
       WIFIZONE_PPPOE_DEPLOY_INLINE: ${WIFIZONE_PPPOE_DEPLOY_INLINE:-1}
+      PHP_CLI_PATH: ${PHP_CLI_PATH:-/usr/local/bin/php}
     command: sh -c "while true; do php /var/www/html/system/cron_wifizone.php; sleep 300; done"
     volumes:
       - wifizone_uploads:/var/www/html/system/uploads

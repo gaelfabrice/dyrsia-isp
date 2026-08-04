@@ -13,7 +13,7 @@ class HotspotDeployRunner
         }
 
         $root = realpath(dirname(__DIR__, 2)) ?: dirname(__DIR__, 2);
-        $php = defined('PHP_BINARY') && PHP_BINARY !== '' ? PHP_BINARY : 'php';
+        $php = DeployAsyncHttp::resolvePhpCliBinary();
         $script = $root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'hotspot-deploy-worker.php';
         if (!is_file($script)) {
             self::markJobFailed($jobPath, 'Worker hotspot introuvable (scripts/hotspot-deploy-worker.php).');
@@ -56,6 +56,19 @@ class HotspotDeployRunner
     public static function dispatchJob(string $jobPath, bool $responseAlreadySent = false): void
     {
         if (getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
+            // Réponse JSON async déjà envoyée : ne pas bloquer la requête HTTP (mod_php bufferise jusqu'à la fin du script).
+            if ($responseAlreadySent) {
+                if (self::spawnBackground($jobPath)) {
+                    return;
+                }
+                self::markJobFailed(
+                    $jobPath,
+                    'Worker CLI hotspot indisponible après démarrage async. '
+                    . 'Vérifiez PHP_CLI_PATH (/usr/local/bin/php), les droits system/cache et hotspot_deploy_worker.log.'
+                );
+
+                return;
+            }
             self::runJob($jobPath);
 
             return;

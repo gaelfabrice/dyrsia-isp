@@ -2558,20 +2558,7 @@ HTML;
                             ? 'Envoi complet démarré — les autres admins restent connectés.'
                             : 'Envoi login.html démarré — les autres admins restent connectés.',
                     ], JSON_UNESCAPED_UNICODE);
-                    while (ob_get_level()) {
-                        ob_end_clean();
-                    }
-                    if (!headers_sent()) {
-                        header('Content-Type: application/json; charset=utf-8');
-                        header('Content-Length: ' . strlen($asyncPayload));
-                        header('Connection: close');
-                        header('X-Accel-Buffering: no');
-                    }
-                    echo $asyncPayload;
-                    if (session_status() === PHP_SESSION_ACTIVE) {
-                        session_write_close();
-                    }
-                    @flush();
+                    DeployAsyncHttp::sendJsonAndCloseConnection($asyncPayload);
                     $hotspotDeployResponseSent = true;
                 }
                 HotspotDeployRunner::dispatchJob($hotspotDeployJobPath, $hotspotDeployResponseSent);

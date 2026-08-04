@@ -5,6 +5,34 @@
  */
 class DeployAsyncHttp
 {
+    /**
+     * Chemin PHP CLI (Docker Apache mod_php : PHP_BINARY pointe souvent vers httpd).
+     */
+    public static function resolvePhpCliBinary(): string
+    {
+        $fromEnv = getenv('PHP_CLI_PATH');
+        if (is_string($fromEnv) && trim($fromEnv) !== '') {
+            $fromEnv = trim($fromEnv);
+            if (@is_executable($fromEnv)) {
+                return $fromEnv;
+            }
+        }
+        foreach (['/usr/local/bin/php', '/usr/bin/php'] as $candidate) {
+            if (@is_executable($candidate)) {
+                return $candidate;
+            }
+        }
+        if (defined('PHP_BINARY') && PHP_BINARY !== '') {
+            $bin = (string) PHP_BINARY;
+            $lower = strtolower($bin);
+            if (str_contains($lower, 'php') && !str_contains($lower, 'apache') && !str_contains($lower, 'httpd')) {
+                return $bin;
+            }
+        }
+
+        return 'php';
+    }
+
     public static function sendJsonAndCloseConnection(string $json): void
     {
         while (ob_get_level()) {

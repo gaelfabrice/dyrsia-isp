@@ -13,6 +13,18 @@ class PppoeDeployRunner
     public static function dispatchJob(string $jobPath, bool $responseAlreadySent = false): void
     {
         if (getenv('WIFIZONE_PPPOE_DEPLOY_INLINE') === '1' || getenv('WIFIZONE_HOTSPOT_DEPLOY_INLINE') === '1') {
+            if ($responseAlreadySent) {
+                if (self::trySpawnBackground($jobPath)) {
+                    return;
+                }
+                self::markJobFailed(
+                    $jobPath,
+                    'Worker CLI PPPoE indisponible après démarrage async. '
+                    . 'Vérifiez PHP_CLI_PATH (/usr/local/bin/php), system/cache et pppoe_deploy_worker.log.'
+                );
+
+                return;
+            }
             self::runJob($jobPath);
 
             return;
@@ -85,7 +97,7 @@ class PppoeDeployRunner
         }
 
         $root = realpath(dirname(__DIR__, 2)) ?: dirname(__DIR__, 2);
-        $php = defined('PHP_BINARY') && PHP_BINARY !== '' ? PHP_BINARY : 'php';
+        $php = DeployAsyncHttp::resolvePhpCliBinary();
         $script = $root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'pppoe-deploy-worker.php';
         if (!is_file($script)) {
             self::markJobFailed($jobPath, 'Worker PPPoE introuvable (scripts/pppoe-deploy-worker.php).');

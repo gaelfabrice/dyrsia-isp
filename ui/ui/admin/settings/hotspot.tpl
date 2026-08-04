@@ -1293,7 +1293,7 @@
                 send_full: isSendFull ? '1' : '',
                 sync_hotspot_plans: ''
             };
-            postHotspotDeployForm(extra, 120000)
+            postHotspotDeployForm(extra, 180000)
                 .then(function (data) {
                     if (!data || !data.ok) {
                         throw new Error((data && data.message) || 'Impossible de démarrer l\'envoi MikroTik.');
@@ -1319,11 +1319,16 @@
                 })
                 .catch(function (err) {
                     hsHideDeployProgress();
+                    var msg = err && err.message ? err.message : String(err);
+                    if (err && (err.name === 'AbortError' || /failed to fetch/i.test(msg))) {
+                        msg = 'Connexion interrompue avec le serveur (timeout ou déploiement trop long au démarrage). '
+                            + 'Rechargez la page : le déploiement peut continuer en arrière-plan — consultez system/cache/hotspot_deploy_worker.log sur le serveur.';
+                    }
                     if (typeof Swal !== 'undefined') {
                         Swal.fire({
                             icon: 'error',
                             title: 'Envoi MikroTik',
-                            text: err && err.message ? err.message : String(err),
+                            text: msg,
                             confirmButtonText: 'OK'
                         });
                     }

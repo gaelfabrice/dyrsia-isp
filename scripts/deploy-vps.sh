@@ -41,6 +41,7 @@ ssh "$TARGET" "set -e
   fi
   grep -q 'WIFIZONE_HOTSPOT_DEPLOY_INLINE' .env 2>/dev/null || echo 'WIFIZONE_HOTSPOT_DEPLOY_INLINE=1' >> .env
   grep -q 'WIFIZONE_PPPOE_DEPLOY_INLINE' .env 2>/dev/null || echo 'WIFIZONE_PPPOE_DEPLOY_INLINE=1' >> .env
+  grep -q 'PHP_CLI_PATH' .env 2>/dev/null || echo 'PHP_CLI_PATH=/usr/local/bin/php' >> .env
   docker compose -f docker-compose.server.yml build --pull
   docker compose -f docker-compose.server.yml up -d --force-recreate
   docker compose -f docker-compose.server.yml ps
