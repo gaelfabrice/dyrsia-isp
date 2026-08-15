@@ -6,4 +6,5 @@
  */
 
 $ui->assign('_title', 'FAQ - Questions Fréquentes');
+$ui->assign('public_contact', WifiZoneCore::publicContactInfo());
 $ui->display('customer/faq.tpl');

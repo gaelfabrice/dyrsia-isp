@@ -520,4 +520,54 @@ class WifiZoneCore
         self::purgeMacOsMetadata();
         @touch($marker);
     }
+
+    /**
+     * Coordonnées publiques (landing / FAQ) : WhatsApp + téléphone.
+     *
+     * @return array{digits:string,display:string,label:string,wa_url:string,tel_url:string,wa_message:string}
+     */
+    public static function publicContactInfo()
+    {
+        global $config;
+
+        $candidates = [
+            $config['hotspot_contact_phone'] ?? '',
+            $config['hotspot_help_whatsapp'] ?? '',
+            $config['phone'] ?? '',
+            '33761951914',
+        ];
+        $digits = '';
+        foreach ($candidates as $raw) {
+            $digits = preg_replace('/\D/', '', (string) $raw);
+            if ($digits !== '') {
+                break;
+            }
+        }
+
+        $display = '+' . $digits;
+        if (str_starts_with($digits, '33') && strlen($digits) === 11) {
+            $display = '+33 ' . substr($digits, 2, 1) . ' '
+                . implode(' ', str_split(substr($digits, 3), 2));
+        } elseif (str_starts_with($digits, '237') && strlen($digits) >= 12) {
+            $local = substr($digits, 3);
+            $display = '+237 ' . substr($local, 0, 3) . ' '
+                . substr($local, 3, 2) . ' ' . substr($local, 5, 2) . ' ' . substr($local, 7, 2);
+        }
+
+        $label = trim((string) ($config['hotspot_contact'] ?? ''));
+        if ($label === '') {
+            $label = 'Assistance';
+        }
+
+        $waMessage = 'Bonjour, je souhaite un accompagnement pour mon projet Wifi Zone';
+
+        return [
+            'digits' => $digits,
+            'display' => $display,
+            'label' => $label,
+            'wa_url' => 'https://wa.me/' . $digits . '?text=' . rawurlencode($waMessage),
+            'tel_url' => 'tel:+' . $digits,
+            'wa_message' => $waMessage,
+        ];
+    }
 }

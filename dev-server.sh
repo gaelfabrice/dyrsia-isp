@@ -7,9 +7,10 @@ cd "$(dirname "$0")"
 
 PORT="${PORT:-8082}"
 PIDFILE=".dev-server.pid"
-# Défaut 2 : worker #1 peut tenir le déploiement MikroTik pendant que #2 sert le poll JSON.
-# Si "Failed to poll event" : PHP_CLI_SERVER_WORKERS=1 ./dev-server.sh
-WORKERS="${PHP_CLI_SERVER_WORKERS:-2}"
+# Défaut 1 : le mode multi-workers PHP CLI plante souvent ("Failed to poll event")
+# et laisse le port 8082 mort (erreur navigateur -102 / connection refused).
+# Pour 2 workers (déploiement MikroTik + poll) : PHP_CLI_SERVER_WORKERS=2 ./dev-server.sh
+WORKERS="${PHP_CLI_SERVER_WORKERS:-1}"
 
 stop_port() {
   pkill -f "php .* -S localhost:${PORT}" 2>/dev/null || true

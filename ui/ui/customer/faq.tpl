@@ -1,4 +1,7 @@
 {assign var=companyName value=$_c['CompanyName']|default:'DYRSIA'}
+{assign var=contactDisplay value=$public_contact.display|default:'+33 7 61 95 19 14'}
+{assign var=contactWaUrl value=$public_contact.wa_url|default:'https://wa.me/33761951914'}
+{assign var=contactTelUrl value=$public_contact.tel_url|default:'tel:+33761951914'}
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -233,8 +236,9 @@
                     <span>{$companyName}</span>
                 </a>
                 <div class="nav-links">
-                    <a class="btn btn-ghost" href="{Text::url('welcome')}#features">Features</a>
+                    <a class="btn btn-ghost" href="{Text::url('welcome')}#features">Fonctionnalités</a>
                     <a class="btn btn-ghost" href="{Text::url('welcome')}#pricing">Tarifs</a>
+                    <a class="btn btn-ghost" href="{Text::url('welcome')}#contact"><i class="fa fa-phone"></i> Contact</a>
                     <a class="btn" href="{Text::url('faq')}"><i class="fa fa-question-circle"></i> FAQ</a>
                     <a class="btn btn-primary" href="{Text::url('admin/')}"><i class="fa fa-lock"></i> Admin</a>
                 </div>
@@ -364,9 +368,10 @@
             <!-- CTA Box -->
             <div class="cta-box">
                 <h3>Une autre question ?</h3>
-                <p>Contactez-nous sur WhatsApp ou lancez votre essai gratuit de 5 jours.</p>
+                <p>Contactez-nous sur WhatsApp ({$contactDisplay|escape}) ou lancez votre essai gratuit de 5 jours.</p>
                 <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-                    <a class="btn" href="https://wa.me/237690000000" target="_blank"><i class="fa fa-whatsapp"></i> WhatsApp</a>
+                    <a class="btn" href="{$contactWaUrl|escape:'html'}" target="_blank" rel="noopener"><i class="fa fa-whatsapp"></i> WhatsApp</a>
+                    <a class="btn" href="{$contactTelUrl|escape:'html'}"><i class="fa fa-phone"></i> Appeler</a>
                     <a class="btn btn-primary" href="{Text::url('provision')}"><i class="fa fa-rocket"></i> Essai Gratuit</a>
                 </div>
             </div>
@@ -375,6 +380,11 @@
 
     <footer class="footer">
         <div class="container">
+            <p style="margin-bottom: 10px;">
+                <a href="{$contactWaUrl|escape:'html'}" target="_blank" rel="noopener"><i class="fa fa-whatsapp"></i> WhatsApp</a>
+                &nbsp;·&nbsp;
+                <a href="{$contactTelUrl|escape:'html'}"><i class="fa fa-phone"></i> {$contactDisplay|escape}</a>
+            </p>
             <p>&copy; {$smarty.now|date_format:"%Y"} {$companyName}. Tous droits réservés.</p>
         </div>
     </footer>

@@ -1,4 +1,9 @@
 {assign var=companyName value=$_c['CompanyName']|default:'DYRSIA'}
+{assign var=contactDigits value=$public_contact.digits|default:'33761951914'}
+{assign var=contactDisplay value=$public_contact.display|default:'+33 7 61 95 19 14'}
+{assign var=contactLabel value=$public_contact.label|default:'Assistance'}
+{assign var=contactWaUrl value=$public_contact.wa_url|default:'https://wa.me/33761951914'}
+{assign var=contactTelUrl value=$public_contact.tel_url|default:'tel:+33761951914'}
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -78,11 +83,68 @@
         .btn-primary:hover { color: #021014; filter: brightness(1.06); }
         .btn-ghost { background: transparent; }
         .hero { padding: 56px 0 48px; text-align: center; }
+        .hero-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px 20px;
+            flex-wrap: wrap;
+            margin-bottom: 22px;
+        }
         .pill {
             display: inline-flex; align-items: center; gap: 8px;
             padding: 7px 14px; border-radius: 999px; font-size: 12px; font-weight: 700;
             border: 1px solid rgba(34, 197, 94, 0.35);
-            background: rgba(34, 197, 94, 0.1); color: #bbf7d0; margin-bottom: 22px;
+            background: rgba(34, 197, 94, 0.1); color: #bbf7d0; margin: 0;
+        }
+        .hero-contact {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-left: auto;
+        }
+        .hero-contact a {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            text-decoration: none;
+            white-space: nowrap;
+            border: 1px solid var(--line);
+            color: #e2e8f0;
+            background: rgba(255, 255, 255, 0.04);
+            transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+        }
+        .hero-contact a:hover {
+            color: #fff;
+            border-color: rgba(34, 197, 94, 0.4);
+            text-decoration: none;
+        }
+        .hero-contact .hero-wa {
+            border-color: rgba(37, 211, 102, 0.45);
+            background: rgba(37, 211, 102, 0.12);
+            color: #86efac;
+        }
+        .hero-contact .hero-wa:hover {
+            color: #bbf7d0;
+            border-color: rgba(37, 211, 102, 0.7);
+            background: rgba(37, 211, 102, 0.18);
+        }
+        .hero-contact .fa-whatsapp,
+        .hero-contact .fa-phone { font-size: 13px; }
+        @media (max-width: 640px) {
+            .hero-top {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .hero-contact {
+                margin-left: 0;
+                justify-content: flex-end;
+            }
         }
         .hero h1 {
             font-size: clamp(32px, 5.5vw, 54px); line-height: 1.08;
@@ -621,8 +683,20 @@
         .admin-card h3 { margin: 0 0 8px; font-size: 18px; }
         .admin-card p { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
         .footer {
-            padding: 32px 0; text-align: center; color: var(--muted);
+            padding: 36px 0 28px; text-align: center; color: var(--muted);
             font-size: 13px; border-top: 1px solid var(--line);
+        }
+        .footer-links {
+            display: flex; flex-wrap: wrap; gap: 14px 22px;
+            justify-content: center; align-items: center;
+            margin-bottom: 14px;
+        }
+        .footer-links a {
+            color: #cbd5e1; font-weight: 600; font-size: 13px;
+        }
+        .footer-links a:hover { color: #fff; }
+        .footer-wa {
+            color: #4ade80 !important;
         }
         .btn-block { width: 100%; }
         .pricing-grid {
@@ -862,6 +936,7 @@
                     <a class="btn btn-ghost" href="#features">Fonctionnalités</a>
                     <a class="btn btn-ghost" href="#solutions">Solutions</a>
                     <a class="btn btn-ghost" href="#pricing">Tarifs</a>
+                    <a class="btn btn-ghost" href="#contact"><i class="fa fa-phone"></i> Contact</a>
                     <a class="btn btn-ghost" href="{Text::url('faq')}"><i class="fa fa-question-circle"></i> FAQ</a>
                     <a class="btn" href="{Text::url('provision')}"><i class="fa fa-rocket"></i> Essai gratuit</a>
                     <a class="btn btn-primary" href="{Text::url('admin/')}"><i class="fa fa-sign-in"></i> Se connecter</a>
@@ -872,7 +947,17 @@
 
     <main id="top">
         <section class="container hero">
-            <span class="pill"><i class="fa fa-shield"></i> La référence des Wifi Zone en Afrique</span>
+            <div class="hero-top" id="contact">
+                <span class="pill"><i class="fa fa-shield"></i> La référence des Wifi Zone en Afrique</span>
+                <div class="hero-contact">
+                    <a class="hero-wa" href="{$contactWaUrl|escape:'html'}" target="_blank" rel="noopener" title="WhatsApp">
+                        <i class="fa fa-whatsapp"></i> WhatsApp
+                    </a>
+                    <a href="{$contactTelUrl|escape:'html'}" title="Appeler">
+                        <i class="fa fa-phone"></i> {$contactDisplay|escape}
+                    </a>
+                </div>
+            </div>
             <h1>Gérez votre Wifi Zone, Sans aucune limite.<br>Gérez tous vos routeurs en même temps</h1>
             <p>Pilotez vos opérations Hotspot, PPPoE et IP statique, automatisez vos encaissements et développez votre activité d'accès internet avec une solution de gestion tout-en-un. Obtenez vos gains rapidement.</p>
             <div class="hero-cta">
@@ -948,7 +1033,7 @@
                     </article>
                 </div>
                 <div class="solutions-cta">
-                    <a class="btn-whatsapp" href="https://wa.me/237600000000?text=Bonjour%2C%20je%20souhaite%20un%20accompagnement%20pour%20mon%20projet%20Wifi%20Zone" target="_blank" rel="noopener">
+                    <a class="btn-whatsapp" href="{$contactWaUrl|escape:'html'}" target="_blank" rel="noopener">
                         <svg class="wa-icon" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
                             <path fill="currentColor" d="M16.04 3.2c-7.06 0-12.8 5.74-12.8 12.8 0 2.26.6 4.46 1.73 6.4L3.2 28.8l6.56-1.72a12.74 12.74 0 0 0 6.28 1.64h.01c7.05 0 12.8-5.74 12.8-12.8 0-3.42-1.33-6.63-3.75-9.05a12.7 12.7 0 0 0-9.06-3.67zm0 23.45h-.01a10.6 10.6 0 0 1-5.4-1.48l-.39-.23-4.02 1.05 1.07-3.92-.25-.4a10.6 10.6 0 0 1-1.62-5.66c0-5.87 4.78-10.65 10.66-10.65 2.85 0 5.52 1.11 7.53 3.12a10.57 10.57 0 0 1 3.12 7.54c0 5.87-4.78 10.63-10.66 10.63zm5.85-7.97c-.32-.16-1.9-.94-2.2-1.04-.29-.11-.5-.16-.72.16-.21.32-.82 1.03-1.01 1.25-.18.21-.37.24-.69.08-.32-.16-1.36-.5-2.58-1.6-.96-.85-1.6-1.9-1.79-2.22-.18-.32-.02-.5.14-.66.15-.14.32-.37.48-.56.16-.18.21-.32.32-.53.11-.21.05-.4-.03-.56-.08-.16-.72-1.74-.99-2.38-.26-.62-.52-.54-.72-.55l-.61-.01c-.21 0-.56.08-.85.4-.29.32-1.11 1.09-1.11 2.66 0 1.56 1.14 3.07 1.3 3.28.16.21 2.25 3.43 5.44 4.81.76.33 1.35.52 1.81.67.76.24 1.46.21 2 .13.61-.09 1.9-.78 2.16-1.53.27-.74.27-1.38.19-1.52-.08-.13-.29-.21-.61-.37z"/>
                         </svg>
@@ -1107,6 +1192,12 @@
 
     <footer class="footer">
         <div class="container">
+            <div class="footer-links">
+                <a class="footer-wa" href="{$contactWaUrl|escape:'html'}" target="_blank" rel="noopener"><i class="fa fa-whatsapp"></i> WhatsApp</a>
+                <a href="{$contactTelUrl|escape:'html'}"><i class="fa fa-phone"></i> {$contactDisplay|escape}</a>
+                <a href="{Text::url('faq')}"><i class="fa fa-question-circle"></i> FAQ</a>
+                <a href="#pricing">Tarifs</a>
+            </div>
             <p>&copy; {$smarty.now|date_format:"%Y"} {$companyName}. Tous droits réservés.</p>
         </div>
     </footer>
