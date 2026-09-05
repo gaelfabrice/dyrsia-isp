@@ -237,18 +237,28 @@ function hotspotModalFire(opts){
     }
 
     if(opts.input){
+      var isPhoneInput = opts.input === 'tel';
       els.box.classList.add('hs-modal-pay');
       els.title.textContent=opts.title||'';
       els.text.textContent=opts.text||'';
       if(els.html)els.html.innerHTML='';
       els.input.style.display='block';
-      els.input.type=opts.input==='tel'?'tel':String(opts.input||'text');
+      els.input.type=isPhoneInput?'tel':String(opts.input||'text');
       els.input.placeholder=opts.inputPlaceholder||'';
       els.input.value=opts.inputValue||'';
+      // Clear leftover phone constraints from a previous modal (voucher codes can be up to 12 chars).
+      ['maxlength','minlength','inputmode','pattern','name','data-lpignore'].forEach(function(attr){
+        els.input.removeAttribute(attr);
+      });
       if(opts.inputAttributes){
         Object.keys(opts.inputAttributes).forEach(function(key){
           els.input.setAttribute(key,opts.inputAttributes[key]);
         });
+      }else if(!isPhoneInput){
+        els.input.setAttribute('maxlength','32');
+        els.input.setAttribute('inputmode','text');
+        els.input.setAttribute('autocomplete','off');
+        els.input.setAttribute('autocapitalize','characters');
       }
       if(els.actions)els.actions.style.display='flex';
       els.ok.textContent=opts.confirmButtonText||'OK';
@@ -257,13 +267,17 @@ function hotspotModalFire(opts){
       els.modal.classList.add('open');
       els.modal.setAttribute('aria-hidden','false');
       setTimeout(function(){try{els.input.focus();}catch(e){}},50);
-      prepareHotspotPhoneModalInput(els.input);
+      if(isPhoneInput){
+        prepareHotspotPhoneModalInput(els.input);
+      }
       if(typeof opts.didOpen==='function'){
         try{opts.didOpen();}catch(e){}
       }
       els.cancel.onclick=function(){finish({isConfirmed:false,isDismissed:true,value:null});};
       els.ok.onclick=function(){
-        var raw=cleanHotspotPhone(els.input.value);
+        var raw = isPhoneInput
+          ? cleanHotspotPhone(els.input.value)
+          : String(els.input.value || '').trim();
         els.input.value=raw;
         if(typeof opts.inputValidator==='function'){
           var err=opts.inputValidator(raw);
@@ -501,7 +515,7 @@ function renderPlans(plans){
     const id=p.planid||p.planId||p.id||'';
     const name=p.planname||p.name||p.name_plan||'';
     const router=hotspotPaymentRouterName(p.routerName||p.routername||rn);
-    return`<div class="plan" role="button" tabindex="0" data-plan-name="${escHtml(name)}" data-plan-price="${escHtml(p.price||'')}" data-plan-currency="${escHtml(p.currency||'Fcfa')}" data-plan-validity="${escHtml(p.validity||'')}" data-plan-id="${escHtml(String(id))}" data-router-name="${escHtml(router)}"><div><div class="plan-name">⚡ ${escHtml(name)}</div><div class="plan-detail">⏱️ ${escHtml(p.validity||'')}</div></div><div><span class="plan-price">${escHtml(p.price||'')} ${escHtml(p.currency||'Fcfa')}</span><span class="badge">ILLIMITÉ</span></div></div>`;
+    return`<div class="plan" role="button" tabindex="0" data-plan-name="${escHtml(name)}" data-plan-price="${escHtml(p.price||'')}" data-plan-currency="${escHtml(p.currency||'Fcfa')}" data-plan-validity="${escHtml(p.validity||'')}" data-plan-id="${escHtml(String(id))}" data-router-name="${escHtml(router)}"><div><div class="plan-name">⚡ ${escHtml(name)}</div><div class="plan-detail">⏱️ ${escHtml(p.validity||'')}</div></div><div><span class="plan-price">${escHtml(p.price||'')} ${escHtml(p.currency||'Fcfa')}</span><span class="badge">${p.typebp === 'Unlimited' ? 'ILLIMITÉ' : 'LIMITÉ'}</span></div></div>`;
   }).join('');
   c.dataset.plansReady='1';
 }
@@ -548,9 +562,12 @@ async function loadPlans(){
     try{
       const r=await fetch(apiRouteUrl(b,'hotspot_plan'),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'routername='+encodeURIComponent(routerName)});
       const d=await r.json();
-      if(!d.data||!d.data.length||!plansMatchRouter(d.data,routerName))continue;
-      remotePlans=d.data;
-      if(isLocalHotspotApiBase(b)){renderPlans(d.data);return;}
+      if(String(d.ResultCode)==='200' && d.data && d.data.length){
+        remotePlans=d.data;
+        if(isLocalHotspotApiBase(b) || plansMatchRouter(d.data,routerName) || !routerName){
+          renderPlans(d.data);return;
+        }
+      }
     }catch(e){}
   }
   if(remotePlans){renderPlans(remotePlans);return;}
@@ -626,6 +643,20 @@ function normalizeHotspotPlainPassword(value) {
   return p;
 }
 
+function hotspotCaptiveSuccessUrl() {
+  // After auth, redirect the captive browser to an OS probe URL that returns
+  // HTTP 204 / Success so the phone flips to "Connected with Internet"
+  // instead of staying on "Connected without Internet".
+  var ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod|Macintosh/i.test(ua)) {
+    return 'http://captive.apple.com/hotspot-detect.html';
+  }
+  if (/Windows/i.test(ua)) {
+    return 'http://www.msftconnecttest.com/connecttest.txt';
+  }
+  return 'http://connectivitycheck.gstatic.com/generate_204';
+}
+
 function prepareMikrotikLogin(form) {
   if (!form) return false;
   const passwordInput = form.querySelector('input[name="password"]');
@@ -633,6 +664,10 @@ function prepareMikrotikLogin(form) {
     // PAP uniquement : mot de passe clair (pas de CHAP / MD5).
     passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
     delete passwordInput.dataset.chapDone;
+  }
+  var dst = form.querySelector('input[name="dst"]');
+  if (dst) {
+    dst.value = hotspotCaptiveSuccessUrl();
   }
   return true;
 }
@@ -763,7 +798,21 @@ window.payer=payer;
 
 async function utiliserVoucher(){
   const SwalUi=hotspotSwal();
-  const result=await SwalUi.fire({title:'🎫 Code voucher',input:'text',inputPlaceholder:'XXXX-XXXX-XXXX',showCancelButton:true,confirmButtonText:'Valider',cancelButtonText:'Annuler',inputValidator:function(v){return(!v||!String(v).trim())?'Saisissez votre code':null;}});
+  const result=await SwalUi.fire({
+    title:'🎫 Code voucher',
+    input:'text',
+    inputPlaceholder:'Entrez votre code (jusqu\'à 12 caractères)',
+    inputAttributes:{maxlength:12,inputmode:'text',autocomplete:'off',autocapitalize:'characters'},
+    showCancelButton:true,
+    confirmButtonText:'Valider',
+    cancelButtonText:'Annuler',
+    inputValidator:function(v){
+      var code=String(v||'').trim();
+      if(!code)return 'Saisissez votre code';
+      if(code.length>12)return 'Le code ne doit pas dépasser 12 caractères';
+      return null;
+    }
+  });
   const code=result&&result.value;
   if(!code||!String(code).trim())return;
   try{

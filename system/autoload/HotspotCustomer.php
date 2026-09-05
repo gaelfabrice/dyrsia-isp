@@ -518,11 +518,6 @@ class HotspotCustomer
             return false;
         }
 
-        $login = trim((string) ($trx->voucher_code ?? ''));
-        if ($login !== '' && $login !== '**********') {
-            return true;
-        }
-
         $routerName = function_exists('hotspot_normalize_router_name')
             ? hotspot_normalize_router_name((string) ($trx->router_name ?? ''))
             : trim((string) ($trx->router_name ?? ''));
@@ -530,7 +525,9 @@ class HotspotCustomer
         if ($customer && function_exists('hotspot_customer_has_active_recharge')) {
             $recharge = hotspot_customer_has_active_recharge((int) $customer->id, $routerName);
             if ($recharge) {
-                return true;
+                // Un voucher code seul ne suffit pas : il faut une recharge active associee.
+                $login = trim((string) ($recharge->username ?? ''));
+                return $login !== '' && $login !== '**********';
             }
         }
 
@@ -618,38 +615,39 @@ class HotspotCustomer
             $routerName = hotspot_normalize_router_name($routerName);
         }
 
-        $mac = Mikrotik::normalizeHotspotMacAddress((string) ($rechargeArr['device_mac'] ?? ''));
-        if (self::isPlaceholderHotspotMac($mac)) {
-            $mac = '';
+        // Priorite au MAC du dernier paiement (appareil qui a vraiment paye).
+        $customerId = (int) ($rechargeArr['customer_id'] ?? 0);
+        $planId = (int) ($rechargeArr['plan_id'] ?? 0);
+        $paymentQuery = ORM::for_table('tbl_hotspot_payments')
+            ->where('transaction_status', 'paid')
+            ->order_by_desc('id');
+        if ($routerName !== '') {
+            $paymentQuery->where('router_name', $routerName);
+        }
+        if ($login !== '') {
+            $paymentQuery->where('voucher_code', $login);
+        } elseif ($customerId > 0) {
+            $customer = ORM::for_table('tbl_customers')->find_one($customerId);
+            if ($customer && trim((string) ($customer->phonenumber ?? '')) !== '') {
+                $paymentQuery->where('phone_number', (string) $customer->phonenumber);
+            }
+        }
+        if ($planId > 0) {
+            $paymentQuery->where('plan_id', $planId);
+        }
+        $payment = $paymentQuery->find_one();
+        $mac = '';
+        if ($payment) {
+            $mac = Mikrotik::normalizeHotspotMacAddress((string) ($payment->mac_address ?? ''));
         }
 
-        if ($mac === '') {
-            $customerId = (int) ($rechargeArr['customer_id'] ?? 0);
-            $planId = (int) ($rechargeArr['plan_id'] ?? 0);
-            $paymentQuery = ORM::for_table('tbl_hotspot_payments')
-                ->where('transaction_status', 'paid')
-                ->order_by_desc('id');
-            if ($routerName !== '') {
-                $paymentQuery->where('router_name', $routerName);
-            }
-            if ($login !== '') {
-                $paymentQuery->where('voucher_code', $login);
-            } elseif ($customerId > 0) {
-                $customer = ORM::for_table('tbl_customers')->find_one($customerId);
-                if ($customer && trim((string) ($customer->phonenumber ?? '')) !== '') {
-                    $paymentQuery->where('phone_number', (string) $customer->phonenumber);
-                }
-            }
-            if ($planId > 0) {
-                $paymentQuery->where('plan_id', $planId);
-            }
-            $payment = $paymentQuery->find_one();
-            if ($payment) {
-                $mac = Mikrotik::normalizeHotspotMacAddress((string) ($payment->mac_address ?? ''));
-                if (self::isPlaceholderHotspotMac($mac)) {
-                    $mac = '';
-                }
-            }
+        // Fallback sur le MAC deja enregistre pour cette recharge.
+        if ($mac === '' || self::isPlaceholderHotspotMac($mac)) {
+            $mac = Mikrotik::normalizeHotspotMacAddress((string) ($rechargeArr['device_mac'] ?? ''));
+        }
+
+        if (self::isPlaceholderHotspotMac($mac)) {
+            $mac = '';
         }
 
         if ($mac === '' && $login !== '' && $routerName !== '') {
@@ -734,9 +732,7 @@ class HotspotCustomer
             $row = ORM::for_table('tbl_user_recharges')->find_one($rechargeId);
             if ($row) {
                 $existing = Mikrotik::normalizeHotspotMacAddress((string) ($row->device_mac ?? ''));
-                if (!self::isPlaceholderHotspotMac($existing) && $existing !== $mac) {
-                    return $existing;
-                }
+                // Le paiement en cours est la source de verite : on met a jour avec le nouvel appareil.
                 if ($existing !== $mac) {
                     $row->device_mac = $mac;
                     $row->save();
@@ -1096,6 +1092,16 @@ class HotspotCustomer
 
         foreach ($candidates as $row) {
             if (strcasecmp(trim((string) ($row->service_type ?? '')), 'Hotspot') === 0) {
+                return $row;
+            }
+        }
+
+        foreach ($candidates as $row) {
+            if (self::isPppoePrimaryCustomer($row)) {
+                continue;
+            }
+            if (function_exists('hotspot_customer_has_active_recharge')
+                && hotspot_customer_has_active_recharge((int) $row->id, '', false)) {
                 return $row;
             }
         }

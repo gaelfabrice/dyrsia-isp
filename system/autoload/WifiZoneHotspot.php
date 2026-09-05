@@ -667,7 +667,7 @@ class WifiZoneHotspot
 
         $query = ORM::for_table('tbl_plans')
             ->where('type', 'Hotspot')
-            ->where('enabled', 1)
+            ->where_raw('(enabled = 1 OR enabled = ?)', ['1'])
             ->where_raw('1 = 0'); // défaut : vide tant que le routeur n'est pas valide
 
         if ($routerName === '') {
@@ -675,15 +675,20 @@ class WifiZoneHotspot
         }
 
         $ownerId = self::routerAdminId($routerName);
-        if ($ownerId <= 0) {
-            return $query;
+        $query = ORM::for_table('tbl_plans')
+            ->where('type', 'Hotspot')
+            ->where_raw('(enabled = 1 OR enabled = ?)', ['1'])
+            ->where('routers', $routerName);
+        if ($ownerId > 0) {
+            $query->where('admin_id', $ownerId);
+        }
+        try {
+            $query->order_by_asc('tbl_plans.display_order')->order_by_asc('tbl_plans.id');
+        } catch (Throwable $e) {
+            $query->order_by_asc('tbl_plans.id');
         }
 
-        return ORM::for_table('tbl_plans')
-            ->where('type', 'Hotspot')
-            ->where('enabled', 1)
-            ->where('routers', $routerName)
-            ->where('admin_id', $ownerId);
+        return $query;
     }
 
     /**

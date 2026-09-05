@@ -47,7 +47,7 @@ switch ($action) {
         }
         $ui->assign('_title', 'Top Up');
         $ui->assign('_system_menu', 'balance');
-        $plans_balance = ORM::for_table('tbl_plans')->where('enabled', '1')->where('type', 'Balance')->where('prepaid', 'yes')->find_many();
+        $plans_balance = ORM::for_table('tbl_plans')->where('enabled', '1')->where('type', 'Balance')->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')->find_many();
         $ui->assign('plans_balance', $plans_balance);
         $ui->display('customer/orderBalance.tpl');
         break;
@@ -69,13 +69,13 @@ switch ($action) {
                     ->where('is_radius', 1)
                     ->where('type', 'PPPOE')
                     ->where_not_equal('name_plan', 'EXPIRE')
-                    ->where('prepaid', 'yes')->find_many();
+                    ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')->find_many();
                 $radius_hotspot = ORM::for_table('tbl_plans')
                     ->where('plan_type', $account_type)
                     ->where('enabled', '1')
                     ->where('is_radius', 1)
                     ->where('type', 'Hotspot')
-                    ->where('prepaid', 'yes')->find_many();
+                    ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')->find_many();
             } else {
                 $routers = order_scoped_router_query($user)->where('id', $_SESSION['nux-router'])->find_many();
                 $rs = [];
@@ -89,7 +89,7 @@ switch ($action) {
                     ->where('is_radius', 0)
                     ->where('type', 'PPPOE')
                     ->where_not_equal('name_plan', 'EXPIRE')
-                    ->where('prepaid', 'yes')
+                    ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                     ->find_many();
                 $plans_hotspot = ORM::for_table('tbl_plans')
                     ->where('plan_type', $account_type)
@@ -97,7 +97,7 @@ switch ($action) {
                     ->where_in('routers', $rs)
                     ->where('is_radius', 0)
                     ->where('type', 'Hotspot')
-                    ->where('prepaid', 'yes')
+                    ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                     ->find_many();
             }
         } else {
@@ -107,14 +107,14 @@ switch ($action) {
                 ->where('is_radius', 1)
                 ->where('type', 'PPPOE')
                 ->where_not_equal('name_plan', 'EXPIRE')
-                ->where('prepaid', 'yes')
+                ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                 ->find_many();
             $radius_hotspot = ORM::for_table('tbl_plans')
                 ->where('plan_type', $account_type)
                 ->where('enabled', '1')
                 ->where('is_radius', 1)
                 ->where('type', 'Hotspot')
-                ->where('prepaid', 'yes')
+                ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                 ->find_many();
 
             $routers = order_scoped_router_query($user)->find_many();
@@ -124,19 +124,19 @@ switch ($action) {
                 ->where('is_radius', 0)
                 ->where('type', 'PPPOE')
                 ->where_not_equal('name_plan', 'EXPIRE')
-                ->where('prepaid', 'yes')
+                ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                 ->find_many();
             $plans_hotspot = ORM::for_table('tbl_plans')
                 ->where('plan_type', $account_type)
                 ->where('enabled', '1')->where('is_radius', 0)
                 ->where('type', 'Hotspot')
-                ->where('prepaid', 'yes')
+                ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                 ->find_many();
             $plans_vpn = ORM::for_table('tbl_plans')
                 ->where('plan_type', $account_type)
                 ->where('enabled', '1')->where('is_radius', 0)
                 ->where('type', 'VPN')
-                ->where('prepaid', 'yes')
+                ->where('prepaid', 'yes')->order_by_asc('display_order')->order_by_asc('id')
                 ->find_many();
         }
         $ui->assign('routers', $routers);

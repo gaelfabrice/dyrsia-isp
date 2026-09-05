@@ -94,6 +94,8 @@ class MikrotikHotspot
             }
         }
 
+        // Kill active session + MAC cookie first, then delete the hotspot user.
+        Mikrotik::disconnectHotspotUser($client, $username);
         $this->removeHotspotUser($client, $username);
         Mikrotik::disconnectHotspotUser($client, $username);
         Mikrotik::sweepOrphanHotspotSessions($client);

@@ -303,7 +303,7 @@ class MobileMoneyGateway
             return 'const HOTSPOT_PAYMENT_GATEWAY = ' . json_encode($profile['gateway']) . ";\n"
                 . 'const HOTSPOT_PAYMENT_PROFILE = ' . $profileJson . ";\n"
                 . <<<'JS'
-        const CAMPAY_WAIT_SECONDS = 120;
+        const CAMPAY_WAIT_SECONDS = 60;
         const CAMPAY_POLL_START_DELAY_MS = 3000;
         function parsePaymentUrl(paymentUrl) {
             try {
@@ -592,7 +592,7 @@ class MobileMoneyGateway
             const url = paymentLink + (paymentLink.indexOf('?') >= 0 ? '&' : '?') + 'mac=$(mac)&ip=$(ip)';
             return '<a class="package-item" href="' + url + '" target="_self" data-plan-name="' + escapeHtml(pkg.planname || pkg.name || '') + '" data-plan-price="' + (pkg.price || '') + '" data-plan-currency="' + (pkg.currency || 'Fcfa') + '" data-plan-validity="' + escapeHtml(pkg.validity || '') + '" data-payment-url="' + url + '">' +
                 '<div class="package-name"><b>' + escapeHtml(pkg.planname || pkg.name || '') + '</b><span class="package-price">' + (pkg.price || '') + ' ' + (pkg.currency || 'Fcfa') + '</span></div>' +
-                '<div class="package-desc"><span>⏱️ Validité: ' + escapeHtml(pkg.validity || '—') + '</span><span class="badge-unlimited">♾️ ILLIMITÉ</span></div></a>';
+                '<div class="package-desc"><span>⏱️ Validité: ' + escapeHtml(pkg.validity || '—') + '</span><span class="badge-unlimited">' + (pkg.typebp === 'Unlimited' ? '♾️ ILLIMITÉ' : 'LIMITÉ') + '</span></div></a>';
         }).join('');
 
         // Add click handlers via event delegation
@@ -657,6 +657,16 @@ class MobileMoneyGateway
         if (/^[a-f0-9]{32}$/i.test(p)) return '123456';
         return p;
     }
+    function hotspotCaptiveSuccessUrl() {
+        var ua = navigator.userAgent || '';
+        if (/iPhone|iPad|iPod|Macintosh/i.test(ua)) {
+            return 'http://captive.apple.com/hotspot-detect.html';
+        }
+        if (/Windows/i.test(ua)) {
+            return 'http://www.msftconnecttest.com/connecttest.txt';
+        }
+        return 'http://connectivitycheck.gstatic.com/generate_204';
+    }
     function prepareMikrotikLogin(form) {
         if (!form) return false;
         const passwordInput = form.querySelector('input[name="password"]');
@@ -664,6 +674,10 @@ class MobileMoneyGateway
             // PAP uniquement : mot de passe clair (pas de CHAP / MD5).
             passwordInput.value = normalizeHotspotPlainPassword(passwordInput.value);
             delete passwordInput.dataset.chapDone;
+        }
+        var dst = form.querySelector('input[name="dst"]');
+        if (dst) {
+            dst.value = hotspotCaptiveSuccessUrl();
         }
         return true;
     }

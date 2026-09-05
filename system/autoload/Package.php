@@ -412,7 +412,9 @@ class Package
                     }
                 }
 
-                if (!$mikrotikRemoved && $rechargeLogin !== ''
+                // Always cut hotspot access on expiry (remove user + sessions), even if
+                // remove_customer partially succeeded or only swapped profiles.
+                if ($rechargeLogin !== ''
                     && strtolower(trim((string) ($u['type'] ?? ''))) === 'hotspot'
                     && class_exists('Mikrotik')) {
                     Mikrotik::disconnectHotspotUserOnRouter($routerName, $rechargeLogin);
@@ -427,18 +429,16 @@ class Package
                             );
                             if ($client) {
                                 Mikrotik::removeHotspotUser($client, $rechargeLogin);
+                                Mikrotik::disconnectHotspotUser($client, $rechargeLogin);
                                 Mikrotik::sweepOrphanHotspotSessions($client);
                             }
                         } catch (Throwable $e) {
-                            _log('[Expire] hotspot fallback cut failed: ' . $e->getMessage());
+                            _log('[Expire] hotspot cut failed: ' . $e->getMessage());
+                            $mikrotikRemoved = false;
                         }
+                    } elseif (!$mikrotikRemoved) {
+                        _log('[Expire] hotspot cut skipped: router not found [' . $routerName . ']');
                     }
-                }
-
-                if ($rechargeLogin !== ''
-                    && strtolower(trim((string) ($u['type'] ?? ''))) === 'hotspot'
-                    && class_exists('Mikrotik')) {
-                    Mikrotik::disconnectHotspotUserOnRouter($routerName, $rechargeLogin);
                 }
 
                 try {
@@ -515,44 +515,53 @@ class Package
     }
 
     /**
-     * Propriétaire de la recharge : admin connecté, sinon admin du routeur / du forfait (portail captif).
+     * Propriétaire de la recharge : admin du routeur, sinon du forfait.
+     * L'admin connecté n'est utilisé que s'il est le propriétaire du routeur ou du forfait,
+     * afin d'éviter qu'une recharge effectuée dans un autre tenant ne soit rattachée
+     * au mauvais admin.
      */
     public static function resolveRechargeAdminId($router_name, $plan = null)
     {
         global $admin;
 
-        if (!empty($admin['id'])) {
-            return (int) $admin['id'];
-        }
-
+        $routerAdminId = 0;
         $router_name = trim((string) $router_name);
         if ($router_name !== '' && function_exists('hotspot_normalize_router_name')) {
             $router_name = hotspot_normalize_router_name($router_name);
         }
         if ($router_name !== '' && class_exists('WifiZoneHotspot')) {
             $routerRow = WifiZoneHotspot::resolveRouterRow($router_name);
-            if (is_array($routerRow) && !empty($routerRow['name'])) {
-                $router_name = trim((string) $routerRow['name']);
-            }
             if (is_array($routerRow) && !empty($routerRow['admin_id'])) {
-                return (int) $routerRow['admin_id'];
+                $routerAdminId = (int) $routerRow['admin_id'];
             }
         }
-        if ($router_name !== '' && class_exists('WifiZoneHotspot')) {
-            $ownerId = WifiZoneHotspot::routerAdminId($router_name);
-            if ($ownerId > 0) {
-                return $ownerId;
-            }
+        if ($routerAdminId <= 0 && $router_name !== '' && class_exists('WifiZoneHotspot')) {
+            $routerAdminId = (int) WifiZoneHotspot::routerAdminId($router_name);
         }
 
+        $planAdminId = 0;
         if (is_array($plan) && !empty($plan['admin_id'])) {
-            return (int) $plan['admin_id'];
+            $planAdminId = (int) $plan['admin_id'];
         }
         if (is_object($plan) && !empty($plan->admin_id)) {
-            return (int) $plan->admin_id;
+            $planAdminId = (int) $plan->admin_id;
         }
 
-        return 0;
+        $sessionAdminId = !empty($admin['id']) ? (int) $admin['id'] : 0;
+
+        // Si l'admin connecté est bien le propriétaire du routeur ou du forfait, on le garde.
+        if ($sessionAdminId > 0 && ($sessionAdminId === $routerAdminId || $sessionAdminId === $planAdminId)) {
+            return $sessionAdminId;
+        }
+
+        if ($routerAdminId > 0) {
+            return $routerAdminId;
+        }
+        if ($planAdminId > 0) {
+            return $planAdminId;
+        }
+
+        return $sessionAdminId;
     }
 
     /**

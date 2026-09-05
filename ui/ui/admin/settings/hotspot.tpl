@@ -901,7 +901,7 @@
         </div>
     </div>
 
-    <script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.07.22"></script>
+    <script src="{$app_url}/ui/ui/scripts/hotspot-wizard.js?2026.09.05"></script>
     <script>
     window.HS_FETCH_URL = '{$hs_fetch_url|escape:'javascript'}';
     window.HS_PPPOE_FETCH_URL = '{$hs_pppoe_fetch_url|escape:'javascript'}';

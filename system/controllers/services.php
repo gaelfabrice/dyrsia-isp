@@ -160,6 +160,13 @@ function services_sync_plan_to_device($deviceClass, $plan, $action, $oldPlan = n
     }
 
     require_once $dvc;
+    if (!class_exists($deviceClass, false)) {
+        if (strcasecmp((string) $deviceClass, 'Dummy') === 0) {
+            return null;
+        }
+
+        return Lang::T('Devices Not Found');
+    }
     $driver = new $deviceClass();
 
     try {
@@ -405,7 +412,9 @@ switch ($action) {
         $ui->assign('devices', $devices);
         $query = ORM::for_table('tbl_bandwidth')
             ->left_outer_join('tbl_plans', array('tbl_bandwidth.id', '=', 'tbl_plans.id_bw'))
-            ->where('tbl_plans.type', 'Hotspot');
+            ->where('tbl_plans.type', 'Hotspot')
+            ->order_by_asc('tbl_plans.display_order')
+            ->order_by_asc('tbl_plans.id');
         AdminScope::applyPlansQuery($query, $admin, 'tbl_plans.admin_id');
 
         if (!empty($type1)) {
@@ -577,6 +586,7 @@ case 'hotspot-bulk-delete':
         $enabled = _post('enabled');
         $prepaid = _post('prepaid');
         $expired_date = _post('expired_date');
+        $display_order = (int) _post('display_order');
 
         $msg = '';
         if (Validator::UnsignedNumber($validity) == false) {
@@ -624,9 +634,9 @@ case 'hotspot-bulk-delete':
             $d->typebp = $typebp;
             $d->plan_type = $plan_type;
             $d->limit_type = $limit_type;
-            $d->time_limit = $time_limit;
+            $d->time_limit = (int) $time_limit;
             $d->time_unit = $time_unit;
-            $d->data_limit = $data_limit;
+            $d->data_limit = (int) $data_limit;
             $d->data_unit = $data_unit;
             $d->validity = $validity;
             $d->validity_unit = $validity_unit;
@@ -640,6 +650,7 @@ case 'hotspot-bulk-delete':
             }
             $d->enabled = $enabled;
             $d->prepaid = $prepaid;
+            $d->display_order = $display_order;
             $d->device = $device;
             if ($prepaid == 'no') {
                 if ($expired_date > 28 && $expired_date < 1) {
@@ -694,6 +705,7 @@ case 'hotspot-bulk-delete':
         $on_login = _post('on_login');
         $on_logout = _post('on_logout');
         $expired_date = _post('expired_date');
+        $display_order = (int) _post('display_order');
         $msg = '';
         if (Validator::UnsignedNumber($validity) == false) {
             $msg .= 'The validity must be a number' . '<br>';
@@ -748,9 +760,9 @@ case 'hotspot-bulk-delete':
             $d->price_old = $price_old;
             $d->typebp = $typebp;
             $d->limit_type = $limit_type;
-            $d->time_limit = $time_limit;
+            $d->time_limit = (int) $time_limit;
             $d->time_unit = $time_unit;
-            $d->data_limit = $data_limit;
+            $d->data_limit = (int) $data_limit;
             $d->plan_type = $plan_type;
             $d->data_unit = $data_unit;
             $d->validity = $validity;
@@ -759,6 +771,7 @@ case 'hotspot-bulk-delete':
             $d->plan_expired = $plan_expired;
             $d->enabled = $enabled;
             $d->prepaid = $prepaid;
+            $d->display_order = $display_order;
             $d->on_login = $on_login;
             $d->on_logout = $on_logout;
             $d->device = $device;

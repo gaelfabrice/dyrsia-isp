@@ -646,19 +646,37 @@
         return $row ? trim((string) $row['name']) : $routerInput;
     }
 
-    function hotspot_customer_has_active_recharge($customerId, $routerName = '')
+    function hotspot_customer_has_active_recharge($customerId, $routerName = '', $resolveFromRequest = true)
     {
         if ((int) $customerId <= 0) {
             return null;
         }
-        $routerName = hotspot_normalize_router_name($routerName);
+        $routerName = trim((string) $routerName);
+        if ($resolveFromRequest) {
+            $routerName = hotspot_normalize_router_name($routerName);
+        } elseif ($routerName !== '') {
+            $resolved = hotspot_resolve_router($routerName);
+            if ($resolved) {
+                $routerName = trim((string) $resolved['name']);
+            }
+        }
         $q = ORM::for_table('tbl_user_recharges')
             ->where('customer_id', (int) $customerId)
             ->where('status', 'on')
             ->where('type', 'Hotspot')
             ->order_by_desc('id');
         if ($routerName !== '') {
-            $q->where('routers', $routerName);
+            $aliases = [$routerName];
+            $resolved = hotspot_resolve_router($routerName);
+            if ($resolved && class_exists('AdminScope')) {
+                $aliases = array_merge($aliases, AdminScope::routerAliasesFromRow($resolved));
+            }
+            $aliases = array_values(array_unique(array_filter(array_map('trim', $aliases))));
+            if (count($aliases) === 1) {
+                $q->where('routers', $aliases[0]);
+            } elseif ($aliases !== []) {
+                $q->where_in('routers', $aliases);
+            }
         }
         foreach ($q->find_many() as $recharge) {
             if (Package::isRechargeActive($recharge)) {
@@ -697,7 +715,10 @@
             return null;
         }
         $local = substr($digits, -9);
-        $routerName = hotspot_normalize_router_name($routerName);
+        $routerName = trim((string) $routerName);
+        if ($routerName !== '') {
+            $routerName = hotspot_normalize_router_name($routerName);
+        }
         $q = ORM::for_table('tbl_hotspot_payments')
             ->where('transaction_status', 'paid')
             ->order_by_desc('id');
@@ -723,8 +744,10 @@
             return false;
         }
 
+        // On ne "retry" que si CamPay a confirmé le paiement (ou un autre gateway).
+        // Un statut pending/failed ne donne jamais droit à une activation.
         $status = (string) $trx->transaction_status;
-        if (!in_array($status, ['paid', 'pending', 'failed'], true)) {
+        if ($status !== 'paid') {
             return false;
         }
 
@@ -804,7 +827,21 @@
             exit;
         }
 
-        $hotspotplan = WifiZoneHotspot::plansQueryForRouter($routername)->find_many();
+        $hotspotplan = [];
+        try {
+            $hotspotplan = WifiZoneHotspot::plansQueryForRouter($routername)->find_many();
+        } catch (Throwable $e) {
+            try {
+                $hotspotplan = ORM::for_table('tbl_plans')
+                    ->where('type', 'Hotspot')
+                    ->where_raw('(enabled = 1 OR enabled = ?)', ['1'])
+                    ->where('routers', $routername)
+                    ->order_by_asc('id')
+                    ->find_many();
+            } catch (Throwable $e2) {
+                $hotspotplan = [];
+            }
+        }
 
         if (count($hotspotplan) > 0) {
             $response = [
@@ -849,6 +886,7 @@
                                 'paymentlink' => $paymentlink,
                                 'planid' => $planId,
                                 'planId' => $planId,
+                                'typebp' => $limittype,
                                 'routerName' => $routername
                             ];
                             $response['data'][] = $data;
@@ -873,7 +911,8 @@
                                         'paymentlink' => $paymentlink,
                                         'planid' => $planId,
                                 'planId' => $planId,
-                                        'routerName' => $routername
+                                        'typebp' => $limittype,
+                                'routerName' => $routername
                                     ];
                                     $response['data'][] = $data;
                                     break;
@@ -894,7 +933,8 @@
                                         'paymentlink' => $paymentlink,
                                         'planid' => $planId,
                                 'planId' => $planId,
-                                        'routerName' => $routername
+                                        'typebp' => $limittype,
+                                'routerName' => $routername
                                     ];
                                     $response['data'][] = $data;
                                     break;
@@ -916,29 +956,54 @@
                                         'paymentlink' => $paymentlink,
                                         'planid' => $planId,
                                 'planId' => $planId,
-                                        'routerName' => $routername
+                                        'typebp' => $limittype,
+                                'routerName' => $routername
                                     ];
                                     $response['data'][] = $data;
                                     break;
                                 default:
-                                    _log(
-                                        'Hotspot plan skipped (unknown limit type): '
-                                        . (string) ($row->name_plan ?? '')
-                                        . ' / ' . (string) ($row->limit_type ?? ''),
-                                        'Hotspot',
-                                        0
-                                    );
+                                    $validity = "{$row->validity} {$row->validity_unit}";
+                                    $data = [
+                                        'plantype' => "Time Limit",
+                                        'planname' => $row->name_plan,
+                                        'currency' => $currency,
+                                        'price' => $row->price,
+                                        'downlimit' => $downlimit,
+                                        'uplimit' => $uplimit,
+                                        'timelimit' => "Unlimited",
+                                        'validity' => $validity,
+                                        'device' => $row->shared_users,
+                                        'datalimit' => 'Unlimited',
+                                        'paymentlink' => $paymentlink,
+                                        'planid' => $planId,
+                                        'planId' => $planId,
+                                        'typebp' => $limittype !== '' ? $limittype : 'Unlimited',
+                                        'routerName' => $routername
+                                    ];
+                                    $response['data'][] = $data;
                                     break;
                             }
                             break;
                         default:
-                            _log(
-                                'Hotspot plan skipped (unknown bandwidth type): '
-                                . (string) ($row->name_plan ?? '')
-                                . ' / ' . (string) $limittype,
-                                'Hotspot',
-                                0
-                            );
+                            $validity = "{$row->validity} {$row->validity_unit}";
+                            $data = [
+                                'plantype' => "Time Limit",
+                                'planname' => $row->name_plan,
+                                'currency' => $currency,
+                                'price' => $row->price,
+                                'downlimit' => $downlimit,
+                                'uplimit' => $uplimit,
+                                'timelimit' => "Unlimited",
+                                'validity' => $validity,
+                                'device' => $row->shared_users,
+                                'datalimit' => 'Unlimited',
+                                'paymentlink' => $paymentlink,
+                                'planid' => $planId,
+                                'planId' => $planId,
+                                'typebp' => $limittype !== '' ? $limittype : 'Unlimited',
+                                'routerName' => $routername
+                            ];
+                            $response['data'][] = $data;
                             break;
                     }
             }
@@ -1682,10 +1747,8 @@
                     $check = hotspot_pg_mypvit_sync_transaction($check);
                 }
             }
-            if ((string) $check->transaction_status === 'pending' && function_exists('hotspot_retry_activate_payment')) {
-                hotspot_retry_activate_payment($check);
-                $check = ORM::for_table('tbl_hotspot_payments')->find_one($check->id) ?: $check;
-            }
+            // Un paiement pending ne doit JAMAIS être activé localement sans confirmation de CamPay.
+            // La synchronisation ci-dessus met à jour le statut ; si CamPay ne confirme pas, on reste pending.
             $status = (string) $check->transaction_status;
             $payload = [
                 'status' => $status,

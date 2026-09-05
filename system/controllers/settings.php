@@ -15,6 +15,26 @@ if (in_array($action, ['app', 'app-post', 'miscellaneous', 'miscellaneous-post',
     _alert(Lang::T('You do not have permission to access this page'), 'danger', "dashboard");
 }
 
+function settings_begin_router_api_json($seconds = 180)
+{
+    $seconds = max(30, (int) $seconds);
+    @ignore_user_abort(true);
+    @set_time_limit($seconds);
+    @ini_set('max_execution_time', (string) $seconds);
+    @ini_set('default_socket_timeout', '30');
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+    while (ob_get_level() > 0) {
+        @ob_end_clean();
+    }
+    if (!headers_sent()) {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        header('X-Accel-Buffering: no');
+    }
+}
+
 function settings_scoped_router_query($admin)
 {
     $query = ORM::for_table('tbl_routers');
@@ -1365,9 +1385,7 @@ switch ($action) {
         }
 
         if (!empty($_GET['fetch_router_setup'])) {
-            @set_time_limit(90);
-            @ini_set('max_execution_time', '90');
-            header('Content-Type: application/json; charset=utf-8');
+            settings_begin_router_api_json(180);
             $routerName = trim((string) ($_GET['router'] ?? ''));
             if ($routerName === '') {
                 echo json_encode(['ok' => false, 'message' => 'Sélectionnez un routeur.']);
@@ -1395,7 +1413,7 @@ switch ($action) {
             $client = null;
             try {
                 $endpoint = Mikrotik::parseEndpoint($mikrotik['ip_address']);
-                $probe = Mikrotik::probeApiReachable($mikrotik['ip_address'], 3);
+                $probe = Mikrotik::probeApiReachable($mikrotik['ip_address'], 10);
                 if ($probe !== true) {
                     echo json_encode([
                         'ok' => false,
@@ -1412,10 +1430,10 @@ switch ($action) {
                     $mikrotik['ip_address'],
                     $mikrotik['username'],
                     $routerPass,
-                    12,
+                    25,
                     true,
                     true,
-                    12
+                    25
                 );
                 if (!$client) {
                     echo json_encode([
@@ -1880,7 +1898,7 @@ HTML;
                 if (strpos($html, 'logHotspotError') === false) {
                     $html = preg_replace(
                         '/\/\* ===== CONNEXION ===== \*\/\s*document\.getElementById\(\'loginBtn\'\)\.addEventListener\(\'click\', \(\) => \{\s*const form = document\.getElementById\(\'loginForm\'\);\s*if \(form\) form\.submit\(\);\s*\}\);/s',
-                        "/* ===== CONNEXION ===== */\n    function showVoucherError(message, targetId) {\n        const errDiv = document.getElementById(targetId || 'formError');\n        if (!errDiv) return;\n        errDiv.textContent = message;\n        errDiv.style.opacity = '1';\n        errDiv.style.display = 'block';\n    }\n\n    function fillAndSubmitLogin(username, password) {\n        const form = document.getElementById('loginForm');\n        const usernameInput = document.getElementById('loginUsername');\n        const passwordInput = document.getElementById('loginPassword');\n        if (usernameInput) usernameInput.value = username || '';\n        if (passwordInput) passwordInput.value = password || username || '';\n        if (form) form.submit();\n    }\n\n    function packageHtml(pkg) {\n        if (!pkg) return '';\n        return '<div style=\"text-align:left;margin-top:10px\"><b>Forfait:</b> ' + escapeHtml(pkg.name || '') + '<br><b>Prix:</b> ' + escapeHtml(String(pkg.price || '')) + '<br><b>Validité:</b> ' + escapeHtml(pkg.validity || '') + '</div>';\n    }\n\n    async function validateAndConnect(endpoint, body, errorId) {\n        const response = await fetch(APP_URL + '/index.php?_route=plugin/' + endpoint, {\n            method: 'POST',\n            headers: {'Content-Type': 'application/x-www-form-urlencoded'},\n            body: body\n        });\n        const data = await response.json();\n        if (!data.success) {\n            showVoucherError(data.message || 'Validation impossible', errorId);\n            return;\n        }\n        await Swal.fire({title: data.message || 'Validation réussie', html: packageHtml(data.package) + '<br>Connexion en cours...', icon: 'success', timer: 1800, showConfirmButton: false});\n        fillAndSubmitLogin(data.username, data.password || data.username);\n    }\n\n    function logHotspotError(message, code) {\n        fetch(APP_URL + '/index.php?_route=plugin/hotspot_log', {\n            method: 'POST',\n            headers: {'Content-Type': 'application/x-www-form-urlencoded'},\n            body: 'message=' + encodeURIComponent(message) +\n                '&code=' + encodeURIComponent(code || '') +\n                '&mac=' + encodeURIComponent(CLIENT_MAC || '$(mac)') +\n                '&ip=' + encodeURIComponent('$(ip)') +\n                '&router=' + encodeURIComponent(HOTSPOT_ROUTER_NAME || '$(identity)')\n        }).catch(function() {});\n    }\n\n    document.getElementById('toggleVoucherBtn').addEventListener('click', () => {\n        document.getElementById('voucherForm').classList.toggle('open');\n        const input = document.getElementById('voucherCode');\n        if (input) input.focus();\n    });\n\n    document.getElementById('voucherLoginBtn').addEventListener('click', () => {\n        const voucher = document.getElementById('voucherCode').value.trim();\n        if (!voucher) return showVoucherError('Veuillez saisir votre voucher.', 'voucherError');\n        validateAndConnect('hotspot_voucher_check', 'voucher=' + encodeURIComponent(voucher), 'voucherError').catch(() => showVoucherError('Erreur de validation voucher.', 'voucherError'));\n    });\n\n    document.getElementById('recoverPlanBtn').addEventListener('click', () => {\n        document.getElementById('recoverForm').classList.toggle('open');\n        const input = document.getElementById('recoverPhone');\n        if (input) input.focus();\n    });\n\n    document.getElementById('recoverSubmitBtn').addEventListener('click', () => {\n        const phone = document.getElementById('recoverPhone').value.replace(/\\D/g, '');\n        if (phone.length !== 9) return showVoucherError('Le numéro doit contenir 9 chiffres.', 'recoverError');\n        validateAndConnect('hotspot_recover_plan', 'phone=' + encodeURIComponent(phone), 'recoverError').catch(() => showVoucherError('Erreur de récupération.', 'recoverError'));\n    });\n\n    document.getElementById('loginBtn').addEventListener('click', () => {\n        const username = document.getElementById('loginUsername').value.trim();\n        const password = document.getElementById('loginPassword').value.trim();\n        if (!username || !password) return showVoucherError('Identifiant et mot de passe requis.', 'formError');\n        validateAndConnect('hotspot_account_check', 'username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password), 'formError').catch(() => showVoucherError('Erreur de validation compte.', 'formError'));\n    });",
+                        "/* ===== CONNEXION ===== */\n    function showVoucherError(message, targetId) {\n        const errDiv = document.getElementById(targetId || 'formError');\n        if (!errDiv) return;\n        errDiv.textContent = message;\n        errDiv.style.opacity = '1';\n        errDiv.style.display = 'block';\n    }\n\n    function fillAndSubmitLogin(username, password) {\n        const form = document.getElementById('loginForm');\n        const usernameInput = document.getElementById('loginUsername');\n        const passwordInput = document.getElementById('loginPassword');\n        if (usernameInput) usernameInput.value = username || '';\n        if (passwordInput) passwordInput.value = password || username || '';\n        if (typeof prepareMikrotikLogin === 'function') prepareMikrotikLogin(form);\n        if (form) form.submit();\n    }\n\n    function packageHtml(pkg) {\n        if (!pkg) return '';\n        return '<div style=\"text-align:left;margin-top:10px\"><b>Forfait:</b> ' + escapeHtml(pkg.name || '') + '<br><b>Prix:</b> ' + escapeHtml(String(pkg.price || '')) + '<br><b>Validité:</b> ' + escapeHtml(pkg.validity || '') + '</div>';\n    }\n\n    async function validateAndConnect(endpoint, body, errorId) {\n        const response = await fetch(APP_URL + '/index.php?_route=plugin/' + endpoint, {\n            method: 'POST',\n            headers: {'Content-Type': 'application/x-www-form-urlencoded'},\n            body: body\n        });\n        const data = await response.json();\n        if (!data.success) {\n            showVoucherError(data.message || 'Validation impossible', errorId);\n            return;\n        }\n        await Swal.fire({title: data.message || 'Validation réussie', html: packageHtml(data.package) + '<br>Connexion en cours...', icon: 'success', timer: 1800, showConfirmButton: false});\n        fillAndSubmitLogin(data.username, data.password || data.username);\n    }\n\n    function logHotspotError(message, code) {\n        fetch(APP_URL + '/index.php?_route=plugin/hotspot_log', {\n            method: 'POST',\n            headers: {'Content-Type': 'application/x-www-form-urlencoded'},\n            body: 'message=' + encodeURIComponent(message) +\n                '&code=' + encodeURIComponent(code || '') +\n                '&mac=' + encodeURIComponent(CLIENT_MAC || '$(mac)') +\n                '&ip=' + encodeURIComponent('$(ip)') +\n                '&router=' + encodeURIComponent(HOTSPOT_ROUTER_NAME || '$(identity)')\n        }).catch(function() {});\n    }\n\n    document.getElementById('toggleVoucherBtn').addEventListener('click', () => {\n        document.getElementById('voucherForm').classList.toggle('open');\n        const input = document.getElementById('voucherCode');\n        if (input) input.focus();\n    });\n\n    document.getElementById('voucherLoginBtn').addEventListener('click', () => {\n        const voucher = document.getElementById('voucherCode').value.trim();\n        if (!voucher) return showVoucherError('Veuillez saisir votre voucher.', 'voucherError');\n        validateAndConnect('hotspot_voucher_check', 'voucher=' + encodeURIComponent(voucher), 'voucherError').catch(() => showVoucherError('Erreur de validation voucher.', 'voucherError'));\n    });\n\n    document.getElementById('recoverPlanBtn').addEventListener('click', () => {\n        document.getElementById('recoverForm').classList.toggle('open');\n        const input = document.getElementById('recoverPhone');\n        if (input) input.focus();\n    });\n\n    document.getElementById('recoverSubmitBtn').addEventListener('click', () => {\n        const phone = document.getElementById('recoverPhone').value.replace(/\\D/g, '');\n        if (phone.length !== 9) return showVoucherError('Le numéro doit contenir 9 chiffres.', 'recoverError');\n        validateAndConnect('hotspot_recover_plan', 'phone=' + encodeURIComponent(phone), 'recoverError').catch(() => showVoucherError('Erreur de récupération.', 'recoverError'));\n    });\n\n    document.getElementById('loginBtn').addEventListener('click', () => {\n        const username = document.getElementById('loginUsername').value.trim();\n        const password = document.getElementById('loginPassword').value.trim();\n        if (!username || !password) return showVoucherError('Identifiant et mot de passe requis.', 'formError');\n        validateAndConnect('hotspot_account_check', 'username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password), 'formError').catch(() => showVoucherError('Erreur de validation compte.', 'formError'));\n    });",
                         $html,
                         1
                     );
@@ -1892,7 +1910,7 @@ HTML;
                 }
                 $html = preg_replace(
                     "/document\\.getElementById\\('toggleVoucherBtn'\\)\\.addEventListener\\('click', \\(\\) => \\{.*?\\n    \\}\\);/s",
-                    "document.getElementById('toggleVoucherBtn').addEventListener('click', async () => {\n        const result = await Swal.fire({\n            title: \"🎫 J'AI UN CODE\",\n            input: 'text',\n            inputPlaceholder: 'Entrez votre code voucher',\n            showCancelButton: true,\n            confirmButtonText: 'Valider',\n            cancelButtonText: 'Annuler',\n            inputValidator: (value) => !value || !value.trim() ? 'Veuillez saisir votre voucher.' : undefined\n        });\n        if (result.isConfirmed) {\n            validateAndConnect('hotspot_voucher_check', 'voucher=' + encodeURIComponent(result.value.trim()), 'formError').catch(() => Swal.fire('Erreur', 'Erreur de validation voucher.', 'error'));\n        }\n    });",
+                    "document.getElementById('toggleVoucherBtn').addEventListener('click', async () => {\n        const result = await Swal.fire({\n            title: \"🎫 J'AI UN CODE\",\n            input: 'text',\n            inputPlaceholder: 'Entrez votre code voucher (jusqu\\'à 12 caractères)',\n            inputAttributes: {maxlength: 12, inputmode: 'text', autocomplete: 'off', autocapitalize: 'characters'},\n            showCancelButton: true,\n            confirmButtonText: 'Valider',\n            cancelButtonText: 'Annuler',\n            inputValidator: (value) => {\n                const code = String(value || '').trim();\n                if (!code) return 'Veuillez saisir votre voucher.';\n                if (code.length > 12) return 'Le code ne doit pas dépasser 12 caractères.';\n                return undefined;\n            }\n        });\n        if (result.isConfirmed) {\n            validateAndConnect('hotspot_voucher_check', 'voucher=' + encodeURIComponent(result.value.trim()), 'formError').catch(() => Swal.fire('Erreur', 'Erreur de validation voucher.', 'error'));\n        }\n    });",
                     $html,
                     1
                 );
@@ -2728,9 +2746,7 @@ HTML;
         };
 
         if (!empty($_GET['fetch_router_setup'])) {
-            @set_time_limit(120);
-            @ini_set('max_execution_time', '120');
-            header('Content-Type: application/json; charset=utf-8');
+            settings_begin_router_api_json(180);
             $routerName = trim((string) ($_GET['router'] ?? ''));
             if ($routerName === '') {
                 echo json_encode(['ok' => false, 'message' => 'Sélectionnez un routeur.']);
@@ -2752,7 +2768,7 @@ HTML;
             }
             try {
                 $endpoint = Mikrotik::parseEndpoint($mikrotik['ip_address']);
-                $probe = Mikrotik::probeApiReachable($mikrotik['ip_address'], 3);
+                $probe = Mikrotik::probeApiReachable($mikrotik['ip_address'], 10);
                 if ($probe !== true) {
                     echo json_encode([
                         'ok' => false,
@@ -2760,7 +2776,7 @@ HTML;
                     ]);
                     exit;
                 }
-                $client = Mikrotik::getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password'], 8, true, true, 8);
+                $client = Mikrotik::getClient($mikrotik['ip_address'], $mikrotik['username'], $mikrotik['password'], 25, true, true, 25);
                 if (!$client) {
                     echo json_encode(['ok' => false, 'message' => 'Connexion MikroTik impossible (VPN / API injoignable).']);
                     exit;

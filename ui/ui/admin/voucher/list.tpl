@@ -84,6 +84,16 @@
                     </div>
                 </div>
             </div>
+            <div class="row" style="padding: 5px">
+                <div class="col-lg-2 col-md-3 col-sm-4 col-xs-6">
+                    <select class="form-control" id="per_page" name="per_page" title="{Lang::T('Per Page')}"
+                        onchange="this.form.submit()">
+                        {foreach $allowed_per_page as $n}
+                            <option value="{$n}" {if $per_page eq $n}selected{/if}>{$n} / {Lang::T('Page')}</option>
+                        {/foreach}
+                    </select>
+                </div>
+            </div>
         </form>
     </div>
     <div class="table-responsive">
@@ -108,7 +118,7 @@
                 <tbody>
                     {foreach $d as $ds}
                         <tr {if $ds['status'] eq '1' }class="danger" {/if}>
-                            <td><input type="checkbox" name="voucher_ids[]" value="{$ds['id']}"></td>
+                            <td><input type="checkbox" name="voucher_ids[]" value="{$ds['id']}" class="voucher-check"></td>
                             <td>{$ds['id']}</td>
                             <td>{$ds['type']}</td>
                             <td>{$ds['routers']}</td>
@@ -154,8 +164,7 @@
         <div class="btn-group btn-group-justified" role="group">
             <div class="btn-group" role="group">
                 {if in_array($_admin['user_type'],['SuperAdmin','Admin'])}
-                    <button id="deleteSelectedVouchers" class="btn btn-danger">{Lang::T('Delete
-                    Selected')}</button>
+                    <button type="button" id="deleteSelectedVouchers" class="btn btn-danger">{Lang::T('Delete Selected')}</button>
                 {/if}
             </div>
         </div>
@@ -164,96 +173,101 @@
 {include file="pagination.tpl"}
 
 <script>
-    function deleteVouchers(voucherIds) {
-        if (voucherIds.length > 0) {
-            Swal.fire({
-                title: 'Are you sure?',
-                text: 'You won\'t be able to revert this!',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: 'Yes, delete it!',
-                cancelButtonText: 'Cancel'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    var xhr = new XMLHttpRequest();
-                    xhr.open('POST', '{Text::url('')}plan/voucher-delete-many', true);
-                    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-                    xhr.onload = function() {
-                        if (xhr.status === 200) {
-                            var response = JSON.parse(xhr.responseText);
+(function () {
+    var deleteUrl = '{Text::url('plan/voucher-delete-many')}';
 
-                            if (response.status === 'success') {
-                                Swal.fire({
-                                    title: 'Deleted!',
-                                    text: response.message,
-                                    icon: 'success',
-                                    confirmButtonText: 'OK'
-                                }).then(() => {
-                                    location.reload(); // Reload the page after confirmation
-                                });
-                            } else {
-                                Swal.fire({
-                                    title: 'Error!',
-                                    text: response.message,
-                                    icon: 'error',
-                                    confirmButtonText: 'OK'
-                                });
-                            }
-                        } else {
-                            Swal.fire({
-                                title: 'Error!',
-                                text: 'Failed to delete vouchers. Please try again.',
-                                icon: 'error',
-                                confirmButtonText: 'OK'
-                            });
-                        }
-                    };
-                    xhr.send('voucherIds=' + JSON.stringify(voucherIds));
-                }
-            });
-        } else {
-            Swal.fire({
-                title: 'Error!',
-                text: 'No vouchers selected to delete.',
-                icon: 'error',
-                confirmButtonText: 'OK'
-            });
+    function showAlert(title, text, icon) {
+        if (typeof Swal !== 'undefined') {
+            return Swal.fire({ title: title, text: text, icon: icon, confirmButtonText: 'OK' });
         }
+        window.alert(title + (text ? '\n' + text : ''));
+        return Promise.resolve();
     }
 
-    // Example usage for selected vouchers
-    document.getElementById('deleteSelectedVouchers').addEventListener('click', function() {
-        var selectedVouchers = [];
-        document.querySelectorAll('input[name="voucher_ids[]"]:checked').forEach(function(checkbox) {
-            selectedVouchers.push(checkbox.value);
-        });
-
-        if (selectedVouchers.length > 0) {
-            deleteVouchers(selectedVouchers);
-        } else {
-            Swal.fire({
-                title: 'Error!',
-                text: 'Please select at least one voucher to delete.',
-                icon: 'error',
-                confirmButtonText: 'OK'
+    function confirmDelete(count) {
+        if (typeof Swal !== 'undefined') {
+            return Swal.fire({
+                title: '{Lang::T('Are you sure?')}',
+                text: '{Lang::T('Delete')} ' + count + '?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: '{Lang::T('Delete')}',
+                cancelButtonText: '{Lang::T('Cancel')}'
+            }).then(function (result) {
+                return !!(result && (result.isConfirmed || result.value));
             });
         }
-    });
+        return Promise.resolve(window.confirm('{Lang::T('Delete')}?'));
+    }
 
-    document.querySelectorAll('.delete-voucher').forEach(function(button) {
-        button.addEventListener('click', function() {
-            var voucherId = this.getAttribute('data-id');
-            deleteVouchers([voucherId]);
-        });
-    });
-
-
-    // Select or deselect all checkboxes
-    document.getElementById('select-all').addEventListener('change', function() {
-        var checkboxes = document.querySelectorAll('input[name="voucher_ids[]"]');
-        for (var checkbox of checkboxes) {
-            checkbox.checked = this.checked;
+    function deleteVouchers(voucherIds) {
+        if (!voucherIds.length) {
+            showAlert('Error!', '{Lang::T('Please select at least one voucher to delete.')}', 'error');
+            return;
         }
-    });
+
+        confirmDelete(voucherIds.length).then(function (ok) {
+            if (!ok) {
+                return;
+            }
+
+            var body = 'voucherIds=' + encodeURIComponent(JSON.stringify(voucherIds));
+            if (typeof CSRF_TOKEN !== 'undefined' && CSRF_TOKEN) {
+                body += '&csrf_token=' + encodeURIComponent(CSRF_TOKEN);
+            }
+
+            fetch(deleteUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: body
+            }).then(function (res) {
+                return res.text().then(function (text) {
+                    var data = null;
+                    try {
+                        data = JSON.parse(text);
+                    } catch (e) {
+                        throw new Error(text ? text.substring(0, 180) : 'Invalid server response');
+                    }
+                    if (!res.ok || !data || data.status !== 'success') {
+                        throw new Error((data && data.message) ? data.message : 'Failed to delete vouchers');
+                    }
+                    return data;
+                });
+            }).then(function (data) {
+                return showAlert('Deleted!', data.message || '{Lang::T('Vouchers Deleted Successfully.')}', 'success').then(function () {
+                    location.reload();
+                });
+            }).catch(function (err) {
+                showAlert('Error!', (err && err.message) ? err.message : '{Lang::T('Failed to delete vouchers.')}', 'error');
+            });
+        });
+    }
+
+    var deleteBtn = document.getElementById('deleteSelectedVouchers');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', function () {
+            var selected = [];
+            document.querySelectorAll('input[name="voucher_ids[]"]:checked').forEach(function (checkbox) {
+                if (checkbox.value) {
+                    selected.push(checkbox.value);
+                }
+            });
+            deleteVouchers(selected);
+        });
+    }
+
+    var selectAll = document.getElementById('select-all');
+    if (selectAll) {
+        selectAll.addEventListener('change', function () {
+            document.querySelectorAll('input[name="voucher_ids[]"]').forEach(function (checkbox) {
+                checkbox.checked = selectAll.checked;
+            });
+        });
+    }
+})();
 </script>
 {include file="sections/footer.tpl"}

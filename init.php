@@ -39,13 +39,17 @@ if (!function_exists('wifizone_bootstrap_long_request_limits')) {
         $uri = strtolower((string) ($_SERVER['REQUEST_URI'] ?? ''));
         $route = strtolower(trim((string) ($_GET['_route'] ?? $_POST['_route'] ?? '')));
         $isDev = (getenv('APP_STAGE') ?: '') === 'Dev';
-        $longRequest = preg_match('#(?:^|/)(settings/(hotspot|pppoe-setup)|services/|routers/(add-post|edit-post|test-connection))#', $route) === 1
+        $longRequest = preg_match('#(?:^|/)(settings/(hotspot|pppoe-setup)|services/|routers/(add-post|edit-post|test-connection)|plugin/backup_(create_full|restore_full|add|restore))#', $route) === 1
             || str_contains($uri, 'pppoe-setup')
             || str_contains($uri, 'settings/hotspot')
             || str_contains($uri, 'services/sync')
             || str_contains($uri, 'routers/add-post')
             || str_contains($uri, 'routers/edit-post')
             || str_contains($uri, 'routers/test-connection')
+            || str_contains($uri, 'plugin/backup_create_full')
+            || str_contains($uri, 'plugin/backup_restore_full')
+            || str_contains($uri, 'plugin/backup_add')
+            || str_contains($uri, 'plugin/backup_restore')
             || !empty($_GET['fetch_router_setup'])
             || !empty($_POST['ajax_deploy'])
             || !empty($_POST['ajax_hotspot_deploy'])
@@ -121,6 +125,37 @@ if (!file_exists($UPLOAD_PATH . File::pathFixer('/notifications.default.json')))
 }
 
 require_once $root_path . 'config.php';
+
+// Mode Dev (dev-server.sh) : la config locale .env / variables d'environnement
+// prime sur config.php (identifiants Live) pour ne pas casser le working copy prod.
+if ((getenv('APP_STAGE') ?: '') === 'Dev') {
+    $_app_stage = 'Dev';
+    $envHost = getenv('DB_HOST');
+    $envUser = getenv('DB_USERNAME') ?: getenv('DB_USER');
+    $envName = getenv('DB_DATABASE') ?: getenv('DB_NAME');
+    if ($envHost !== false && $envHost !== '') {
+        $db_host = $envHost;
+    }
+    if ($envUser !== false && $envUser !== '') {
+        $db_user = $envUser;
+    }
+    if ($envName !== false && $envName !== '') {
+        $db_name = $envName;
+    }
+    $envPass = getenv('DB_PASSWORD');
+    if ($envPass === false) {
+        $envPass = getenv('DB_PASS');
+    }
+    if ($envPass !== false) {
+        $db_pass = $envPass;
+        $db_password = $envPass;
+    }
+    $radius_host = $db_host;
+    $radius_user = $db_user;
+    $radius_pass = $db_pass;
+    $radius_name = $db_name;
+    $radius_password = $db_pass;
+}
 
 if (!defined('APP_URL') || !isset($db_host, $db_user, $db_name, $db_pass, $_app_stage)) {
     $sampleConfig = $root_path . 'config.sample.php';

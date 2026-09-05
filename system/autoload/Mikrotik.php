@@ -4718,15 +4718,9 @@ class Mikrotik
         }
     }
 
-    private static function ensurePppoeCaptiveDetectionDns($client, $backendIp)
+    private static function pppoeCaptiveProbeHosts(): array
     {
-        $backendIp = trim((string) $backendIp);
-        if ($backendIp === '') {
-            return [];
-        }
-
-        $errors = [];
-        $hosts = [
+        return [
             'connectivitycheck.gstatic.com',
             'clients3.google.com',
             'www.msftconnecttest.com',
@@ -4735,7 +4729,79 @@ class Mikrotik
             'www.apple.com',
             'detectportal.firefox.com',
         ];
-        foreach ($hosts as $host) {
+    }
+
+    private static function routerHasHotspotServer($client): bool
+    {
+        try {
+            foreach ($client->sendSync(
+                (new RouterOS\Request('/ip/hotspot/print'))
+                    ->setArgument('.proplist', '.id,disabled')
+            ) as $row) {
+                if ($row->getType() === 'trap') {
+                    continue;
+                }
+                if ((string) $row->getProperty('disabled') !== 'true') {
+                    return true;
+                }
+            }
+        } catch (Throwable $e) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Remove global DNS static hijacks for OS captive probes.
+     * Those statics break authorized Hotspot clients ("Connected without internet").
+     */
+    private static function removePppoeCaptiveDetectionDns($client): array
+    {
+        $errors = [];
+        foreach (self::pppoeCaptiveProbeHosts() as $host) {
+            try {
+                $existing = $client->sendSync(
+                    (new RouterOS\Request('/ip/dns/static/print'))
+                        ->setArgument('.proplist', '.id')
+                        ->setQuery(RouterOS\Query::where('name', $host))
+                );
+                foreach ($existing as $row) {
+                    if ($row->getType() === 'trap') {
+                        continue;
+                    }
+                    $id = $row->getProperty('.id');
+                    if ($id === null || $id === '') {
+                        continue;
+                    }
+                    $client->sendSync(
+                        (new RouterOS\Request('/ip/dns/static/remove'))
+                            ->setArgument('numbers', $id)
+                    );
+                }
+            } catch (Throwable $e) {
+                $errors[] = $host . ': ' . $e->getMessage();
+            }
+        }
+
+        return $errors;
+    }
+
+    private static function ensurePppoeCaptiveDetectionDns($client, $backendIp)
+    {
+        $backendIp = trim((string) $backendIp);
+        if ($backendIp === '') {
+            return [];
+        }
+
+        // Hotspot + PPPoE on the same router: never hijack probe hosts via DNS static.
+        // Expired PPPoE clients already use address-list NAT redirect instead.
+        if (self::routerHasHotspotServer($client)) {
+            return self::removePppoeCaptiveDetectionDns($client);
+        }
+
+        $errors = [];
+        foreach (self::pppoeCaptiveProbeHosts() as $host) {
             $result = self::ensureHotspotDnsStatic($client, $host, $backendIp);
             if (empty($result['ok'])) {
                 $errors[] = $host . ': ' . implode(' | ', $result['errors'] ?? ['dns static']);
@@ -6805,6 +6871,7 @@ class Mikrotik
                         . rawurlencode($routerName) . '&planid=' . $planId . '&amount=' . rawurlencode($price),
                     'routername' => $routerName,
                     'routerName' => $routerName,
+                    'typebp' => (string) ($plan['typebp'] ?? ''),
                 ];
             }
         } catch (Exception $e) {
@@ -6831,12 +6898,14 @@ class Mikrotik
             $currency = htmlspecialchars((string) ($plan['currency'] ?? 'XAF'), ENT_QUOTES, 'UTF-8');
             $validity = htmlspecialchars((string) ($plan['validity'] ?? ''), ENT_QUOTES, 'UTF-8');
             $planId = htmlspecialchars((string) ($plan['planid'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $typebp = (string) ($plan['typebp'] ?? '');
+            $badge = $typebp === 'Unlimited' ? 'ILLIMITÉ' : 'LIMITÉ';
             $chunks[] = '<div class="plan" role="button" tabindex="0" data-plan-name="' . $planName . '" data-plan-price="' . $price
                 . '" data-plan-currency="' . $currency . '" data-plan-validity="' . $validity
                 . '" data-plan-id="' . $planId . '" data-router-name="' . $routerName
                 . '"><div><div class="plan-name">⚡ ' . $planName . '</div><div class="plan-detail">⏱️ '
                 . $validity . '</div></div><div><span class="plan-price">' . $price . ' ' . $currency
-                . '</span><span class="badge">ILLIMITÉ</span></div></div>';
+                . '</span><span class="badge">' . $badge . '</span></div></div>';
         }
 
         return implode("\n", $chunks);
@@ -6886,7 +6955,7 @@ class Mikrotik
             1
         ) ?? $html;
 
-        $routerNameJs = 'const HOTSPOT_ROUTER_NAME = ' . json_encode($routerName !== '' ? $routerName : 'HP') . ';';
+        $routerNameJs = 'const HOTSPOT_ROUTER_NAME = ' . json_encode($routerName) . ';';
         $html = preg_replace('/const HOTSPOT_ROUTER_NAME = .*?;/s', $routerNameJs, $html, 1) ?? $html;
 
         $paymentGateway = trim((string) ($config['hotspot_payment_gateway'] ?? 'campay'));

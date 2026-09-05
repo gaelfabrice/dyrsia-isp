@@ -9,7 +9,7 @@
     CustomLog "/www/wwwlogs/wifizones.org-access_log" combined
 
     #DENY FILES
-     <Files ~ (\.user.ini|\.htaccess|\.git|\.env|\.svn|\.project|LICENSE|README.md)$>
+     <Files ~ (\.user.ini|\.htaccess|\.git|\.env|\.svn|\.project|LICENSE|README.md|config\.php)$>
        Order allow,deny
        Deny from all
     </Files>
@@ -52,7 +52,7 @@
     </FilesMatch>
 
     #DENY FILES
-     <Files ~ (\.user.ini|\.htaccess|\.git|\.env|\.svn|\.project|LICENSE|README.md)$>
+     <Files ~ (\.user.ini|\.htaccess|\.git|\.env|\.svn|\.project|LICENSE|README.md|config\.php)$>
        Order allow,deny
        Deny from all
     </Files>

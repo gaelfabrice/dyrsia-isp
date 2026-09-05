@@ -174,9 +174,17 @@ function backup_add($is_CLi = false)
             }
             $backupFile = $backupDir . '/backup_' . date('Y-m-d_H-i-s') . '.sql';
 
-            $command = "mysqldump --user={$db_user} --password={$db_pass} --host={$db_host} {$db_name} --result-file={$backupFile} 2>&1";
-            $output = shell_exec($command);
-            if (file_exists($backupFile)) {
+            $dumped = class_exists('WifiZoneBackup')
+                ? WifiZoneBackup::dumpDatabase($backupFile)
+                : false;
+            if (!$dumped) {
+                $command = "mysqldump --user={$db_user} --password={$db_pass} --host={$db_host} {$db_name} --result-file={$backupFile} 2>&1";
+                $output = function_exists('shell_exec') ? shell_exec($command) : null;
+                if (!empty($output)) {
+                    _log('backup_add mysqldump: ' . $output);
+                }
+            }
+            if (file_exists($backupFile) && filesize($backupFile) >= 32) {
                 // Cloud upload
                 if (isset($config['cloud_upload']) && $config['cloud_upload']) {
                     try {
@@ -198,9 +206,11 @@ function backup_add($is_CLi = false)
                 }
                 r2(U . 'plugin/backup_list', 's', Lang::T("Database backup created successfully."));
             } else {
-                // Log the error
-                _log(Lang::T("Error creating backup: ") . $output);
-                sendTelegram(Lang::T("Error creating backup: ") . $output);
+                $failDetail = isset($output) && $output !== null && $output !== ''
+                    ? (string) $output
+                    : 'dump failed (mysqldump/PDO)';
+                _log(Lang::T("Error creating backup: ") . $failDetail);
+                sendTelegram(Lang::T("Error creating backup: ") . $failDetail);
                 r2(U . 'plugin/backup_list', 'e', Lang::T("Error creating database backup. Check the log for details."));
             }
         } else {
@@ -209,9 +219,14 @@ function backup_add($is_CLi = false)
     } else {
         // CLI mode
         $backupFile = $backupDir . '/backup_' . date('Y-m-d_H-i-s') . '.sql';
-        $command = "mysqldump --user={$db_user} --password={$db_pass} --host={$db_host} {$db_name} --result-file={$backupFile} 2>&1";
-        $output = shell_exec($command);
-        if (file_exists($backupFile)) {
+        $dumped = class_exists('WifiZoneBackup')
+            ? WifiZoneBackup::dumpDatabase($backupFile)
+            : false;
+        if (!$dumped) {
+            $command = "mysqldump --user={$db_user} --password={$db_pass} --host={$db_host} {$db_name} --result-file={$backupFile} 2>&1";
+            $output = function_exists('shell_exec') ? shell_exec($command) : null;
+        }
+        if (file_exists($backupFile) && filesize($backupFile) >= 32) {
             return true;
         }
 
@@ -223,34 +238,167 @@ function backup_add($is_CLi = false)
     }
 }
 
+function backup_wants_json(): bool
+{
+    $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
+    $xhr = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? ''));
+    if ($xhr === 'xmlhttprequest' || str_contains($accept, 'application/json')) {
+        return true;
+    }
+
+    // Explicit opt-in only (avoid turning normal form posts into raw JSON).
+    return _req('format') === 'json';
+}
+
+function backup_json(array $payload, int $code = 200): void
+{
+    if (!headers_sent()) {
+        http_response_code($code);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 function backup_create_full(): void
 {
-    global $_app_stage;
     _admin();
     $admin = Admin::_info();
+    $asJson = backup_wants_json();
 
     if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        if ($asJson) {
+            backup_json(['ok' => false, 'error' => Lang::T('You do not have permission to access this page')], 403);
+        }
         _alert(Lang::T('You do not have permission to access this page'), 'danger', 'dashboard');
         exit;
     }
 
     if (backup_stage_locked()) {
+        if ($asJson) {
+            backup_json(['ok' => false, 'error' => Lang::T('Backup is disabled in Demo mode')], 403);
+        }
         r2(U . 'plugin/backup_list', 'e', Lang::T('Backup is disabled in Demo mode'));
     }
 
+    if (strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
+        if ($asJson) {
+            backup_json(['ok' => false, 'error' => Lang::T('Invalid request method.')], 405);
+        }
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid request method.'));
+    }
+
     $csrfToken = _post('csrf_token');
+    if ($csrfToken === '') {
+        $csrfToken = _req('token');
+    }
     if (!Csrf::check($csrfToken)) {
+        if ($asJson) {
+            backup_json(['ok' => false, 'error' => Lang::T('Invalid or Expired CSRF Token') . '.'], 419);
+        }
         r2(U . 'plugin/backup_list', 'e', Lang::T('Invalid or Expired CSRF Token') . '.');
     }
 
+    if (!class_exists('WifiZoneBackup')) {
+        if ($asJson) {
+            backup_json(['ok' => false, 'error' => 'Classe WifiZoneBackup introuvable'], 500);
+        }
+        r2(U . 'plugin/backup_list', 'e', Lang::T('Error creating full backup') . ': Classe WifiZoneBackup introuvable');
+    }
+
+    @ini_set('max_execution_time', '0');
+    @set_time_limit(0);
+    @ini_set('memory_limit', '512M');
+    @ignore_user_abort(true);
+
     try {
-        $filePath = WifiZoneBackup::createFullBackup('manual');
-        _log('[' . $admin['username'] . ']: Full backup created ' . basename($filePath), $admin['user_type']);
-        r2(U . 'plugin/backup_list', 's', Lang::T('Full backup created successfully') . ': ' . basename($filePath));
+        $job = WifiZoneBackup::queueFullBackupJob('manual');
+        $jobId = (string) $job['id'];
+        $spawned = WifiZoneBackup::spawnFullBackupJob($jobId);
+
+        if (!$spawned) {
+            // Fallback: run in this process (after closing the HTTP response when possible).
+            if ($asJson && class_exists('DeployAsyncHttp') && DeployAsyncHttp::canRunHeavyWorkInSameProcess()) {
+                DeployAsyncHttp::sendJsonAndCloseConnection(json_encode([
+                    'ok' => true,
+                    'started' => true,
+                    'async' => true,
+                    'job_id' => $jobId,
+                    'message' => 'Sauvegarde complète en cours…',
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                $result = WifiZoneBackup::runFullBackupJob($jobId);
+                if (!empty($result['ok'])) {
+                    _log('[' . $admin['username'] . ']: Full backup created ' . ($result['job']['file'] ?? ''), $admin['user_type']);
+                }
+                exit;
+            }
+
+            $result = WifiZoneBackup::runFullBackupJob($jobId);
+            if (empty($result['ok'])) {
+                throw new RuntimeException((string) ($result['error'] ?? 'Échec sauvegarde complète'));
+            }
+            _log('[' . $admin['username'] . ']: Full backup created ' . ($result['job']['file'] ?? ''), $admin['user_type']);
+            if ($asJson) {
+                backup_json([
+                    'ok' => true,
+                    'started' => false,
+                    'async' => false,
+                    'job_id' => $jobId,
+                    'file' => $result['job']['file'] ?? null,
+                    'message' => Lang::T('Full backup created successfully') . ': ' . ($result['job']['file'] ?? ''),
+                ]);
+            }
+            r2(U . 'plugin/backup_list', 's', Lang::T('Full backup created successfully') . ': ' . ($result['job']['file'] ?? ''));
+        }
+
+        if ($asJson) {
+            backup_json([
+                'ok' => true,
+                'started' => true,
+                'async' => true,
+                'job_id' => $jobId,
+                'message' => 'Sauvegarde complète démarrée…',
+            ]);
+        }
+        r2(U . 'plugin/backup_list', 's', 'Sauvegarde complète démarrée. Actualisez dans quelques secondes.');
     } catch (Throwable $e) {
         _log('backup_create_full: ' . $e->getMessage());
+        if ($asJson) {
+            backup_json(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
         r2(U . 'plugin/backup_list', 'e', Lang::T('Error creating full backup') . ': ' . $e->getMessage());
     }
+}
+
+function backup_create_full_status(): void
+{
+    _admin();
+    $admin = Admin::_info();
+    if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
+        backup_json(['ok' => false, 'error' => Lang::T('You do not have permission to access this page')], 403);
+    }
+
+    $jobId = trim((string) (_get('job_id') ?: _req('job_id') ?: ''));
+    if ($jobId === '' || !preg_match('/^[A-Za-z0-9._-]+$/', $jobId)) {
+        backup_json(['ok' => false, 'error' => 'job_id invalide'], 400);
+    }
+
+    $job = WifiZoneBackup::readFullBackupJob($jobId);
+    if ($job === null) {
+        backup_json(['ok' => false, 'error' => 'Job introuvable', 'status' => 'missing'], 404);
+    }
+
+    backup_json([
+        'ok' => true,
+        'job_id' => $jobId,
+        'status' => $job['status'] ?? 'unknown',
+        'file' => $job['file'] ?? null,
+        'size' => $job['size'] ?? null,
+        'error' => $job['error'] ?? null,
+        'telegram' => $job['telegram'] ?? null,
+        'updated_at' => $job['updated_at'] ?? null,
+    ]);
 }
 
 function backup_download_full(): void
@@ -834,42 +982,31 @@ function backup_uploadToCloud(string $filePath): void
     }
 }
 
-function backup_sendToTelegram(string $filePath): void
+function backup_sendToTelegram(string $filePath, string $label = ''): void
 {
-    global $config;
-
     if (!is_file($filePath)) {
         throw new \RuntimeException("File not found: $filePath");
     }
 
-    if (empty($config['backup_telegram_upload']) && !Message::isBackupAutoEnabled()) {
+    $label = trim($label) !== '' ? $label : Lang::T('Database Backup');
+    $result = class_exists('WifiZoneBackup')
+        ? WifiZoneBackup::sendBackupFileToTelegram($filePath, $label)
+        : ['ok' => false, 'error' => 'WifiZoneBackup missing'];
+
+    if (!empty($result['ok'])) {
+        _log(Lang::T('Backup file sent via Telegram successfully'));
         return;
     }
 
-    $fileName = basename($filePath);
-    $chatId = trim((string) ($config['backup_telegram_chatId'] ?? ''));
-    if ($chatId === '') {
-        $chatId = null;
-    }
-
-    $sizeMb = round(filesize($filePath) / 1024 / 1024, 2);
-    if ($sizeMb > WifiZoneBackup::TELEGRAM_MAX_MB) {
-        _log(Lang::T('Telegram backup upload skipped: file too large') . " ({$sizeMb} MB)");
-        Message::sendTelegram(Lang::T('Backup file too large for Telegram') . " ({$sizeMb} MB): {$fileName}", $chatId);
+    if (!empty($result['skipped'])) {
+        $reason = (string) ($result['reason'] ?? 'skipped');
+        if ($reason === 'file_too_large') {
+            _log(Lang::T('Telegram backup upload skipped: file too large') . ' (' . ($result['size_mb'] ?? '?') . ' MB)');
+        }
         return;
     }
 
-    $caption = Lang::T('Database Backup') . ": {$fileName}\n" . date('Y-m-d H:i:s') . " — {$sizeMb} MB";
-    $response = Message::sendTelegramDocument($filePath, $caption, $chatId);
-
-    if (!Message::isTelegramSuccess($response)) {
-        _log(Lang::T('Telegram backup upload failed'));
-        Message::sendTelegram(Lang::T('Failed to send backup file via Telegram'));
-        return;
-    }
-
-    _log(Lang::T('Backup file sent via Telegram successfully'));
-    Message::sendTelegram(Lang::T('Backup file sent via Telegram successfully'));
+    _log(Lang::T('Telegram backup upload failed') . ': ' . (string) ($result['error'] ?? 'unknown'));
 }
 function backup_upload_form(): void
 {

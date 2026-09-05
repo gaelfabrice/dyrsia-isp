@@ -27,7 +27,7 @@ function plan_scoped_plan_query($admin)
 function plan_list_apply_filters($query, $admin, $search, $router, $plan, $type, $status = null)
 {
     if ($admin['user_type'] != 'SuperAdmin') {
-        $query->where('tbl_user_recharges.admin_id', $admin['id']);
+        $query = AdminScope::applyRechargesQuery($query, $admin);
     }
     if ($search != '') {
         $query->where_raw(
@@ -111,6 +111,134 @@ function plan_apply_voucher_scope($query, $admin)
         $query->where_in('tbl_voucher.generated_by', $ids);
     }
     return $query;
+}
+
+/**
+ * Remove hotspot user(s) linked to a voucher from the MikroTik router
+ * and immediately cut any active internet session (active + cookie + host).
+ */
+function plan_remove_voucher_from_mikrotik($voucher): bool
+{
+    global $_app_stage;
+
+    if ($_app_stage === 'demo' || $_app_stage === 'Demo' || !class_exists('Mikrotik')) {
+        return true;
+    }
+
+    if (is_object($voucher) && method_exists($voucher, 'as_array')) {
+        $voucher = $voucher->as_array();
+    } elseif (!is_array($voucher)) {
+        $voucher = (array) $voucher;
+    }
+
+    $routerName = trim((string) ($voucher['routers'] ?? ''));
+    $code = trim((string) ($voucher['code'] ?? ''));
+    $assignedUser = trim((string) ($voucher['user'] ?? ''));
+    if ($routerName === '') {
+        return false;
+    }
+
+    $logins = [];
+    if ($code !== '') {
+        $logins[$code] = true;
+    }
+    if ($assignedUser !== '' && $assignedUser !== '0') {
+        $logins[$assignedUser] = true;
+    }
+
+    $recharges = [];
+    if ($code !== '' || ($assignedUser !== '' && $assignedUser !== '0')) {
+        try {
+            $query = ORM::for_table('tbl_user_recharges');
+            if ($code !== '' && $assignedUser !== '' && $assignedUser !== '0') {
+                $query->where_raw(
+                    '(`method` LIKE ? OR `username` = ? OR `username` = ?)',
+                    ['%' . $code . '%', $code, $assignedUser]
+                );
+            } elseif ($code !== '') {
+                $query->where_raw('(`method` LIKE ? OR `username` = ?)', ['%' . $code . '%', $code]);
+            } else {
+                $query->where('username', $assignedUser);
+            }
+            $recharges = $query->find_many();
+            foreach ($recharges as $recharge) {
+                $login = trim((string) ($recharge['username'] ?? ''));
+                if ($login !== '') {
+                    $logins[$login] = true;
+                }
+                $rRouter = trim((string) ($recharge['routers'] ?? ''));
+                if ($rRouter !== '' && $routerName === '') {
+                    $routerName = $rRouter;
+                }
+            }
+        } catch (Throwable $e) {
+            _log('Voucher MikroTik lookup failed [' . $code . ']: ' . $e->getMessage());
+        }
+    }
+
+    // Close related recharges in DB so cron/UI stop treating them as active.
+    foreach ($recharges as $recharge) {
+        try {
+            if ((string) ($recharge['status'] ?? '') === 'on') {
+                $recharge->status = 'off';
+                $recharge->save();
+            }
+        } catch (Throwable $e) {
+            _log('Voucher recharge close failed: ' . $e->getMessage());
+        }
+    }
+
+    if ($logins === []) {
+        return true;
+    }
+
+    $ok = true;
+    foreach (array_keys($logins) as $login) {
+        try {
+            $result = Mikrotik::disconnectHotspotUserOnRouter($routerName, $login);
+            if (empty($result['ok'])) {
+                $ok = false;
+            }
+        } catch (Throwable $e) {
+            $ok = false;
+            _log('Voucher disconnect failed [' . $login . '@' . $routerName . ']: ' . $e->getMessage());
+        }
+    }
+
+    try {
+        $router = ORM::for_table('tbl_routers')->where('name', $routerName)->find_one();
+        if ($router) {
+            $client = Mikrotik::getClient(
+                $router['ip_address'],
+                $router['username'],
+                Mikrotik::routerPassword($router['password']),
+                30
+            );
+            if ($client) {
+                foreach (array_keys($logins) as $login) {
+                    try {
+                        Mikrotik::removeHotspotUser($client, $login);
+                    } catch (Throwable $e) {
+                        _log('Voucher MikroTik user remove failed [' . $login . '@' . $routerName . ']: ' . $e->getMessage());
+                    }
+                }
+                try {
+                    Mikrotik::sweepOrphanHotspotSessions($client);
+                } catch (Throwable $e) {
+                }
+            } else {
+                $ok = false;
+            }
+        } else {
+            $ok = false;
+            _log('Voucher MikroTik remove skipped: router not found [' . $routerName . ']');
+        }
+    } catch (Throwable $e) {
+        $ok = false;
+        _log('Voucher MikroTik remove failed [' . $code . '@' . $routerName . ']: ' . $e->getMessage());
+    }
+
+    return $ok;
 }
 
 $select2_customer = <<<EOT
@@ -785,14 +913,25 @@ if ($admin['user_type'] != 'SuperAdmin') {
         $customer = _req('customer');
         $plan = _req('plan');
         $status = _req('status');
+        $allowedPerPage = [10, 25, 50];
+        $per_page = (int) _req('per_page', 50);
+        if (!in_array($per_page, $allowedPerPage, true)) {
+            $per_page = 50;
+        }
         $ui->assign('router', $router);
         $ui->assign('customer', $customer);
         $ui->assign('status', $status);
         $ui->assign('plan', $plan);
+        $ui->assign('per_page', $per_page);
+        $ui->assign('allowed_per_page', $allowedPerPage);
         $ui->assign('_system_menu', 'cards');
 
-        $query = ORM::for_table('tbl_plans')
-            ->inner_join('tbl_voucher', ['tbl_plans.id', '=', 'tbl_voucher.id_plan']);
+        // Select voucher columns explicitly: SELECT * on a plans⋈voucher join
+        // makes `id` ambiguous (plan id vs voucher id) and breaks bulk delete.
+        $query = ORM::for_table('tbl_voucher')
+            ->select('tbl_voucher.*')
+            ->select('tbl_plans.name_plan', 'name_plan')
+            ->inner_join('tbl_plans', ['tbl_plans.id', '=', 'tbl_voucher.id_plan']);
         plan_apply_voucher_scope($query, $admin);
 
         if (!empty($router)) {
@@ -811,7 +950,12 @@ if ($admin['user_type'] != 'SuperAdmin') {
             $query->where('tbl_voucher.user', $customer);
         }
 
-        $append_url = "&search=" . urlencode($search) . "&router=" . urlencode($router) . "&customer=" . urlencode($customer) . "&plan=" . urlencode($plan) . "&status=" . urlencode($status);
+        $append_url = "&search=" . urlencode($search)
+            . "&router=" . urlencode($router)
+            . "&customer=" . urlencode($customer)
+            . "&plan=" . urlencode($plan)
+            . "&status=" . urlencode($status)
+            . "&per_page=" . $per_page;
 
         // option customers
         $customersQuery = ORM::for_table('tbl_voucher')->distinct()->select("user")->whereNotEqual("user", '0');
@@ -855,10 +999,10 @@ if ($admin['user_type'] != 'SuperAdmin') {
                 $query->where_in('generated_by', $sales);
             }
         }
-        $d = Paginator::findMany($query, ["search" => $search], 10, $append_url);
+        $d = Paginator::findMany($query, ["search" => $search], $per_page, $append_url);
         // extract admin
         $admins = [];
-        foreach ($d as $k) {
+        foreach ($d ?: [] as $k) {
             if (!empty($k['generated_by'])) {
                 $admins[] = $k['generated_by'];
             }
@@ -914,6 +1058,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
             $jml = 0;
             foreach ($d as $v) {
                 if (!ORM::for_table('tbl_user_recharges')->where_equal("method", 'Voucher - ' . $v['code'])->findOne()) {
+                    plan_remove_voucher_from_mikrotik($v);
                     $v->delete();
                     $jml++;
                 }
@@ -927,6 +1072,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
         $limit = _post('limit');
         $vpl = _post('vpl');
         $selected_datetime = _post('selected_datetime');
+        $selected_date = ($selected_datetime == 'Today') ? date('Y-m-d') : $selected_datetime;
         if (empty($vpl)) {
             $vpl = 3;
         }
@@ -975,7 +1121,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
             $v = ORM::for_table('tbl_plans')
                 ->left_outer_join('tbl_voucher', array('tbl_plans.id', '=', 'tbl_voucher.id_plan'))
                 ->where('tbl_voucher.status', '0')
-                ->where_raw("DATE(created_at) = ?", [$selected_datetime])
+                ->where_raw("DATE(tbl_voucher.created_at) = ?", [$selected_date])
                 ->where_gt('tbl_voucher.id', $from_id)
                 ->limit($limit);
             $vc = ORM::for_table('tbl_plans')
@@ -995,11 +1141,12 @@ if ($admin['user_type'] != 'SuperAdmin') {
             $v = ORM::for_table('tbl_plans')
                 ->left_outer_join('tbl_voucher', array('tbl_plans.id', '=', 'tbl_voucher.id_plan'))
                 ->where('tbl_voucher.status', '0')
-                ->where('tbl_voucher.created_at', $selected_datetime)
+                ->where_raw("DATE(tbl_voucher.created_at) = ?", [$selected_date])
                 ->limit($limit);
             $vc = ORM::for_table('tbl_plans')
                 ->left_outer_join('tbl_voucher', array('tbl_plans.id', '=', 'tbl_voucher.id_plan'))
-                ->where('tbl_voucher.status', '0');
+                ->where('tbl_voucher.status', '0')
+                ->where_raw("DATE(tbl_voucher.created_at) = ?", [$selected_date]);
         }
         if (in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             $v = $v->find_many();
@@ -1027,12 +1174,13 @@ if ($admin['user_type'] != 'SuperAdmin') {
         $ui->assign('limit', $limit);
         $ui->assign('planid', $planid);
 
+        // MySQL 8 rejects TIMESTAMP comparisons with '0' (error 1525).
         $createdate = ORM::for_table('tbl_voucher')
             ->select_expr(
                 "CASE WHEN DATE(created_at) = CURDATE() THEN 'Today' ELSE DATE(created_at) END",
                 'created_datetime'
             )
-            ->where_not_equal('created_at', '0')
+            ->where_raw("created_at IS NOT NULL AND created_at > '1970-01-01 00:00:00'")
             ->select_expr('COUNT(*)', 'voucher_count')
             ->group_by('created_datetime')
             ->order_by_desc('created_datetime')
@@ -1149,42 +1297,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
                 $d->admin_id = $admin['user_type'] == 'SuperAdmin' ? null : $admin['id'];
                 $d->save();
                 $newVoucherIds[] = $d->id();
-
-                $selectedPlan = ORM::for_table('tbl_plans')->find_one($plan);
-                if ($_app_stage != 'demo' && $selectedPlan) {
-                    $dvc = Package::getDevice($selectedPlan);
-                    if (file_exists($dvc)) {
-                        require_once $dvc;
-                        try {
-                            $router = ORM::for_table('tbl_routers')->where('name', $selectedPlan['routers'])->find_one();
-                            $routerHost = '';
-                            $routerPort = 8728;
-                            if ($router) {
-                                $routerAddress = explode(':', $router['ip_address']);
-                                $routerHost = $routerAddress[0];
-                                $routerPort = !empty($routerAddress[1]) ? (int) $routerAddress[1] : 8728;
-                            }
-                            $connection = $routerHost !== '' ? @fsockopen($routerHost, $routerPort, $errno, $errstr, 2) : false;
-                            if ($connection) {
-                                fclose($connection);
-                                $loginUsername = HotspotCustomer::generateUsername(10);
-                                $voucherCustomer = [
-                                    'fullname' => 'Voucher',
-                                    'email' => '',
-                                    'username' => $loginUsername,
-                                    'password' => HotspotCustomer::defaultPassword(),
-                                ];
-                                (new $selectedPlan['device'])->add_customer($voucherCustomer, $selectedPlan);
-                                $d->user = $loginUsername;
-                                $d->save();
-                            } else {
-                                _log('Voucher MikroTik sync skipped [' . $d->code . ']: router unreachable', $admin['user_type'], $admin['id']);
-                            }
-                        } catch (Throwable $e) {
-                            _log('Voucher MikroTik sync failed [' . $d->code . ']: ' . $e->getMessage(), $admin['user_type'], $admin['id']);
-                        }
-                    }
-                }
+                // MikroTik user is created on activation (refill / captive portal), not at generation.
             }
 
             if ($printNow == 'yes' && count($newVoucherIds) > 0) {
@@ -1231,41 +1344,54 @@ if ($admin['user_type'] != 'SuperAdmin') {
         break;
 
     case 'voucher-delete-many':
-        header('Content-Type: application/json');
-
-        $admin = Admin::_info();
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        header('Content-Type: application/json; charset=utf-8');
 
         if (!in_array($admin['user_type'], ['SuperAdmin', 'Admin'])) {
             echo json_encode(['status' => 'error', 'message' => Lang::T('You do not have permission to access this page')]);
             exit;
         }
 
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $voucherIds = json_decode($_POST['voucherIds'], true);
-
-            if (is_array($voucherIds) && !empty($voucherIds)) {
-                $voucherIds = array_map('intval', $voucherIds);
-
-                try {
-                    ORM::for_table('tbl_voucher')
-                        ->where_in('id', $voucherIds)
-                        ->delete_many();
-                } catch (Exception $e) {
-                    echo json_encode(['status' => 'error', 'message' => Lang::T('Failed to delete vouchers.')]);
-                    exit;
-                }
-
-                // Return success response
-                echo json_encode(['status' => 'success', 'message' => Lang::T("Vouchers Deleted Successfully.")]);
-                exit;
-            } else {
-                echo json_encode(['status' => 'error', 'message' => Lang::T("Invalid or missing voucher IDs.")]);
-                exit;
-            }
-        } else {
-            echo json_encode(['status' => 'error', 'message' => Lang::T("Invalid request method.")]);
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            echo json_encode(['status' => 'error', 'message' => Lang::T('Invalid request method.')]);
+            exit;
         }
-        break;
+
+        $rawIds = $_POST['voucherIds'] ?? _post('voucherIds');
+        if (is_string($rawIds)) {
+            $voucherIds = json_decode($rawIds, true);
+            if (!is_array($voucherIds)) {
+                $voucherIds = array_filter(array_map('trim', explode(',', $rawIds)));
+            }
+        } elseif (is_array($rawIds)) {
+            $voucherIds = $rawIds;
+        } else {
+            $voucherIds = [];
+        }
+
+        $voucherIds = array_values(array_unique(array_filter(array_map('intval', (array) $voucherIds))));
+        if (empty($voucherIds)) {
+            echo json_encode(['status' => 'error', 'message' => Lang::T('Invalid or missing voucher IDs.')]);
+            exit;
+        }
+
+        try {
+            $rows = ORM::for_table('tbl_voucher')->where_in('id', $voucherIds)->find_many();
+            foreach ($rows as $row) {
+                plan_remove_voucher_from_mikrotik($row);
+                $row->delete();
+            }
+            echo json_encode([
+                'status' => 'success',
+                'message' => Lang::T('Vouchers Deleted Successfully.'),
+                'deleted' => count($rows),
+            ]);
+        } catch (Throwable $e) {
+            echo json_encode(['status' => 'error', 'message' => Lang::T('Failed to delete vouchers.')]);
+        }
+        exit;
 
     case 'voucher-view':
         $id = $routes[2];
@@ -1330,6 +1456,7 @@ if ($admin['user_type'] != 'SuperAdmin') {
         run_hook('delete_voucher'); #HOOK
         $d = ORM::for_table('tbl_voucher')->find_one($id);
         if ($d) {
+            plan_remove_voucher_from_mikrotik($d);
             $d->delete();
             r2(getUrl('plan/voucher'), 's', Lang::T('Data Deleted Successfully'));
         }
@@ -1503,7 +1630,11 @@ if (empty($show) || $show == '') {
 
         $ui->assign('_title', Lang::T('Customer List'));
 
-        Package::processExpiredRecharges(['silent' => true, 'min_interval' => 60]);
+        Package::processExpiredRecharges([
+            'silent' => true,
+            'min_interval' => 60,
+            'reinforce_routers' => true,
+        ]);
         
         // ডাটা রিসিভ করা (URL বা Form থেকে)
         // প্যাগিনেশনে যেন সার্চ ডেটা না হারায় তাই _req ব্যবহার করা হলো

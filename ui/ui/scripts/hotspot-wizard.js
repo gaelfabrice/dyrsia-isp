@@ -20,6 +20,23 @@
     var ROUTER_STORAGE_KEY = 'hs_wizard_router';
     var persistRouterTimer = null;
     var SYNC_CACHE_TTL_MS = 120000;
+    var FETCH_SETUP_TIMEOUT_MS = 120000;
+    var fetchGeneration = 0;
+
+    function hsSameOriginUrl(url) {
+        url = String(url || '');
+        if (!url) {
+            return '';
+        }
+        try {
+            var parsed = new URL(url, window.location.href);
+            parsed.protocol = window.location.protocol;
+            parsed.host = window.location.host;
+            return parsed.toString();
+        } catch (e) {
+            return url;
+        }
+    }
 
     function getAllowedRouters() {
         if (window.HS_ALLOWED_ROUTERS && Array.isArray(window.HS_ALLOWED_ROUTERS)) {
@@ -767,45 +784,74 @@
             } catch (e) {}
         }
         fetchAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var myGeneration = ++fetchGeneration;
+        var timedOut = false;
+        var timeoutId = setTimeout(function () {
+            timedOut = true;
+            if (fetchAbortController) {
+                try {
+                    fetchAbortController.abort();
+                } catch (e) {}
+            }
+        }, FETCH_SETUP_TIMEOUT_MS);
 
         setSyncStatus('loading', 'Synchronisation avec « ' + routerName + ' »…');
         window.HS_SYNC_IN_PROGRESS = true;
         fetchInFlightRouter = routerName;
         var qs = '&router=' + encodeURIComponent(routerName)
-            + '&hotspot_name=' + encodeURIComponent(val('hotspot_name') || '');
+            + '&hotspot_name=' + encodeURIComponent(val('hotspot_name') || '')
+            + '&_ts=' + Date.now();
         if (isTrunkMode()) {
             qs += '&include_pppoe=1';
         }
-        fetchInFlight = fetch(
-            fetchUrl + qs,
-            {
-                headers: { Accept: 'application/json' },
+
+        function parseSetupResponse(r) {
+            return r.text().then(function (body) {
+                if (!r.ok) {
+                    var httpDetail = String(body || '')
+                        .replace(/<[^>]*>/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .slice(0, 300);
+                    throw new Error('HTTP ' + r.status + (httpDetail ? ' : ' + httpDetail : ''));
+                }
+                try {
+                    return JSON.parse(body);
+                } catch (e) {
+                    var detail = String(body || '')
+                        .replace(/<[^>]*>/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .slice(0, 300);
+                    throw new Error('Réponse invalide du serveur pendant la synchronisation.'
+                        + (detail ? ' Détail : ' + detail : ''));
+                }
+            });
+        }
+
+        function requestSetup(attempt) {
+            var url = hsSameOriginUrl(fetchUrl) + qs + (attempt > 1 ? '&retry=' + attempt : '');
+            return fetch(url, {
+                method: 'GET',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 credentials: 'same-origin',
+                cache: 'no-store',
                 signal: fetchAbortController ? fetchAbortController.signal : undefined
-            }
-        )
-            .then(function (r) {
-                return r.text().then(function (body) {
-                    if (!r.ok) {
-                        var httpDetail = String(body || '')
-                            .replace(/<[^>]*>/g, ' ')
-                            .replace(/\s+/g, ' ')
-                            .trim()
-                            .slice(0, 300);
-                        throw new Error('HTTP ' + r.status + (httpDetail ? ' : ' + httpDetail : ''));
-                    }
-                    try {
-                        return JSON.parse(body);
-                    } catch (e) {
-                        var detail = String(body || '')
-                            .replace(/<[^>]*>/g, ' ')
-                            .replace(/\s+/g, ' ')
-                            .trim()
-                            .slice(0, 300);
-                        throw new Error('Réponse invalide du serveur pendant la synchronisation.'
-                            + (detail ? ' Détail : ' + detail : ''));
-                    }
-                });
+            }).then(parseSetupResponse);
+        }
+
+        fetchInFlight = requestSetup(1)
+            .catch(function (err) {
+                var msg = err && err.message ? err.message : '';
+                var aborted = err && err.name === 'AbortError';
+                if (aborted && myGeneration !== fetchGeneration) {
+                    return Promise.reject(err);
+                }
+                if (!timedOut && (/failed to fetch|network|load|HTTP 502|HTTP 504|HTTP 503/i.test(msg) || aborted)) {
+                    return new Promise(function (resolve) { setTimeout(resolve, 1200); })
+                        .then(function () { return requestSetup(2); });
+                }
+                return Promise.reject(err);
             })
             .then(function (data) {
                 if (!data || !data.ok) {
@@ -832,11 +878,14 @@
                 return data;
             })
             .catch(function (err) {
-                if (err && err.name === 'AbortError') {
+                if (err && err.name === 'AbortError' && !timedOut && myGeneration !== fetchGeneration) {
                     return null;
                 }
                 var msg = err && err.message ? err.message : 'connexion impossible';
-                if (/failed to fetch|network|load/i.test(msg)) {
+                if (timedOut || (err && err.name === 'AbortError')) {
+                    msg = 'Délai dépassé en production (VPN / proxy). Le routeur « '
+                        + routerName + ' » reste sélectionné — réessayez.';
+                } else if (/failed to fetch|network|load/i.test(msg)) {
                     msg = 'Connexion interrompue (serveur occupé ou VPN lent). Le routeur « '
                         + routerName + ' » reste sélectionné — réessayez.';
                 }
@@ -845,15 +894,16 @@
                 return null;
             })
             .finally(function () {
-                if (fetchInFlightRouter === routerName) {
+                clearTimeout(timeoutId);
+                if (fetchInFlightRouter === routerName && myGeneration === fetchGeneration) {
                     fetchInFlight = null;
                     fetchInFlightRouter = '';
                     window.HS_SYNC_IN_PROGRESS = false;
                     if (typeof window.hsRefreshRouterAlerts === 'function') {
                         window.hsRefreshRouterAlerts();
                     }
+                    fetchAbortController = null;
                 }
-                fetchAbortController = null;
             });
 
         return fetchInFlight;

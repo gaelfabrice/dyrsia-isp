@@ -96,11 +96,32 @@ class MikrotikPppoe
     function remove_customer($customer, $plan)
     {
         $expiredPlan = $this->resolveExpiredPlan($plan);
-        if (!$expiredPlan) {
+        if ($expiredPlan) {
+            // Suspension normale : profil EXPIRE + blocage firewall.
+            $this->add_customer($customer, $expiredPlan);
             return;
         }
-        // Suspension : profil EXPIRE + blocage firewall, session PPPoE maintenue.
-        $this->add_customer($customer, $expiredPlan);
+
+        // Hard delete (compte / forfait sans plan_expired) : couper la session + secret.
+        $client = $this->routerClient($plan['routers'] ?? '');
+        if (!$client) {
+            return;
+        }
+        $this->forgetExpiredPppoeClient($customer);
+        foreach ($this->pppoeLoginNames($customer) as $name) {
+            try {
+                $this->removePpoeActive($client, $name);
+            } catch (Throwable $e) {
+            }
+            try {
+                $this->removeAddressListEntries($client, 'pppoe-expired', $name);
+            } catch (Throwable $e) {
+            }
+            try {
+                $this->removePpoeUser($client, $name);
+            } catch (Throwable $e) {
+            }
+        }
     }
 
     private function isExpirePlan($plan)

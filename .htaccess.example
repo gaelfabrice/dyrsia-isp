@@ -5,6 +5,17 @@
 # Ne mettez PAS de bloc <VirtualHost> ici — Apache l'ignore dans .htaccess.
 # Pour le MikroTik / WireGuard (10.0.0.1), voir scripts/apache-wifizone-wireguard.conf.example
 
+# Secrets : jamais servis en HTTP (même si PHP est cassé / fichier .bak)
+<FilesMatch "^(\.env(\..*)?|config\.php(\..*)?)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
 RewriteEngine On
 RewriteBase /
 

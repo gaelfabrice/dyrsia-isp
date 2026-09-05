@@ -157,6 +157,13 @@
                         {/if}
                     </div>
                     <div class="form-group">
+                        <label class="col-md-2 control-label">Ordre d'affichage</label>
+                        <div class="col-md-6">
+                            <input type="number" class="form-control" id="display_order" name="display_order" value="0" min="0">
+                            <p class="help-block">Le plus petit chiffre est affiché en premier</p>
+                        </div>
+                    </div>
+                    <div class="form-group">
                         <label class="col-md-2 control-label">{Lang::T('Shared Users')}
                             <a tabindex="0" class="btn btn-link btn-xs" role="button" data-toggle="popover"
                                 data-trigger="focus" data-container="body"

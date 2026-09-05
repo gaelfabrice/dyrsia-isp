@@ -411,7 +411,7 @@ function reports_data_usage_api_payload($admin)
 
     [$baseFrom, $baseParams] = reports_data_usage_base_filters($admin, $startDate, $endDate, $targetUsername, $routerFilter, $serviceType);
 
-    require_once __DIR__ . '/../cron_data_usage.php';
+    require_once dirname(__DIR__) . '/cron_data_usage.php';
     $liveSessions = cron_data_usage_fetch_live_sessions($admin);
 
     // Summary KPIs
@@ -571,8 +571,16 @@ switch ($action) {
         if ($_app_stage == 'Demo') {
             r2(getUrl('reports/data-usage'), 'e', 'Action désactivée en mode démo.');
         }
-        require_once __DIR__ . '/../cron_data_usage.php';
-        $result = cron_data_usage_sync();
+        $cronDataUsage = dirname(__DIR__) . '/cron_data_usage.php';
+        if (!is_file($cronDataUsage)) {
+            r2(getUrl('reports/data-usage'), 'e', 'Module de synchronisation introuvable (system/cron_data_usage.php).');
+        }
+        require_once $cronDataUsage;
+        try {
+            $result = cron_data_usage_sync($admin);
+        } catch (Throwable $e) {
+            r2(getUrl('reports/data-usage'), 'e', 'Synchronisation impossible : ' . $e->getMessage());
+        }
         $message = 'Synchronisation terminée : ' . (int) ($result['inserted'] ?? 0) . ' ligne(s) ajoutée(s).';
         if (!empty($result['errors'])) {
             $message .= ' Erreurs : ' . implode(' | ', $result['errors']);

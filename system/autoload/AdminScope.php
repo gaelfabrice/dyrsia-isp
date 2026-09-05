@@ -231,7 +231,7 @@ class AdminScope
         }
 
         $adminId = self::adminId($admin);
-        [$sql, $params] = self::rechargeScopeSql($adminId);
+        [$sql, $params] = self::rechargeScopeSql($adminId, 'tbl_user_recharges');
 
         return $query->where_raw($sql, $params);
     }

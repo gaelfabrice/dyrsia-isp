@@ -146,23 +146,73 @@ function customersDeleteOne($id, $admin)
 
     foreach ($turs as $tur) {
         $p = ORM::for_table('tbl_plans')->find_one($tur['plan_id']);
+        $routerName = trim((string) ($tur['routers'] ?? ''));
+        $rechargeLogin = trim((string) ($tur['username'] ?? ''));
+        if ($rechargeLogin === '') {
+            $rechargeLogin = trim((string) ($c['username'] ?? ''));
+        }
         if ($p && $_app_stage != 'demo') {
             $dvc = Package::getDevice($p);
             if (file_exists($dvc)) {
                 require_once $dvc;
                 try {
-                    $planRow = is_array($p) ? $p : $p->as_array();
+                    [$customerRow, $planRow] = Package::deviceSyncRows(
+                        $p,
+                        $routerName !== '' ? $routerName : (string) ($p['routers'] ?? ''),
+                        $c->as_array(),
+                        $rechargeLogin
+                    );
+                    // Force hard cut (no expired-plan swap): kill session now.
                     $planRow['plan_expired'] = 0;
-                    (new $planRow['device'])->remove_customer($c->as_array(), $planRow);
+                    $deviceClass = Package::resolveDeviceClass($planRow);
+                    if ($deviceClass !== '' && class_exists($deviceClass)) {
+                        $device = new $deviceClass();
+                        if (method_exists($device, 'remove_customer')) {
+                            $device->remove_customer($customerRow, $planRow);
+                        }
+                        if (method_exists($device, 'disconnect_customer')) {
+                            $device->disconnect_customer($customerRow, $planRow['routers'] ?? $routerName);
+                        }
+                    }
+                    if (class_exists('Mikrotik')
+                        && strtolower(trim((string) ($planRow['type'] ?? $tur['type'] ?? ''))) === 'hotspot'
+                        && $rechargeLogin !== '') {
+                        Mikrotik::disconnectHotspotUserOnRouter(
+                            trim((string) ($planRow['routers'] ?? $routerName)),
+                            $rechargeLogin
+                        );
+                    }
                 } catch (Throwable $e) {
-                    _log('[Customer Delete] Router remove u' . $c['username'] . ': ' . $e->getMessage(), 'Error');
+                    _log('[Customer Delete] Router remove u' . $rechargeLogin . ': ' . $e->getMessage(), 'Error');
                 }
+            }
+        } elseif ($rechargeLogin !== '' && class_exists('Mikrotik') && $_app_stage != 'demo') {
+            // No plan row: still try to kick hotspot session by recharge login.
+            try {
+                Mikrotik::disconnectHotspotUserOnRouter($routerName, $rechargeLogin);
+            } catch (Throwable $e) {
+                _log('[Customer Delete] Fallback disconnect u' . $rechargeLogin . ': ' . $e->getMessage(), 'Error');
             }
         }
         try {
+            $tur->status = 'off';
+            $tur->save();
             $tur->delete();
         } catch (Throwable $e) {
             _log('[Customer Delete] recharge row: ' . $e->getMessage(), 'Error');
+        }
+    }
+
+    // Final kick by customer usernames (covers orphan sessions without recharge rows).
+    if ($_app_stage != 'demo' && class_exists('Mikrotik')) {
+        foreach (array_filter([
+            trim((string) ($c['username'] ?? '')),
+            trim((string) ($c['pppoe_username'] ?? '')),
+        ]) as $login) {
+            try {
+                Mikrotik::disconnectHotspotUserOnRouter('', $login);
+            } catch (Throwable $e) {
+            }
         }
     }
 

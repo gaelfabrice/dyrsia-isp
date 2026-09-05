@@ -11,6 +11,8 @@
                     les tickets, les comptes actifs/expires, les fichiers de `system/uploads` et les fichiers essentiels
                     comme `config.php`. Lors d'une restauration complete, une sauvegarde de secours est creee
                     automatiquement avant toute modification.
+                    Si l'upload Telegram est active dans les reglages ci-dessous, une copie du package complet
+                    (`.wzb.zip`) est aussi envoyee sur Telegram (limite ~49 Mo).
                 </div>
                 <div class="md-whiteframe-z1 mb20 text-center" style="padding: 15px">
                     <div class="col-md-8">
@@ -25,10 +27,14 @@
                         </form>
                     </div>
                     <div class="col-md-4">
-                        <form method="POST" action="{$_url}plugin/backup_create_full">
+                        <form method="POST" action="{$_url}plugin/backup_create_full" id="form-backup-create-full">
                             <input type="hidden" name="csrf_token" value="{$csrf_token}">
-                            <input class="btn btn-danger btn-block waves-effect" type="submit" value="Creer un backup complet">
+                            <input type="hidden" name="ajax" value="1">
+                            <button class="btn btn-danger btn-block waves-effect" type="submit" id="btn-backup-create-full">
+                                Creer un backup complet
+                            </button>
                         </form>
+                        <p id="backup-full-status" class="text-muted" style="margin-top:8px;display:none;"></p>
                     </div>&nbsp;
                 </div>
                 <div class="table-responsive">
@@ -428,5 +434,107 @@
     toggleBackupFrequency();
     toggleRetainCount();
     toggleCloudFields(); // Call this instead of individual toggles
+
+    (function () {
+        var form = document.getElementById('form-backup-create-full');
+        var btn = document.getElementById('btn-backup-create-full');
+        var statusEl = document.getElementById('backup-full-status');
+        if (!form || !btn) {
+            return;
+        }
+
+        function setStatus(text, isError) {
+            if (!statusEl) {
+                return;
+            }
+            statusEl.style.display = text ? 'block' : 'none';
+            statusEl.className = isError ? 'text-danger' : 'text-muted';
+            statusEl.textContent = text || '';
+        }
+
+        function pollJob(jobId, attempts) {
+            attempts = attempts || 0;
+            if (attempts > 180) {
+                btn.disabled = false;
+                btn.textContent = 'Creer un backup complet';
+                setStatus('Delai depasse. Actualisez la page pour verifier si le package est apparu.', true);
+                return;
+            }
+            var url = '{$_url}plugin/backup_create_full_status&ajax=1&job_id=' + encodeURIComponent(jobId);
+            fetch(url, {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+            }).then(function (r) { return r.json(); }).then(function (data) {
+                var st = (data && data.status) ? data.status : 'unknown';
+                if (st === 'completed') {
+                    var tg = data.telegram || {};
+                    var tgMsg = '';
+                    if (tg.ok) {
+                        tgMsg = ' + copie Telegram envoyee';
+                    } else if (tg.reason === 'file_too_large') {
+                        tgMsg = ' (Telegram ignore: fichier trop volumineux)';
+                    } else if (tg.reason === 'telegram_upload_disabled' || tg.reason === 'telegram_not_configured') {
+                        tgMsg = '';
+                    } else if (tg.error) {
+                        tgMsg = ' (envoi Telegram echoue)';
+                    }
+                    setStatus('Backup cree: ' + (data.file || '') + tgMsg + ' — rechargement…', false);
+                    window.location.href = '{$_url}plugin/backup_list';
+                    return;
+                }
+                if (st === 'failed') {
+                    btn.disabled = false;
+                    btn.textContent = 'Creer un backup complet';
+                    setStatus('Echec: ' + (data.error || 'erreur inconnue'), true);
+                    return;
+                }
+                setStatus('Sauvegarde en cours… (' + st + ')', false);
+                setTimeout(function () { pollJob(jobId, attempts + 1); }, 1500);
+            }).catch(function () {
+                setTimeout(function () { pollJob(jobId, attempts + 1); }, 2000);
+            });
+        }
+
+        form.addEventListener('submit', function (ev) {
+            ev.preventDefault();
+            if (btn.disabled) {
+                return;
+            }
+            btn.disabled = true;
+            btn.textContent = 'Creation en cours…';
+            setStatus('Demarrage de la sauvegarde complete…', false);
+
+            var body = new FormData(form);
+            body.set('ajax', '1');
+
+            fetch(form.action, {
+                method: 'POST',
+                body: body,
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+            }).then(function (r) { return r.json().then(function (data) { return { okHttp: r.ok, data: data }; }); })
+            .then(function (res) {
+                var data = res.data || {};
+                if (!data.ok) {
+                    throw new Error(data.error || 'Echec demarrage sauvegarde');
+                }
+                if (data.file && !data.async) {
+                    setStatus('Backup cree: ' + data.file + ' — rechargement…', false);
+                    window.location.href = '{$_url}plugin/backup_list';
+                    return;
+                }
+                if (!data.job_id) {
+                    throw new Error('job_id manquant');
+                }
+                setStatus(data.message || 'Sauvegarde en cours…', false);
+                pollJob(data.job_id, 0);
+            }).catch(function (err) {
+                btn.disabled = false;
+                btn.textContent = 'Creer un backup complet';
+                setStatus(err && err.message ? err.message : 'Erreur reseau', true);
+            });
+        });
+    })();
 </script>
 {include file="sections/footer.tpl"}

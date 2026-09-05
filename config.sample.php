@@ -1,5 +1,10 @@
 <?php
 
+if (isset($_SERVER['SCRIPT_FILENAME']) && realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'])) {
+    header('HTTP/1.0 403 Forbidden', true, 403);
+    exit;
+}
+
 function wz_env($key, $default = '')
 {
     $value = getenv($key);

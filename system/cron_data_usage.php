@@ -1,8 +1,20 @@
 <?php
 
-$_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$_SERVER['SERVER_PORT'] = $_SERVER['SERVER_PORT'] ?? 80;
-require_once __DIR__ . '/../init.php';
+// When included from a web controller, init.php is already loaded.
+// Only bootstrap when this file is executed directly (CLI cron).
+if (!class_exists('ORM', false)) {
+    $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $_SERVER['SERVER_PORT'] = $_SERVER['SERVER_PORT'] ?? 80;
+    $root = dirname(__DIR__);
+    if (!is_file($root . '/init.php')) {
+        $root = dirname($root);
+    }
+    $initFile = $root . '/init.php';
+    if (!is_file($initFile)) {
+        throw new RuntimeException('init.php introuvable (attendu à la racine du projet).');
+    }
+    require_once $initFile;
+}
 
 function cron_data_usage_install()
 {
@@ -244,8 +256,15 @@ function cron_data_usage_fetch_live_sessions($admin = null, $maxAge = 45)
     return $live;
 }
 
-function cron_data_usage_sync()
+function cron_data_usage_sync($admin = null)
 {
+    if (class_exists('DemoShowcase') && DemoShowcase::blocksRouterSync($admin)) {
+        return [
+            'inserted' => 0,
+            'errors' => ['Synchronisation MikroTik désactivée (compte vitrine).'],
+        ];
+    }
+
     $db = ORM::get_db();
     $currentTime = date('Y-m-d H:i:s');
     $db->exec("DELETE FROM `api_data_usage` WHERE `log_date` < NOW() - INTERVAL 365 DAY");
@@ -258,7 +277,12 @@ function cron_data_usage_sync()
             WHERE (u.admin_id IS NULL OR u.admin_id = 0) AND c.created_by > 0");
     } catch (Exception $e) {
     }
-    $routers = ORM::for_table('tbl_routers')->where('enabled', 1)->find_many();
+
+    $routerQuery = ORM::for_table('tbl_routers')->where('enabled', 1);
+    if (is_array($admin) && (($admin['user_type'] ?? '') !== 'SuperAdmin')) {
+        $routerQuery->where('admin_id', (int) $admin['id']);
+    }
+    $routers = $routerQuery->find_many();
     $lastRows = $db->query("SELECT meta_key, meta_value FROM api_data_usage_meta WHERE meta_key LIKE 'last_router_counters_%'")->fetchAll(PDO::FETCH_KEY_PAIR);
     $totalInserted = 0;
     $errors = [];
@@ -283,6 +307,10 @@ function cron_data_usage_sync()
             $client = Mikrotik::getClient($router['ip_address'], $router['username'], $password, 20);
             if (!$client) {
                 $errors[] = $routerName . ': connexion API impossible';
+                $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
+                $statusJson = json_encode(['ok' => false, 'at' => $currentTime, 'error' => 'connexion API impossible']);
+                $stmt = $db->prepare("INSERT INTO api_data_usage_meta (meta_key, meta_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE meta_value = ?");
+                $stmt->execute([$statusKey, $statusJson, $statusJson]);
                 continue;
             }
             $users = cron_data_usage_collect_pppoe_users($client);
@@ -322,7 +350,7 @@ function cron_data_usage_sync()
             $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
             $statusJson = json_encode(['ok' => true, 'at' => $currentTime]);
             $stmt->execute([$statusKey, $statusJson, $statusJson]);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $errors[] = $routerName . ': ' . $e->getMessage();
             $statusKey = 'router_api_status_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $routerName);
             $statusJson = json_encode(['ok' => false, 'at' => $currentTime, 'error' => $e->getMessage()]);
